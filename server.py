@@ -3257,14 +3257,18 @@ class Handler(BaseHTTPRequestHandler):
         if provider == "openai":
             k = key("OPENAI_API_KEY")
             return k, "https://api.openai.com/v1", model or "gpt-4o-mini", provider
-        # auto: honour BRAIN_PROVIDER (keys.json), fall back to whichever key exists
-        auto_provider = KEYS.get("BRAIN_PROVIDER", "openai")
+        # auto: honour BRAIN_PROVIDER (keys.json/env), else prefer Groq (has
+        # working credits); OpenAI is only the fallback so an exhausted OpenAI
+        # key never blocks chat.
+        auto_provider = KEYS.get("BRAIN_PROVIDER", "groq")
         if auto_provider == "groq" and key("GROQ_API_KEY"):
             return key("GROQ_API_KEY"), "https://api.groq.com/openai/v1", model or KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), provider
-        if key("OPENAI_API_KEY"):
+        if auto_provider == "openai" and key("OPENAI_API_KEY"):
             return key("OPENAI_API_KEY"), "https://api.openai.com/v1", model or "gpt-4o-mini", provider
         if key("GROQ_API_KEY"):
             return key("GROQ_API_KEY"), "https://api.groq.com/openai/v1", model or KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), provider
+        if key("OPENAI_API_KEY"):
+            return key("OPENAI_API_KEY"), "https://api.openai.com/v1", model or "gpt-4o-mini", provider
         return "", "", model or "gpt-4o-mini", provider
 
     def _handle_chat(self, body):
@@ -3331,18 +3335,28 @@ class Handler(BaseHTTPRequestHandler):
                    "max_tokens": max(16, min(max_tokens, 4096)), "stream": stream}
 
         if not stream:
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            try:
-                _, raw, _ = http_fetch(url, method="POST", headers=headers, json_body=payload, timeout=120)
-                data = json.loads(raw)
-                content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
-                self._send_json({"content": content, "tools": tool_summary, "cores": core_names})
-            except urllib.error.HTTPError as e:
-                self._send_json({"error": f"AI provider error {e.code}: "
-                                          f"{e.read().decode('utf-8','replace')[:300]}"}, 502)
-            except Exception as e:
-                self._send_json({"error": str(e)}, 502)
-            return
+            # Non-streaming path mirrors the streaming fallback: if 'auto' hits a
+            # provider error, fail over to Groq before giving up.
+            while True:
+                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                try:
+                    _, raw, _ = http_fetch(url, method="POST", headers=headers, json_body=payload, timeout=120)
+                    data = json.loads(raw)
+                    content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                    self._send_json({"content": content, "tools": tool_summary, "cores": core_names})
+                except urllib.error.HTTPError as e:
+                    if provider == "auto" and key("GROQ_API_KEY") and "groq" not in base_url:
+                        api_key = key("GROQ_API_KEY")
+                        base_url = "https://api.groq.com/openai/v1"
+                        model = KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL)
+                        url = base_url + "/chat/completions"
+                        payload["model"] = model
+                        continue
+                    self._send_json({"error": f"AI provider error {e.code}: "
+                                              f"{e.read().decode('utf-8','replace')[:300]}"}, 502)
+                except Exception as e:
+                    self._send_json({"error": str(e)}, 502)
+                return
 
         # streaming — attempt primary, fallback to Groq on failure if 'auto'
         tried = []
