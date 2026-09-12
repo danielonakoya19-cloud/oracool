@@ -202,6 +202,8 @@ def touch_user(email, **extra):
     rec.update(extra)
     users[email] = rec
     save_users(users)
+    # mirror to Supabase so the record survives Render's ephemeral filesystem
+    supabase_upsert_flag(rec)
 
 def user_record(email):
     if not email:
@@ -210,7 +212,11 @@ def user_record(email):
 
 def is_blocked(email):
     rec = user_record(email)
-    return bool(rec and rec.get("blocked"))
+    if rec is not None:
+        return bool(rec.get("blocked"))
+    # no local record (e.g. fresh deploy) -> authoritative persistent check
+    f = supabase_get_flag(email)
+    return bool(f and f.get("blocked"))
 
 def block_user(email, blocked, reason="", by=""):
     email = (email or "").strip().lower()
@@ -224,6 +230,7 @@ def block_user(email, blocked, reason="", by=""):
     rec["blocked_at"] = time.strftime("%Y-%m-%d %H:%M:%S") if blocked else ""
     users[email] = rec
     save_users(users)
+    supabase_upsert_flag(rec)
     return {"ok": True, "user": rec}
 
 
@@ -295,6 +302,75 @@ def supabase_store_subscriber(rec):
                               "paid_at": rec.get("paid_at"),
                               "expires_at": rec.get("expires_at")},
                    timeout=10)
+        return True
+    except Exception:
+        return False
+
+
+def _supabase_headers():
+    svc = key("SUPABASE_SERVICE_KEY")
+    return {"apikey": svc, "Authorization": "Bearer " + svc}
+
+
+def supabase_auth_users():
+    """All registered users from Supabase Auth (persistent). Requires the
+    SUPABASE_SERVICE_KEY. Returns [] if Supabase is not wired or unreachable."""
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return []
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/auth/v1/admin/users?per_page=1000",
+                               headers={"apikey": svc, "Authorization": "Bearer " + svc},
+                               timeout=20)
+        return (json.loads(raw).get("users") or []) if raw else []
+    except Exception:
+        return []
+
+
+def supabase_all_flags():
+    """All rows from the 'user_flags' table (persistent block/seen flags)."""
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return {}
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/user_flags?select=*",
+                               headers=_supabase_headers(), timeout=15)
+        rows = json.loads(raw) if raw else []
+        return {str((r.get("email") or "")).lower(): r for r in rows}
+    except Exception:
+        return {}
+
+
+def supabase_get_flag(email):
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return None
+    try:
+        q = urllib.parse.quote(f"email=eq.{email}")
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/user_flags?" + q,
+                               headers=_supabase_headers(), timeout=10)
+        rows = json.loads(raw) if raw else []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def supabase_upsert_flag(rec):
+    """Best-effort upsert of one user's flags (block/seen) into Supabase."""
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return False
+    body = {"email": rec.get("email"),
+            "created": rec.get("created", ""),
+            "last_seen": rec.get("last_seen", ""),
+            "blocked": bool(rec.get("blocked")),
+            "block_reason": rec.get("block_reason") or "",
+            "blocked_by": rec.get("blocked_by") or "",
+            "blocked_at": rec.get("blocked_at") or ""}
+    try:
+        http_fetch(url.rstrip("/") + "/rest/v1/user_flags", method="POST",
+                   headers=dict(_supabase_headers(), **{"Prefer": "resolution=merge-duplicates"}),
+                   json_body=body, timeout=10)
         return True
     except Exception:
         return False
@@ -1404,6 +1480,26 @@ def admin_users_payload():
     accounts = _load_accounts()
     subs = load_subscribers()
     sub_emails = {str(s.get("email", "")).lower() for s in subs}
+    # Merge in the persistent Supabase user base. Render's local filesystem is
+    # ephemeral, so data/users.json alone would show an empty/partial list.
+    flags = supabase_all_flags()
+    for f in flags.values():
+        em = str(f.get("email") or "").lower()
+        if not em:
+            continue
+        if em not in users:
+            users[em] = {"created": f.get("created") or "", "last_seen": f.get("last_seen") or "",
+                         "blocked": bool(f.get("blocked")), "block_reason": f.get("block_reason") or "",
+                         "blocked_by": f.get("blocked_by") or "", "blocked_at": f.get("blocked_at") or ""}
+    for su in supabase_auth_users():
+        em = (su.get("email") or "").strip().lower()
+        if not em:
+            continue
+        created = (su.get("created_at") or "")[:19].replace("T", " ")
+        if em not in users:
+            users[em] = {"created": created}
+        elif not users[em].get("created"):
+            users[em]["created"] = created
     out = []
     for email, rec in users.items():
         acc = accounts.get(email)
