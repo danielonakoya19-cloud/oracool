@@ -1,0 +1,3 @@
+# OraCool AI uses ONLY the Python standard library.
+# No pip packages are required. This file exists so hosts
+# that auto-run `pip install -r requirements.txt` succeed.

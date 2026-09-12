@@ -1,0 +1,2337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>ORA-COOL AI — Personal Intelligence System</title>
+<meta name="theme-color" content="#04070d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="OraCool">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<style>
+  :root{
+    --cyan:#00e5ff; --cyan2:#7df9ff; --blue:#2f6bff; --gold:#ffc24b;
+    --bg:#04070d; --panel:rgba(7,22,32,.62); --panel2:rgba(9,28,40,.75);
+    --line:rgba(0,229,255,.22); --line2:rgba(0,229,255,.5);
+    --text:#d9f6ff; --dim:#7ea6b8; --danger:#ff5f6d; --ok:#3dffa5;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{-webkit-text-size-adjust:100%; text-size-adjust:100%;}
+  html,body{height:100%;}
+  button, a, .tab, .chip, .switch, .iconbtn, .toolbtn, .planchip, .foundcard, .gatetab, .tier, .acct, .wake, select, input, label, .sendbtn, .close{cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent;}
+  img, video, canvas{max-width:100%;}
+  a, button, input, select, textarea, div{outline-color:transparent;}
+  input, select, textarea{min-width:0;}
+  body{
+    background:
+      radial-gradient(1200px 700px at 75% -10%, rgba(47,107,255,.16), transparent 60%),
+      radial-gradient(900px 600px at 15% 110%, rgba(0,229,255,.10), transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:"Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    overflow:hidden; height:100vh; display:flex; flex-direction:column;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none;
+    background-image:
+      linear-gradient(rgba(0,229,255,.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,.05) 1px, transparent 1px);
+    background-size:44px 44px;
+    mask-image:radial-gradient(ellipse at 50% 30%, #000 20%, transparent 75%);
+    -webkit-mask-image:radial-gradient(ellipse at 50% 30%, #000 20%, transparent 75%);
+  }
+  .scanline{position:fixed; left:0; right:0; height:120px; pointer-events:none; z-index:0;
+    background:linear-gradient(180deg, transparent, rgba(0,229,255,.05), transparent); animation:sweep 9s linear infinite;}
+  @keyframes sweep{0%{top:-15%} 100%{top:115%}}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:rgba(0,229,255,.25); border-radius:8px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+
+  header{position:relative; z-index:2; display:flex; align-items:center; gap:14px; padding:10px 18px;
+    border-bottom:1px solid var(--line); background:linear-gradient(180deg, rgba(6,20,30,.9), rgba(6,16,24,.55)); backdrop-filter:blur(6px);}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand .title{font-size:17px; letter-spacing:4px; font-weight:600; color:var(--cyan2); text-shadow:0 0 14px rgba(0,229,255,.6);}
+  .brand .sub{font-size:10px; letter-spacing:3px; color:var(--dim); text-transform:uppercase;}
+  .hdr-right{margin-left:auto; display:flex; align-items:center; gap:12px;}
+  .clock{text-align:right; line-height:1.1;}
+  .clock .t{font-size:16px; letter-spacing:2px; color:var(--cyan2); font-variant-numeric:tabular-nums;}
+  .clock .d{font-size:10px; letter-spacing:1px; color:var(--dim); text-transform:uppercase;}
+  .live{display:flex; align-items:center; gap:6px; font-size:10px; letter-spacing:2px; color:var(--ok); border:1px solid rgba(61,255,165,.4); padding:4px 8px; border-radius:20px;}
+  .live i{width:7px;height:7px;border-radius:50%;background:var(--ok); box-shadow:0 0 8px var(--ok); animation:blink 1.6s ease-in-out infinite;}
+  @keyframes blink{50%{opacity:.3}}
+  .tier{
+    cursor:pointer; font-size:11px; letter-spacing:2px; font-weight:700; padding:6px 14px; border-radius:20px;
+    border:1px solid var(--line); color:var(--dim); background:rgba(0,229,255,.05); text-transform:uppercase; transition:.2s;
+  }
+  .tier.pro{color:#04121a; background:linear-gradient(135deg, var(--gold), #ffe08a); border-color:var(--gold); box-shadow:0 0 16px rgba(255,194,75,.5);}
+  .tier:hover{box-shadow:0 0 14px rgba(0,229,255,.4);}
+  .acct{display:flex; align-items:center; gap:8px; cursor:pointer; font-size:11px; color:var(--text); background:rgba(0,229,255,.05); border:1px solid var(--line); padding:5px 12px; border-radius:20px; transition:.2s; max-width:180px;}
+  .acct:hover{background:rgba(0,229,255,.14); box-shadow:0 0 12px rgba(0,229,255,.3);}
+  .acct .em{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .avatar{width:20px; height:20px; border-radius:50%; background:linear-gradient(135deg, var(--cyan), var(--blue)); color:#02121a; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; flex:0 0 auto; letter-spacing:0;}
+  .wake{display:flex; align-items:center; gap:6px; font-size:9px; letter-spacing:1.5px; color:var(--dim); border:1px solid var(--line); padding:5px 9px; border-radius:20px; text-transform:uppercase; transition:.2s; cursor:pointer;}
+  .wake.armed{color:var(--cyan2); border-color:rgba(0,229,255,.5); box-shadow:0 0 10px rgba(0,229,255,.25);}
+  .wake.armed i{background:var(--cyan); box-shadow:0 0 8px var(--cyan); animation:blink 1.4s ease-in-out infinite;}
+  .wake.listening{color:var(--danger); border-color:rgba(255,95,109,.5);}
+  .wake.listening i{background:var(--danger); box-shadow:0 0 8px var(--danger); animation:blink .8s ease-in-out infinite;}
+  .wake i{width:7px;height:7px;border-radius:50%;background:var(--dim); display:inline-block;}
+
+  main{position:relative; z-index:1; flex:1; min-height:0; display:grid; grid-template-columns: minmax(0,1fr) 400px; grid-template-rows:minmax(0,1fr); gap:16px; padding:16px 20px 20px;}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; backdrop-filter:blur(8px); box-shadow:0 10px 40px rgba(0,0,0,.5);}
+
+  .left{display:flex; flex-direction:column; gap:12px; min-height:0;}
+  .chatwrap{flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden;}
+  .reactorhead{display:flex; align-items:center; gap:16px; padding:12px 16px 6px;}
+  .reactorhead .rtitle{font-size:12px; letter-spacing:3px; color:var(--cyan2); text-transform:uppercase; text-shadow:0 0 10px rgba(0,229,255,.5);}
+  .reactorhead .rsub{font-size:10px; color:var(--dim); letter-spacing:1px;}
+  .chat{flex:1; overflow-y:auto; padding:14px 18px; display:flex; flex-direction:column; gap:12px; min-height:0;}
+  .bubble{max-width:82%; padding:12px 16px; border-radius:12px; font-size:15px; line-height:1.6; white-space:pre-wrap; word-wrap:break-word;}
+  .bubble.ai{align-self:flex-start; color:var(--text); background:linear-gradient(135deg, rgba(8,34,46,.9), rgba(6,22,32,.75));
+    border:1px solid var(--line); border-left:3px solid var(--cyan); box-shadow:0 0 18px rgba(0,229,255,.10), inset 0 0 18px rgba(0,229,255,.05); border-radius:4px 14px 14px 14px;}
+  .bubble.ai .who{display:block; font-size:10px; letter-spacing:2px; color:var(--cyan); margin-bottom:4px; text-transform:uppercase;}
+  .bubble.user{align-self:flex-end; color:#eaf6ff; background:linear-gradient(135deg, rgba(20,64,120,.75), rgba(12,44,88,.7));
+    border:1px solid rgba(90,150,255,.35); border-right:3px solid #5aa0ff; border-radius:14px 4px 14px 14px;}
+  .bubble.err{border-color:rgba(255,95,109,.5); border-left-color:var(--danger); color:#ffd7db;}
+  .bubble .dots::after{content:"…"; animation:dots 1.2s steps(3,end) infinite;}
+  @keyframes dots{0%{content:""} 33%{content:"."} 66%{content:".."}}
+  .chiprow{display:flex; flex-wrap:wrap; gap:8px; padding:2px 16px 12px;}
+  .chip{font-size:11px; letter-spacing:1px; color:var(--cyan2); background:rgba(0,229,255,.06); border:1px solid var(--line); padding:6px 12px; border-radius:20px; cursor:pointer; transition:.2s;}
+  .chip:hover{background:rgba(0,229,255,.16); box-shadow:0 0 14px rgba(0,229,255,.3);}
+
+  #wave{height:44px; margin:0 16px; opacity:0; transition:opacity .3s;}
+  #wave.on{opacity:1;}
+  .inputbar{display:flex; gap:10px; padding:12px 16px calc(14px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); align-items:center;}
+  .iconbtn{flex:0 0 auto; width:48px; height:48px; border-radius:12px; cursor:pointer; background:rgba(0,229,255,.06); border:1px solid var(--line); color:var(--cyan2); touch-action:manipulation;
+    display:flex; align-items:center; justify-content:center; transition:.2s; font-size:18px;}
+  .iconbtn:hover{background:rgba(0,229,255,.16); box-shadow:0 0 14px rgba(0,229,255,.35);}
+  .iconbtn.listening{background:rgba(255,95,109,.2); border-color:var(--danger); color:var(--danger); animation:pulse 1.2s infinite;}
+  @keyframes pulse{50%{box-shadow:0 0 0 8px rgba(255,95,109,.12)}}
+  input[type=text].chatinput{flex:1; min-width:0; background:rgba(4,14,22,.7); border:1px solid var(--line); border-radius:12px; padding:12px 14px; color:var(--text); font-size:14px; outline:none; transition:.2s;}
+  .chatinput:focus{border-color:var(--line2); box-shadow:0 0 0 3px rgba(0,229,255,.12), 0 0 18px rgba(0,229,255,.15);}
+  .sendbtn{flex:0 0 auto; height:44px; padding:0 22px; border-radius:12px; cursor:pointer; font-size:12px; letter-spacing:2px; color:#02121a;
+    background:linear-gradient(135deg, var(--cyan), var(--cyan2)); border:none; font-weight:700; text-transform:uppercase; transition:.2s;}
+  .sendbtn:hover{box-shadow:0 0 22px rgba(0,229,255,.6); transform:translateY(-1px);}
+  .sendbtn:disabled{opacity:.4; cursor:not-allowed; transform:none; box-shadow:none;}
+
+  .right{display:flex; flex-direction:column; min-height:0; overflow:hidden;}
+  .tabs{display:flex; gap:2px; padding:6px; border-bottom:1px solid var(--line); overflow-x:auto; scrollbar-width:thin;}
+  .tab{flex:0 0 auto; min-width:max-content; text-align:center; font-size:10px; letter-spacing:1px; padding:8px 11px; cursor:pointer; color:var(--dim); border-radius:9px; text-transform:uppercase; transition:.2s; border:1px solid transparent; white-space:nowrap;}
+  .tab:hover{color:var(--cyan2);}
+  .tab.active{color:var(--cyan2); background:rgba(0,229,255,.08); border-color:var(--line); text-shadow:0 0 8px rgba(0,229,255,.5);}
+  .panelbody{flex:1; overflow-y:auto; padding:16px; display:none;}
+  .panelbody.active{display:block;}
+
+  h3.ptitle{font-size:11px; letter-spacing:3px; color:var(--cyan2); text-transform:uppercase; margin:4px 0 12px; text-shadow:0 0 10px rgba(0,229,255,.4);}
+  label.lbl{display:block; font-size:10px; letter-spacing:1.5px; color:var(--dim); text-transform:uppercase; margin:12px 0 5px;}
+  input[type=text], input[type=password], input[type=email], select{width:100%; background:rgba(4,14,22,.7); border:1px solid var(--line); border-radius:9px;
+    padding:11px 13px; color:var(--text); font-size:14px; outline:none; font-family:inherit; transition:.2s;}
+  input:focus, select:focus{border-color:var(--line2); box-shadow:0 0 0 3px rgba(0,229,255,.12);}
+  .btn{display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; letter-spacing:1.5px; padding:10px 18px; border-radius:9px; text-transform:uppercase; transition:.2s; font-weight:600; min-height:40px; touch-action:manipulation;}
+  .btn.primary{background:linear-gradient(135deg, var(--cyan), var(--cyan2)); color:#02121a; border:none;}
+  .btn.primary:hover{box-shadow:0 0 18px rgba(0,229,255,.55);}
+  .btn.gold{background:linear-gradient(135deg, var(--gold), #ffe08a); color:#1a1204; border:none;}
+  .btn.gold:hover{box-shadow:0 0 18px rgba(255,194,75,.6);}
+  .btn.ghost{background:transparent; color:var(--cyan2); border:1px solid var(--line);}
+  .btn.ghost:hover{background:rgba(0,229,255,.1);}
+  .btn.small{padding:6px 10px; font-size:10px;}
+  .row{display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;}
+
+  .sysline{display:flex; align-items:center; gap:10px; padding:9px 10px; border:1px solid var(--line); border-radius:10px; margin-bottom:8px; font-size:12px;}
+  .sysline .dot{width:8px;height:8px;border-radius:50%;}
+  .dot.ok{background:var(--ok); box-shadow:0 0 8px var(--ok);}
+  .dot.warn{background:#ffc24b; box-shadow:0 0 8px #ffc24b;}
+  .dot.off{background:#ff5f6d; box-shadow:0 0 8px #ff5f6d;}
+  .sysline .k{flex:1; letter-spacing:1px;}
+  .sysline .v{color:var(--dim); font-size:11px;}
+
+  .toolgrid{display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:12px;}
+  .toolbtn{position:relative; text-align:left; font-size:11px; letter-spacing:.5px; padding:9px 10px; border-radius:9px; cursor:pointer;
+    background:rgba(4,14,22,.5); border:1px solid var(--line); color:var(--text); transition:.2s;}
+  .toolbtn:hover{background:rgba(0,229,255,.08); border-color:var(--line2);}
+  .toolbtn.active{border-color:var(--cyan); color:var(--cyan2); box-shadow:0 0 12px rgba(0,229,255,.25);}
+  .toolbtn .lk{position:absolute; right:8px; top:8px; font-size:11px;}
+
+  .result{margin-top:12px; font-size:12px;}
+  .kv{display:grid; grid-template-columns:130px 1fr; gap:2px 10px; padding:8px 10px; border:1px solid var(--line); border-radius:10px; background:rgba(4,14,22,.5); margin-top:4px;}
+  .kv div{border-bottom:1px dashed rgba(0,229,255,.08); padding:4px 0;}
+  .kv .k{color:var(--dim); letter-spacing:1px; text-transform:uppercase; font-size:10px; padding-top:5px;}
+  .kv .val{color:var(--cyan2); word-break:break-word;}
+  .tag{display:inline-block; font-size:10px; padding:2px 8px; border-radius:12px; background:rgba(0,229,255,.12); color:var(--cyan2); border:1px solid var(--line); margin:2px 3px 2px 0;}
+  a{color:var(--cyan2); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  .foundgrid{display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;}
+  .foundcard{font-size:11px; padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:rgba(0,229,255,.05);}
+  .foundcard:hover{background:rgba(0,229,255,.14);}
+  .muted{color:var(--dim); font-size:11px; line-height:1.5;}
+  .errbox{color:#ffd7db; background:rgba(255,95,109,.1); border:1px solid rgba(255,95,109,.4); border-radius:10px; padding:10px; font-size:12px; margin-top:10px;}
+  .okbox{color:var(--ok); background:rgba(61,255,165,.08); border:1px solid rgba(61,255,165,.3); border-radius:10px; padding:10px; font-size:12px; margin-top:10px;}
+  .warnbox{color:#ffe3b3; background:rgba(255,194,75,.08); border:1px solid rgba(255,194,75,.35); border-radius:10px; padding:10px; font-size:12px; margin-top:10px;}
+  .note{font-size:10px; color:var(--dim); margin-top:8px; line-height:1.5; font-style:italic;}
+  .hint{font-size:10px; color:var(--dim); margin-top:6px; line-height:1.5;}
+  .srchcard{border:1px solid var(--line); border-radius:10px; padding:9px 10px; margin-top:8px; background:rgba(4,14,22,.5);}
+  .srchcard .t{color:var(--cyan2); font-size:12px;}
+  .srchcard .u{font-size:10px; color:var(--dim); word-break:break-all;}
+  .srchcard .c{font-size:11px; color:var(--text); margin-top:4px;}
+
+  .devrow{display:flex; align-items:center; gap:10px; padding:9px 10px; border:1px solid var(--line); border-radius:10px; margin-bottom:8px; font-size:13px;}
+  .devrow .name{flex:1;}
+  .devrow .st{font-size:10px; letter-spacing:1px; color:var(--dim); text-transform:uppercase;}
+  .switch{position:relative; width:42px; height:24px; border-radius:24px; background:rgba(255,255,255,.1); border:1px solid var(--line); cursor:pointer; transition:.2s; flex:0 0 auto;}
+  .switch.on{background:rgba(0,229,255,.35); box-shadow:0 0 12px rgba(0,229,255,.4);}
+  .switch::after{content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:#cfefff; transition:.2s;}
+  .switch.on::after{left:20px; background:#fff;}
+
+  .spinner{width:18px; height:18px; border:2px solid rgba(0,229,255,.2); border-top-color:var(--cyan2); border-radius:50%; animation:spin 0.8s linear infinite; display:inline-block; vertical-align:middle;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* trading desk */
+  .statcards{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:10px;}
+  .stat{background:rgba(4,14,22,.6); border:1px solid var(--line); border-radius:10px; padding:10px;}
+  .stat .l{font-size:9px; letter-spacing:1.5px; color:var(--dim); text-transform:uppercase;}
+  .stat .v{font-size:18px; color:var(--cyan2); font-variant-numeric:tabular-nums; margin-top:3px; letter-spacing:.5px;}
+  .stat .v.pos{color:var(--ok);} .stat .v.neg{color:var(--danger);}
+  .ptable{width:100%; border-collapse:collapse; font-size:11px;}
+  .ptable th{text-align:left; color:var(--dim); font-size:9px; letter-spacing:1px; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid var(--line);}
+  .ptable td{padding:6px; border-bottom:1px dashed rgba(0,229,255,.08); font-variant-numeric:tabular-nums;}
+  .sigcard{border:1px solid var(--line2); border-radius:12px; padding:12px; margin-top:10px; background:linear-gradient(160deg, rgba(8,34,46,.6), rgba(6,22,32,.5));}
+  .sigcard .bias{font-size:14px; letter-spacing:1px; font-weight:700; text-transform:uppercase;}
+  .sigcard .bias.bullish{color:var(--ok);} .sigcard .bias.bearish{color:var(--danger);} .sigcard .bias.neutral{color:var(--gold);}
+  .logline{font-family:Consolas,monospace; font-size:10.5px; color:var(--dim); padding:2px 0; border-bottom:1px dashed rgba(0,229,255,.06);}
+  .logline .ts{color:var(--cyan2);}
+
+  .keyrow{display:flex; align-items:center; gap:8px; font-size:11px; padding:4px 0; border-bottom:1px dashed rgba(0,229,255,.08);}
+  .keyrow .n{flex:1; letter-spacing:.5px;}
+  .keyrow .s{color:var(--dim); font-size:10px; text-transform:uppercase;}
+
+  /* modal */
+  .modal{position:fixed; inset:0; z-index:60; background:rgba(2,6,10,.75); backdrop-filter:blur(4px); display:none; padding:20px; overflow-y:auto;}
+  .modal.open{display:flex; align-items:flex-start; justify-content:center;}
+  .modalcard{width:min(430px, 100%); margin:auto 0; background:linear-gradient(160deg, rgba(9,28,40,.98), rgba(5,16,24,.98)); border:1px solid var(--line2);
+    border-radius:16px; padding:22px; box-shadow:0 0 60px rgba(0,229,255,.2);}
+  .modalcard h2{font-size:15px; letter-spacing:3px; color:var(--gold); text-transform:uppercase; margin-bottom:6px;}
+  .modalcard .price{font-size:30px; color:var(--gold); letter-spacing:1px; margin:6px 0 2px; text-shadow:0 0 16px rgba(255,194,75,.5);}
+  .benefits{list-style:none; margin:12px 0; font-size:12.5px; line-height:1.9;}
+  .benefits li::before{content:"◈ "; color:var(--cyan);}
+  .close{float:right; cursor:pointer; color:var(--dim); font-size:20px; line-height:1;}
+
+  #boot{position:fixed; inset:0; z-index:50; background:var(--bg); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:26px; transition:opacity .7s ease;}
+  #boot.gone{opacity:0; pointer-events:none;}
+  .bootlines{min-height:120px; text-align:center; font-family:"Consolas","Courier New",monospace; font-size:12.5px; letter-spacing:1px; color:var(--cyan2); line-height:2;}
+  .bootlines .ok{color:var(--ok);}
+  #app{flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden;}
+  #app.hidden{display:none;}
+
+  /* auth gate */
+  .gate{position:fixed; inset:0; z-index:70; background:rgba(3,7,12,.97); display:none; padding:20px; backdrop-filter:blur(8px); overflow-y:auto;}
+  .gate.open{display:flex; align-items:flex-start; justify-content:center;}
+  .gatecard{width:min(430px,100%); margin:auto 0; border:1px solid var(--line2); border-radius:18px; padding:26px;
+    background:linear-gradient(160deg, rgba(9,28,40,.98), rgba(5,16,24,.98)); box-shadow:0 0 60px rgba(0,229,255,.25);}
+  .gatetabs{display:flex; gap:4px; margin-bottom:18px;}
+  .gatetab{flex:1; text-align:center; padding:10px; border-radius:10px; border:1px solid var(--line); color:var(--dim); cursor:pointer; font-size:11px; letter-spacing:2px; text-transform:uppercase; transition:.2s;}
+  .gatetab.active{color:var(--cyan2); border-color:var(--cyan); background:rgba(0,229,255,.08); text-shadow:0 0 8px rgba(0,229,255,.5);}
+  .strength{height:6px; border-radius:6px; background:rgba(255,255,255,.08); margin-top:8px; overflow:hidden;}
+  .strength i{display:block; height:100%; width:0; border-radius:6px; transition:.3s; background:var(--danger);}
+  .gatebrand{text-align:center; font-size:18px; letter-spacing:4px; color:var(--cyan2); text-shadow:0 0 14px rgba(0,229,255,.6); margin-bottom:2px;}
+  .gatesub{text-align:center; font-size:10px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; margin-bottom:16px;}
+
+  /* ---- responsive ladder: every device ---- */
+  @media (max-width: 1280px){
+    main{grid-template-columns: minmax(0,1fr) 360px;}
+  }
+  /* tablets & phones: single column, chat first */
+  @media (max-width: 980px){
+    body{overflow:auto; height:auto; min-height:100vh; min-height:100dvh;}
+    #app{flex:none; height:auto; min-height:100dvh; overflow:visible;}
+    main{grid-template-columns:1fr; grid-template-rows:auto; padding:12px 14px calc(18px + env(safe-area-inset-bottom)); gap:14px;}
+    .left{min-height:0;}
+    .chatwrap{min-height:0; max-height:none; overflow:visible;}
+    .chat{max-height:52dvh; overflow-y:auto;}
+    .right{min-height:0; overflow:visible;}
+    .panelbody{padding:14px 4px 24px; overflow:visible; max-height:none;}
+  }
+  /* phones */
+  @media (max-width: 720px){
+    header{flex-wrap:wrap; padding:calc(10px + env(safe-area-inset-top)) 12px 10px; gap:8px;}
+    .brand .sub{display:none;}
+    .brand .title{font-size:16px; letter-spacing:2px;}
+    .clock .d{display:none;}
+    .clock .t{font-size:13px;}
+    .live{font-size:9px; padding:3px 7px;}
+    .wake{font-size:8px; padding:4px 7px;}
+    .tier{font-size:10px; padding:5px 10px;}
+    .acct{max-width:118px; font-size:10px; padding:4px 9px;}
+    #installBtn{display:none !important;}
+    .hdr-right{gap:6px; flex-wrap:wrap;}
+    .chatwrap{min-height:74vh; min-height:74dvh;}
+    .reactorhead{gap:10px; padding:10px 12px 4px;}
+    .orbwrap{width:92px; height:92px;}
+    .orbring{width:42px; height:42px; margin:-21px 0 0 -21px;}
+    .orbstat .rtitle{font-size:11px;}
+    .orbstat .rsub{font-size:9px;}
+    .orbstatus{font-size:9px; letter-spacing:2px;}
+    .chat{padding:12px 10px; gap:10px;}
+    .bubble{max-width:92%; font-size:15px; padding:11px 13px;}
+    .inputbar{gap:6px; padding:10px 8px calc(12px + env(safe-area-inset-bottom));}
+    .iconbtn{width:46px; height:46px; font-size:17px; flex:0 0 auto;}
+    .sendbtn{height:46px; padding:0 14px; font-size:11px; letter-spacing:1px; flex:0 0 auto;}
+    input[type=text], input[type=password], input[type=email], select, input.chatinput{font-size:16px !important;}
+    .chiprow{padding:2px 8px 10px; gap:6px;}
+    .chip{font-size:12px; padding:7px 12px;}
+    .gate{padding:14px;}
+    .gatecard{padding:20px;}
+    .modal{padding:14px;}
+    .modalcard{padding:18px;}
+  }
+  /* small phones */
+  @media (max-width: 400px){
+    .iconbtn{width:42px; height:42px; font-size:16px;}
+    .sendbtn{padding:0 12px;}
+    .inputbar{gap:5px;}
+    .orbwrap{width:76px; height:76px;}
+    .hdr-right .clock{display:none;}
+    .bubble{max-width:95%;}
+  }
+  /* short landscape phones: keep everything visible */
+  @media (max-height: 560px) and (orientation: landscape){
+    header{padding:6px 12px;}
+    .orbwrap{width:60px; height:60px;}
+    .orbring{display:none;}
+    .chatwrap{min-height:0; min-height:0dvh;}
+    .chat{padding:8px 10px;}
+  }
+  /* touch devices: bigger tap targets everywhere */
+  @media (pointer: coarse){
+    .btn{min-height:44px;}
+    .switch{width:46px; height:26px;}
+    .switch::after{width:20px; height:20px;}
+    .switch.on::after{left:22px;}
+    .toolbtn{padding:11px 10px;}
+    .tab{padding:10px 12px;}
+  }
+  .toolsline{font-size:10px;color:var(--ok);margin:2px 0 4px;padding:3px 8px;border-radius:8px;background:rgba(42,255,158,.08);border:1px solid rgba(42,255,158,.2);display:inline-block}
+  /* plan picker */
+  .planpick{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:12px 0 4px}
+  .planchip{background:rgba(4,14,22,.6);border:1px solid var(--line);border-radius:10px;padding:8px 10px;cursor:pointer;text-align:left;color:var(--tx);display:flex;flex-direction:column;gap:2px;font-size:12px;font-family:inherit}
+  .planchip b{color:var(--cyan2);font-size:13px}
+  .planchip .pc-price{font-size:16px;font-weight:700;color:var(--tx)}
+  .planchip.active{border-color:var(--cyan2);box-shadow:0 0 12px rgba(0,229,255,.3)}
+  .planchip:hover{border-color:var(--line2)}
+  /* ---- holographic orb centerpiece ---- */
+  .orbwrap{position:relative; width:120px; height:120px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; margin:0; overflow:hidden}
+  .orb{filter:drop-shadow(0 0 22px rgba(0,229,255,.45)); animation:orbfloat 5.5s ease-in-out infinite}
+  .orbwrap.talking .orb{animation:orbtalk .6s ease-in-out infinite}
+  .orbring{position:absolute; left:50%; top:50%; width:52px; height:52px; margin:-26px 0 0 -26px; border:1px solid rgba(0,229,255,.5); border-radius:50%; animation:ring 4s ease-out infinite; pointer-events:none}
+  .orbring.b{animation-delay:2s; border-color:rgba(255,194,75,.5)}
+  @keyframes ring{0%{transform:scale(.6); opacity:.8}100%{transform:scale(3.1); opacity:0}}
+  @keyframes orbfloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+  @keyframes orbtalk{0%,100%{transform:scale(1)}50%{transform:scale(1.045)}}
+  .orbstatus{margin-top:6px; font-size:10px; letter-spacing:4px; text-align:center; font-weight:700}
+  .orbstatus.online{color:var(--ok); text-shadow:0 0 10px rgba(61,255,165,.6)}
+  .orbstatus.listening{color:#b97cff; text-shadow:0 0 10px rgba(185,124,255,.6)}
+  .orbstatus.thinking{color:var(--gold); text-shadow:0 0 10px rgba(255,194,75,.6)}
+  .orbstatus.speaking{color:var(--cyan); text-shadow:0 0 12px rgba(0,229,255,.7)}
+  .orbstat{display:flex; flex-direction:column; gap:2px; min-width:0; align-items:flex-start}
+  .orbstat .orbstatus{margin-top:0; text-align:left}
+  /* core engagement line */
+  .coreline{font-size:10px;color:var(--gold);margin:2px 0 4px;padding:3px 8px;border-radius:8px;background:rgba(255,194,75,.08);border:1px solid rgba(255,194,75,.25);display:inline-block}
+  /* proactive prediction chip */
+  .chip.pro{background:rgba(255,194,75,.12); border-color:rgba(255,194,75,.5); color:#ffd98a}
+  /* plans matrix */
+  .fm{text-align:left;padding:5px 6px;border-bottom:1px solid rgba(0,229,255,.08);color:var(--tx);white-space:nowrap}
+  td.yes{text-align:center;color:var(--ok);padding:5px 4px;border-bottom:1px solid rgba(0,229,255,.08)}
+  td.no{text-align:center;color:var(--dim);padding:5px 4px;border-bottom:1px solid rgba(0,229,255,.08)}
+  td:not(.yes):not(.no){text-align:center;color:var(--tx);padding:5px 4px;border-bottom:1px solid rgba(0,229,255,.08)}
+</style>
+</head>
+<body>
+<div class="scanline"></div>
+
+<div id="boot">
+  <div id="bootReactor"></div>
+  <div class="bootlines" id="bootlines"></div>
+</div>
+
+<div class="gate" id="authGate"><div class="gatecard" id="gateCard"></div></div>
+
+<div id="app" class="hidden">
+  <header>
+    <div class="brand">
+      <div id="hdrReactor"></div>
+      <div>
+        <div class="title">ORA-COOL AI</div>
+        <div class="sub">Personal Intelligence System</div>
+      </div>
+    </div>
+    <div class="hdr-right">
+      <div class="live"><i></i> LIVE</div>
+      <div class="wake" id="wakeBadge" title="Wake word: Hey OraCool"><i></i> WAKE</div>
+      <div class="tier" id="tierBadge" title="Your plan">FREE</div>
+      <div class="acct" id="acctChip" title="Account"><span class="avatar" id="acctAvatar">?</span><span class="em" id="acctEmail">Sign in</span></div>
+      <button class="btn ghost" id="installBtn" style="display:none; padding:4px 10px; font-size:11px">📲 Install</button>
+      <div class="clock"><div class="t" id="clock">--:--:--</div><div class="d" id="date">----------</div></div>
+    </div>
+  </header>
+
+  <main>
+    <section class="left">
+      <div class="card chatwrap">
+        <div class="reactorhead">
+          <div class="orbwrap" id="orbWrap">
+            <div class="orbring"></div><div class="orbring b"></div>
+            <div class="orb" id="bigOrb"></div>
+          </div>
+          <div class="orbstat">
+            <div class="orbstatus online" id="orbStatus">ONLINE</div>
+            <div class="rtitle">OraCool Interface</div>
+            <div class="rsub">Voice · Text · Intel · Markets · Devices</div>
+          </div>
+        </div>
+        <div class="chat" id="chat"></div>
+        <canvas id="wave" width="1200" height="44"></canvas>
+        <div class="chiprow" id="chips"></div>
+        <div id="coreChip" style="display:none;margin:4px 10px 0;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--cyan2)"></div>
+        <div id="fileChips" style="display:none;flex-wrap:wrap;gap:2px;margin:4px 10px 0"></div>
+        <div class="inputbar">
+          <button class="iconbtn" id="attachBtn" title="Attach a file (PDF, Word, Excel, text, code…)">📎</button>
+          <button class="iconbtn" id="micBtn" title="Speak to OraCool">🎙️</button>
+          <input type="text" class="chatinput" id="input" placeholder="Ask OraCool anything…" autocomplete="off">
+          <button class="sendbtn" id="sendBtn">Send</button>
+          <input type="file" id="fileInput" style="display:none" multiple>
+        </div>
+      </div>
+    </section>
+
+    <aside class="right card">
+      <div class="tabs">
+        <div class="tab active" data-p="status">Status</div>
+        <div class="tab" data-p="intel">Intel</div>
+        <div class="tab" data-p="markets">Markets</div>
+        <div class="tab" data-p="trading">Trading</div>
+        <div class="tab" data-p="space">Space</div>
+        <div class="tab" data-p="cores">Cores</div>
+        <div class="tab" data-p="plans">Plans</div>
+        <div class="tab" data-p="devices">Devices</div>
+        <div class="tab" data-p="code">Code</div>
+        <div class="tab" data-p="account">Account</div>
+        <div class="tab" data-p="admin" id="adminTab" style="display:none">Admin</div>
+        <div class="tab" data-p="settings">Settings</div>
+      </div>
+      <div class="panelbody active" id="p-status"></div>
+      <div class="panelbody" id="p-intel"></div>
+      <div class="panelbody" id="p-markets"></div>
+      <div class="panelbody" id="p-trading"></div>
+      <div class="panelbody" id="p-space"></div>
+      <div class="panelbody" id="p-cores"></div>
+      <div class="panelbody" id="p-plans"></div>
+      <div class="panelbody" id="p-devices"></div>
+      <div class="panelbody" id="p-code"></div>
+      <div class="panelbody" id="p-account"></div>
+      <div class="panelbody" id="p-admin"></div>
+      <div class="panelbody" id="p-settings"></div>
+    </aside>
+  </main>
+</div>
+
+<!-- upgrade modal -->
+<div class="modal" id="upgradeModal">
+  <div class="modalcard">
+    <span class="close" id="upgradeClose">×</span>
+    <h2>Upgrade OraCool</h2>
+    <div class="muted" id="proLabel">Choose your plan</div>
+    <div class="planpick" id="planPick"></div>
+    <div class="price" id="proPrice">$50<span class="muted" style="font-size:15px">/month</span></div>
+    <div class="muted" id="proNgn" style="margin-bottom:10px">≈ ₦50,000 · 30 days</div>
+    <ul class="benefits" id="benefitList"></ul>
+    <label class="lbl">Your email</label>
+    <input type="email" id="upEmail" placeholder="you@example.com">
+    <label class="lbl">Currency</label>
+    <select id="upCur">
+      <option value="NGN" selected>₦ Naira (NGN) — settles to your Nigerian account</option>
+      <option value="USD">$ US Dollar (USD)</option>
+    </select>
+    <div class="hint">Foreign cards (USD, GBP, EUR…) are accepted by Paystack and converted to ₦ at settlement automatically.</div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn ghost" id="trialBtn">▶ 24h free trial</button>
+      <button class="btn gold" id="payBtn">💳 Pay with Paystack</button>
+    </div>
+    <div class="hint" id="payNote">Live charge — Paystack will process your payment securely.</div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   ORA-COOL AI — frontend v2
+   ============================================================ */
+const $ = (s, el=document) => el.querySelector(s);
+
+/* ---------- state ---------- */
+const DEFAULTS = { userName:'sir', provider:'auto', brainMode:'fast', apiKey:'', baseUrl:'', model:'',
+  hibpKey:'', haUrl:'', haToken:'', ttsOn:true, voiceName:'', wake:false, poSSID:'', proactive:true };
+let settings = {...DEFAULTS};
+let storageOK = true;
+try { localStorage.setItem('__t','1'); localStorage.removeItem('__t'); }
+catch(e){ storageOK = false; }
+function loadSettings(){ try{ if(storageOK){ const s = localStorage.getItem('oracool'); if(s) settings = {...DEFAULTS, ...JSON.parse(s)}; } }catch(e){} }
+function saveSettings(){ try{ if(storageOK) localStorage.setItem('oracool', JSON.stringify(settings)); }catch(e){} }
+function applyProactive(){ proactiveOn = settings.proactive!==false; }
+
+/* ---------- biometric + OAuth helpers ---------- */
+function bufToB64u(buf){ let s=''; new Uint8Array(buf).forEach(b=>s+=String.fromCharCode(b)); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function b64uToBuf(str){ str=str.replace(/-/g,'+').replace(/_/g,'/'); while(str.length%4)str+='='; const bin=atob(str); const u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i); return u; }
+function b64u(str){ return btoa(unescape(encodeURIComponent(str))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+
+let gate2fa = null;
+function completeGate(r, user, at, rt){
+  setSession({user, access_token:at, refresh_token:rt, pro_token:r.pro_token||null, admin:r.admin, blocked:r.blocked});
+  if(r.blocked){ $('#gOut').innerHTML='<div class="errbox">This account has been suspended by an administrator.</div>'; clearSession(); return; }
+  finishAuth();
+}
+async function oauthGo(provider, out){
+  out.innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span></div>';
+  const r=await post('/api/auth/oauth/url',{provider, redirect_to: location.origin+'/oauth'});
+  if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+  window.location.href=r.url;
+}
+async function faceLogin(out){
+  if(!window.PublicKeyCredential || !navigator.credentials){ out.innerHTML='<div class="errbox">Biometric login needs a secure browser (https). It works on the live app / installed PWA.</div>'; return; }
+  try{
+    out.innerHTML='<div class="hint">Waiting for your face / fingerprint…</div>';
+    const ch=await post('/api/auth/passkey/challenge');
+    const cred=await navigator.credentials.get({publicKey:{challenge:b64uToBuf(ch.challenge), rpId:location.hostname, userVerification:'required', timeout:60000}});
+    const r=await post('/api/auth/passkey/login',{credentialId: cred.id});
+    if(r.status===200 && r.email){
+      setSession({user:r.user, access_token:null, refresh_token:null, passkey:true, pro_token:r.pro_token||null, admin:r.admin, blocked:r.blocked});
+      if(r.blocked){ out.innerHTML='<div class="errbox">This account has been suspended by an administrator.</div>'; clearSession(); return; }
+      finishAuth();
+    } else out.innerHTML='<div class="errbox">'+escapeHtml(r.error||'No passkey found — sign in with email first, then register your face/fingerprint in Account.')+'</div>';
+  }catch(e){
+    out.innerHTML='<div class="hint">Biometric scan cancelled or unavailable in this preview. Install the app (Add to Home Screen) and use Face ID / fingerprint there.</div>';
+  }
+}
+async function registerPasskey(out){
+  const email=myEmail(); if(!email){ out.innerHTML='<div class="errbox">Sign in first.</div>'; return; }
+  if(!window.PublicKeyCredential){ out.innerHTML='<div class="errbox">Secure biometrics need HTTPS (live app / installed PWA).</div>'; return; }
+  try{
+    out.innerHTML='<div class="hint">Scan your face / fingerprint to register this device…</div>';
+    const ch=await post('/api/auth/passkey/challenge');
+    const cred=await navigator.credentials.create({publicKey:{
+      challenge:b64uToBuf(ch.challenge),
+      rp:{name:'OraCool AI', id:location.hostname},
+      user:{id:b64uToBuf(b64u(email)), name:email, displayName:email},
+      pubKeyCredParams:[{type:'public-key', alg:-7},{type:'public-key', alg:-257}],
+      authenticatorSelection:{authenticatorAttachment:'platform', userVerification:'required'},
+      timeout:60000, attestation:'none'
+    }});
+    let pk=''; try{ pk=bufToB64u(cred.response.getPublicKey()); }catch(e){}
+    const r=await post('/api/auth/passkey/register',{email, credential:{id:cred.id, publicKey:pk, transports:(cred.response.getTransports?cred.response.getTransports():[])}});
+    if(r.status==='registered'){ out.innerHTML='<div class="okbox">✓ Face / fingerprint registered. Next time, tap "Face login" at the gate.</div>'; }
+    else out.innerHTML='<div class="errbox">'+escapeHtml(r.error||'Registration failed.')+'</div>';
+  }catch(e){ out.innerHTML='<div class="hint">Registration cancelled or unsupported in this preview. It works on the live app / installed PWA.</div>'; }
+}
+loadSettings();
+
+let srv = null;            // server config (/api/config)
+let session = null;        // Supabase session {user, access_token, refresh_token}
+try{ if(storageOK) session = JSON.parse(localStorage.getItem('oracool_session')||'null'); }catch(e){}
+function saveSession(){ try{ if(storageOK) localStorage.setItem('oracool_session', JSON.stringify(session)); }catch(e){} }
+function setSession(s){ session = s; saveSession(); renderAcctChip(); updateAdminUI(); if(s && s.pro_token) setProToken(s.pro_token); }
+function updateAdminUI(){
+  const t=$('#adminTab'); if(!t) return;
+  t.style.display = (session && session.admin) ? '' : 'none';
+}
+function clearSession(){ session = null; saveSession(); renderAcctChip(); }
+let activeCore = null;
+try{ if(storageOK) activeCore = JSON.parse(localStorage.getItem('oracool_core')||'null'); }catch(e){}
+function setActiveCore(c){ activeCore=c; try{ if(storageOK){ if(c) localStorage.setItem('oracool_core', JSON.stringify(c)); else localStorage.removeItem('oracool_core'); } }catch(e){} updateCoreUI(); }
+function updateCoreUI(){
+  const chip=$('#coreChip'); if(!chip) return;
+  if(activeCore){ chip.style.display='block'; chip.innerHTML='⚡ Active core: <b>'+escapeHtml(activeCore.name)+'</b> — '+escapeHtml(activeCore.role)+' <a href="#" id="coreChipClear" style="color:#ffb86b;margin-left:6px">✕</a>'; const c=$('#coreChipClear'); if(c) c.onclick=e=>{e.preventDefault(); setActiveCore(null);}; }
+  else chip.style.display='none';
+}
+
+let proToken = '';         // PRO JWT
+try{ if(storageOK) proToken = localStorage.getItem('oracool_pro') || ''; }catch(e){}
+function setProToken(t){ proToken = t; try{ if(storageOK){ if(t) localStorage.setItem('oracool_pro', t); else localStorage.removeItem('oracool_pro'); } }catch(e){} updateTier(); }
+function isPro(){ return !!proToken; }
+function updateTier(){
+  const b = $('#tierBadge');
+  if(isPro()){ b.textContent = 'PRO ◈'; b.className = 'tier pro'; }
+  else { b.textContent = 'FREE'; b.className = 'tier'; }
+  const locks = document.querySelectorAll('.toolbtn .lk');
+  locks.forEach(l=>{ l.textContent = isPro() ? '' : '🔒'; });
+}
+
+/* ---------- reactor ---------- */
+function reactor(size){
+  const c = size/2;
+  const rot = (r,dur,from,to)=>`<animateTransform attributeName="transform" type="rotate" from="${from} ${c} ${c}" to="${to} ${c} ${c}" dur="${dur}s" repeatCount="indefinite"/>`;
+  return `<svg class="reactor" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" style="filter:drop-shadow(0 0 10px rgba(0,229,255,.35))">
+    <g><circle cx="${c}" cy="${c}" r="${c*0.90}" fill="none" stroke="#00e5ff" stroke-width="1" stroke-dasharray="3 12" opacity=".42"/>${rot(1,26,0,360)}</g>
+    <g><circle cx="${c}" cy="${c}" r="${c*0.72}" fill="none" stroke="#5ef0ff" stroke-width="1.4" stroke-dasharray="120 34 16 40" opacity=".6"/>${rot(2,16,360,0)}</g>
+    <circle cx="${c}" cy="${c}" r="${c*0.54}" fill="none" stroke="#00e5ff" stroke-width="1" opacity=".28"/>
+    <g><circle cx="${c}" cy="${c}" r="${c*0.54}" fill="none" stroke="#7df9ff" stroke-width="2.6" stroke-dasharray="2 9" opacity=".8"/>${rot(3,8,0,360)}</g>
+    <circle cx="${c}" cy="${c}" r="${c*0.30}" fill="#06121f" stroke="#00e5ff" stroke-width="2"/>
+    <polygon points="${c},${c-c*0.28} ${c-c*0.242},${c+c*0.14} ${c+c*0.242},${c+c*0.14}" fill="#0a1420" stroke="#ffc24b" stroke-width="${Math.max(1.2, size*0.012)}" stroke-linejoin="round"/>
+    <polygon points="${c},${c-c*0.135} ${c-c*0.117},${c+c*0.068} ${c+c*0.117},${c+c*0.068}" fill="#ffc24b" opacity=".9">
+      <animate attributeName="opacity" values="0.55;1;0.55" dur="2.4s" repeatCount="indefinite"/>
+    </polygon>
+    <circle cx="${c}" cy="${c+c*0.02}" r="${c*0.05}" fill="#c4f6ff">
+      <animate attributeName="r" values="${c*0.03};${c*0.07};${c*0.03}" dur="2.4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.6;1;0.6" dur="2.4s" repeatCount="indefinite"/>
+    </circle>
+  </svg>`;
+}
+$('#bootReactor').innerHTML = reactor(150);
+$('#hdrReactor').innerHTML = reactor(38);
+$('#bigOrb').innerHTML = reactor(120);
+function setOrbStatus(s){
+  const el=$('#orbStatus'); if(!el) return;
+  el.textContent=s.toUpperCase(); el.className='orbstatus '+s;
+}
+
+/* ---------- clock ---------- */
+function tick(){ const n=new Date(); $('#clock').textContent=n.toLocaleTimeString('en-GB');
+  $('#date').textContent=n.toLocaleDateString('en-US',{weekday:'short',year:'numeric',month:'short',day:'numeric'}); }
+setInterval(tick,1000); tick();
+
+/* ---------- boot ---------- */
+const BOOT = [
+  'ORA-COOL AI — boot sequence initiated…',
+  'Loading neural core … <span class="ok">OK</span>',
+  'Calibrating holographic interface … <span class="ok">OK</span>',
+  'Linking voice module … <span class="ok">OK</span>',
+  'Mounting intelligence & OSINT suite … <span class="ok">OK</span>',
+  'Connecting payment & device bridges … <span class="ok">OK</span>',
+  'ALL SYSTEMS ONLINE.'
+];
+function boot(){
+  const el=$('#bootlines'); let i=0;
+  const iv=setInterval(()=>{
+    if(i<BOOT.length){ el.innerHTML+=(i?'<br>':'')+BOOT[i]; i++; }
+    else{ clearInterval(iv); setTimeout(()=>{ $('#boot').classList.add('gone'); $('#app').classList.remove('hidden'); init(); },600); }
+  },400);
+}
+boot();
+
+/* ---------- TTS + waveform ---------- */
+let voices=[];
+function loadVoices(){ try{ voices=speechSynthesis.getVoices(); }catch(e){} }
+if('speechSynthesis' in window){ loadVoices(); speechSynthesis.onvoiceschanged=loadVoices; }
+let speaking=false, waveRAF=null;
+const wave=$('#wave'), wctx=wave.getContext('2d');
+function startWave(){ speaking=true; wave.classList.add('on'); drawWave(); const w=$('#orbWrap'); if(w)w.classList.add('talking'); setOrbStatus('speaking'); }
+function stopWave(){ speaking=false; wave.classList.remove('on'); if(waveRAF)cancelAnimationFrame(waveRAF); wctx.clearRect(0,0,wave.width,wave.height); const w=$('#orbWrap'); if(w)w.classList.remove('talking'); setOrbStatus('online'); }
+function drawWave(){
+  if(!speaking) return;
+  const W=wave.width,H=wave.height; wctx.clearRect(0,0,W,H);
+  const bars=48,bw=W/bars;
+  for(let i=0;i<bars;i++){
+    const t=performance.now()/1000;
+    const h=Math.abs(Math.sin(t*3+i*0.55))*(H-8)*(0.35+0.65*Math.random());
+    const x=i*bw+bw*0.25,y=(H-h)/2;
+    const g=wctx.createLinearGradient(0,y,0,y+h); g.addColorStop(0,'#7df9ff'); g.addColorStop(1,'#00e5ff');
+    wctx.fillStyle=g; wctx.globalAlpha=0.9; wctx.beginPath();
+    if(wctx.roundRect) wctx.roundRect(x,y,bw*0.5,h,2); else wctx.rect(x,y,bw*0.5,h);
+    wctx.fill();
+  }
+  waveRAF=requestAnimationFrame(drawWave);
+}
+function speak(text){
+  if(!settings.ttsOn || !('speechSynthesis' in window)) return;
+  try{
+    speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(text); u.rate=1.02; u.pitch=0.92; u.volume=1;
+    if(settings.voiceName){ const v=voices.find(v=>v.name===settings.voiceName); if(v)u.voice=v; }
+    else { const v=voices.find(v=>/en[-_]GB|Daniel|George|UK English Male/i.test(v.name)) || voices.find(v=>v.lang&&v.lang.startsWith('en')); if(v)u.voice=v; }
+    u.onstart=()=>{ startWave(); pauseWake(); };
+    u.onend=()=>{ stopWave(); resumeWake(); };
+    u.onerror=()=>{ stopWave(); resumeWake(); };
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+
+/* ---------- chat ---------- */
+const chat=$('#chat');
+const history=[];
+const MAXH=30;
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function scrollChat(){ chat.scrollTop=chat.scrollHeight; }
+function systemPrompt(){
+  const name=settings.userName||'sir';
+  return `You are OraCool AI, a refined, calm, confident and subtly witty artificial intelligence — a personal assistant in the spirit of J.A.R.V.I.S. from Iron Man. Address the user as "${name}". Keep replies concise and conversational, as if spoken aloud, unless the user asks for detail. You can help with knowledge, reasoning, writing, coding, security/OSINT analysis, markets/finance, weather, and smart-home control. When the user shares tool results, analyze them like a calm intelligence analyst. Never claim to have run a tool whose output you have not seen. Stay helpful, lawful, and ethical. Never break character.`;
+}
+function addUser(text, histText){
+  const b=document.createElement('div'); b.className='bubble user'; b.textContent=text;
+  chat.appendChild(b); scrollChat();
+  history.push({role:'user',content:histText!==undefined?histText:text}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
+}
+function addAI(text, cls){
+  const b=document.createElement('div'); b.className='bubble ai'+(cls?' '+cls:'');
+  b.innerHTML='<span class="who">ORA-COOL</span>';
+  const body=document.createElement('div'); body.textContent=text; b.appendChild(body);
+  chat.appendChild(b); scrollChat(); return b;
+}
+function addSystemNote(html){
+  const b=document.createElement('div'); b.className='bubble ai';
+  b.innerHTML='<span class="who">SYSTEM</span><div>'+html+'</div>';
+  chat.appendChild(b); scrollChat(); return b;
+}
+function addErr(text){
+  const b=document.createElement('div'); b.className='bubble ai err';
+  b.innerHTML='<span class="who">ORA-COOL</span>';
+  const body=document.createElement('div'); body.textContent=text; b.appendChild(body);
+  chat.appendChild(b); scrollChat();
+}
+function greeting(){
+  const h=new Date().getHours();
+  const g=h<5?'Working late': h<12?'Good morning': h<17?'Good afternoon':'Good evening';
+  const msg=`${g}, ${settings.userName||'sir'}. All systems are online. What's on your schedule today — or what would you like me to do for you?`;
+  addAI(msg); speak(msg);
+  lastUserAt = Date.now();
+}
+
+let pendingFiles=[];
+function renderFileChips(){
+  const c=$('#fileChips'); if(!c) return;
+  if(!pendingFiles.length){ c.style.display='none'; c.innerHTML=''; return; }
+  c.style.display='flex';
+  c.innerHTML=pendingFiles.map((f,i)=>`<span class="tag">📎 ${escapeHtml(f.name)} <a href="#" data-fi="${i}" style="color:#ffb86b">✕</a></span>`).join('');
+  c.querySelectorAll('[data-fi]').forEach(a=>a.onclick=e=>{ e.preventDefault(); pendingFiles.splice(+a.dataset.fi,1); renderFileChips(); });
+}
+function runDeviceCommand(text){
+  const t=text.toLowerCase();
+  const open=(u)=>{ try{ window.open(u,'_blank'); }catch(e){ window.location.href=u; } };
+  const R=[
+    [/\bopen\s+whatsapp\b/, ()=>open('https://wa.me/'), 'Opening WhatsApp on your device, sir.'],
+    [/\bopen\s+(?:youtube|yt)\b/, ()=>open('https://youtube.com'), 'Opening YouTube, sir.'],
+    [/\bopen\s+instagram\b/, ()=>open('https://instagram.com'), 'Opening Instagram, sir.'],
+    [/\bopen\s+spotify\b/, ()=>open('https://open.spotify.com'), 'Opening Spotify, sir.'],
+    [/\bopen\s+netflix\b/, ()=>open('https://netflix.com'), 'Opening Netflix, sir.'],
+    [/\bopen\s+(?:x|twitter)\b/, ()=>open('https://x.com'), 'Opening X, sir.'],
+    [/\bopen\s+telegram\b/, ()=>open('https://t.me'), 'Opening Telegram, sir.'],
+    [/\bopen\s+google\b/, ()=>open('https://google.com'), 'Opening Google, sir.'],
+    [/\bopen\s+gmail\b/, ()=>open('https://mail.google.com'), 'Opening Gmail, sir.'],
+    [/\bopen\s+camera\b|\btake\s+a\s+(?:photo|picture|selfie)\b/, ()=>startCamera(), 'Opening your camera, sir.'],
+    [/\bsend\s+(?:an?\s+)?email\b|\bemail\s+to\b/, ()=>open('mailto:'), 'Opening your email composer, sir.'],
+    [/\bcall\s+(\+?\d[\d\s\-]{5,})/, (m)=>{ open('tel:'+(m[1]||'').replace(/\s+/g,'')); }, null],
+  ];
+  for(const r of R){
+    const m=text.match(r[0]);
+    if(m){ try{ if(r[1]) r[1](m); }catch(e){} return {handled:true, reply: r[2]||('Done, sir.')}; }
+  }
+  return {handled:false};
+}
+
+/* ---------- proactive engine (talks before the user asks) ---------- */
+let proactiveOn = true, lastUserAt = Date.now();
+const PROACTIVE = {
+  morning: name => `${name}, good morning. I've already scanned the markets, weather and your systems — shall I run your briefing?`,
+  afternoon: name => `${name}, quick check while we're quiet: markets moved ${Math.random()<.5?'up':'down'} overnight. Want the numbers?`,
+  evening: name => `${name}, end of day. Want me to summarize today's markets and weather?`,
+  night: name => `Working late, ${name}. I'm right here — ask me anything, or shall I show today's space picture?`,
+};
+const TOPIC_HINTS = [
+  [/bitcoin|crypto|btc/i, 'Want a live Bitcoin signal right now?'],
+  [/weather|rain|temperature/i, 'Shall I check the weather where you are?'],
+  [/stock|tesla|apple|market/i, 'Want me to analyze a stock for you?'],
+  [/space|nasa|mars|asteroid/i, 'Shall I pull the NASA picture of the day?'],
+  [/game|bored|joke|fun/i, 'Care for a game, a riddle, or a joke?'],
+  [/phone|number|caller|trace/i, 'Need me to trace a phone number or email?'],
+];
+function proactivePick(){
+  const name = settings.userName||'sir';
+  const h = new Date().getHours();
+  let pool = [];
+  if(h<12) pool.push(PROACTIVE.morning(name));
+  if(h>=12 && h<17) pool.push(PROACTIVE.afternoon(name));
+  if(h>=17 && h<22) pool.push(PROACTIVE.evening(name));
+  if(h>=22 || h<5) pool.push(PROACTIVE.night(name));
+  const last = (history.length && history[history.length-1] && history[history.length-1].content || '').toLowerCase();
+  for(const [re, txt] of TOPIC_HINTS){ if(re.test(last)){ pool.unshift(txt); break; } }
+  if(!pool.length) pool.push(`Just so you know, ${name}, I'm standing by — markets, OSINT, space, and devices are all live.`);
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+const PROACTIVE_IDLE_MS = 30*60*1000;   // talk only after 30 min of inactivity
+function proactiveLoop(){
+  if(!proactiveOn || busy || speaking || listening) return;
+  if(Date.now()-lastUserAt < PROACTIVE_IDLE_MS) return;
+  const msg = proactivePick();
+  if(msg){ addAI(msg); speak(msg); }
+  lastUserAt = Date.now();
+}
+setInterval(proactiveLoop, 30000);
+
+/* ---------- intent prediction (completes what you might say) ---------- */
+const PREDICT = [
+  [/^bit/i, 'What is the current Bitcoin price?'],
+  [/^wea/i, 'What is the weather in Lagos?'],
+  [/^tes/i, 'Analyze Tesla stock'],
+  [/^jok/i, 'Tell me a joke'],
+  [/^space|^nas|^mar/i, 'Show me the space picture'],
+  [/^who/i, 'Who are you?'],
+  [/^tra/i, 'Trace phone number '],
+];
+function predictIntent(){
+  const v = ($('#input').value||'').trim().toLowerCase();
+  let pred = null;
+  if(v){ for(const [re, txt] of PREDICT){ if(re.test(v)){ pred = txt; break; } } }
+  const old = $('#predChip');
+  if(pred){ 
+    if(old) old.textContent = '💡 '+pred;
+    else { const c=document.createElement('span'); c.className='chip pro'; c.id='predChip'; c.textContent='💡 '+pred; $('#chips').prepend(c); }
+    $('#predChip').onclick=()=>{ $('#input').value=pred.replace('💡 ',''); $('#predChip').remove(); $('#input').focus(); };
+  } else if(old) old.remove();
+}
+
+let busy=false;
+async function send(text){
+  text=(text||'').trim();
+  lastUserAt = Date.now();
+  const files=pendingFiles.slice(); pendingFiles=[]; renderFileChips();
+  if(!text && !files.length) return;
+  if(busy) return;
+  if(!files.length){
+    const dc=runDeviceCommand(text);
+    if(dc.handled){ addUser(text); const m=dc.reply; addAI(m); speak(m); return; }
+  }
+  busy=true; $('#sendBtn').disabled=true;
+  setOrbStatus('thinking');
+  $('#input').value=''; $('#input').focus();
+  let display=text, content=text;
+  if(files.length){
+    display=(text||'Please analyze the attached file')+' 📎 '+files.map(f=>f.name).join(', ');
+    content=(text||'Please analyze the attached file(s) and summarize the key points.')+'\n\n'+files.map(f=>`=== FILE: ${f.name} (${f.type||'text'}) ===\n${f.text}`).join('\n\n');
+  }
+  addUser(display, content);
+  let coreNames=[], coreExtra='';
+  if(activeCore){ coreNames.push(activeCore.name); coreExtra+=activeCore.persona+'\n\n'; }
+  if(/[@#][A-Za-z0-9_]+/.test(text)){
+    try{
+      const cr=await post('/api/core/route',{query:text});
+      (cr.cores||[]).forEach(c=>coreNames.push(String(c.name).replace(/_/g,' ')));
+      (cr.personas||[]).forEach(p=>{ if(coreExtra.indexOf(p)<0) coreExtra+=p+'\n\n'; });
+    }catch(e){}
+  }
+  const b=addAI(''); const body=b.lastChild;
+  if(coreNames.length){ const who=b.querySelector('.who'); if(who) who.textContent='ORA-COOL · '+[...new Set(coreNames)].join(' + '); }
+  body.innerHTML='<span class="dots"></span>';
+  const msgs=[{role:'system',content:systemPrompt()+(coreExtra?('\n\n'+coreExtra):'')},...history];
+  try{
+    let acc='';
+    const payload={messages:msgs, stream:true, provider:settings.provider||'auto', max_tokens:600};
+    const _em=myEmail(); if(_em) payload.email=_em; if(proToken) payload.token=proToken;
+    if(settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
+    else if(settings.brainMode==='fast' && srv && srv.brain && srv.brain.fast_model){ payload.provider='groq'; payload.model=srv.brain.fast_model; }
+    const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!resp.ok){ let j=null; try{j=await resp.json();}catch(e){} throw new Error((j&&j.error)||('AI provider error '+resp.status)); }
+    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf=''; let finished=false;
+    outer: while(true){
+      const {done,value}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      let idx;
+      while((idx=buf.indexOf('\n\n'))>=0){
+        const chunk=buf.slice(0,idx); buf=buf.slice(idx+2);
+        for(const line of chunk.split('\n')){
+          if(line.startsWith('data:')){
+            const data=line.slice(5).trim();
+            if(data==='[DONE]'){ finished=true; break outer; }
+            try{
+              const j=JSON.parse(data);
+              if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); }
+              if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
+              const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; body.textContent=acc; scrollChat(); }
+            }catch(e){}
+          }
+        }
+      }
+    }
+    if(!finished){ body.textContent=acc||'(no response)'; }
+    history.push({role:'assistant',content:acc}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
+    speak(acc);
+  }catch(e){
+    body.textContent='';
+    const m=e.message||String(e);
+    if(/api key|AI provider error 400|no credits|insufficient|429/i.test(m))
+      addErr('⚠️ Brain issue: '+(/no credits|insufficient|429/i.test(m)?'your AI provider has no credits/billing. Add credits or switch provider in Settings.':m));
+    else addErr('⚠️ '+m);
+  }
+  busy=false; $('#sendBtn').disabled=false; scrollChat(); setOrbStatus('online');
+}
+$('#sendBtn').onclick=()=>send($('#input').value);
+$('#input').addEventListener('keydown',e=>{ if(e.key==='Enter')send($('#input').value); });
+$('#input').addEventListener('input', predictIntent);
+$('#attachBtn').onclick=()=>$('#fileInput').click();
+$('#fileInput').addEventListener('change',async ()=>{
+  const fl=[...$('#fileInput').files]; $('#fileInput').value='';
+  for(const f of fl){
+    if(f.size>5*1024*1024){ addErr('⚠️ '+f.name+' is over 5 MB — skipped.'); continue; }
+    try{
+      const dataURL=await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>res(null); r.readAsDataURL(f); });
+      if(!dataURL) throw new Error('read failed');
+      const data_b64=dataURL.split(',')[1]||'';
+      const r=await post('/api/files/analyze',{name:f.name, mime:f.type||'', data_b64});
+      if(r.error){ addErr('⚠️ '+r.error); continue; }
+      if(!r.text){ addSystemNote('📎 '+escapeHtml(f.name)+': '+escapeHtml(r.note||'')); continue; }
+      pendingFiles.push({name:f.name, type:r.type, text:r.text});
+      addSystemNote('📎 '+escapeHtml(f.name)+' attached — '+(r.chars||0).toLocaleString()+' chars, ready to analyze.');
+    }catch(e){ addErr('⚠️ Could not read '+f.name+': '+e.message); }
+  }
+  renderFileChips();
+});
+
+/* ---------- voice input ---------- */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let rec=null, listening=false;
+if(SR){
+  rec=new SR(); rec.lang='en-US'; rec.interimResults=true; rec.continuous=false;
+  rec.onresult=e=>{ let t=''; for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript; $('#input').value=t; };
+  rec.onstart=()=>{ setOrbStatus('listening'); };
+  rec.onend=()=>{ listening=false; $('#micBtn').classList.remove('listening'); setOrbStatus('online'); const v=$('#input').value.trim(); if(v)send(v); };
+  rec.onerror=e=>{ listening=false; $('#micBtn').classList.remove('listening');
+    if(e.error==='not-allowed')addErr('🎙️ Microphone blocked. Voice input works best in a full browser tab (not the sandboxed preview).'); };
+}
+$('#micBtn').onclick=()=>{
+  if(!SR){ addErr('Voice input not supported in this browser.'); return; }
+  if(listening){ rec.stop(); return; }
+  listening=true; $('#micBtn').classList.add('listening'); $('#input').value='';
+  try{ rec.start(); }catch(e){}
+};
+
+/* ---------- wake word engine: "Hey OraCool" ---------- */
+const WAKE_PHRASES=['oracool','ora cool','oracle','hey oracool','ok oracool','okay oracool','hey oracle'];
+let wakeArmed=false;     // user wants wake word on
+let wakeMode='off';      // off | spot | command
+let wakePaused=false;    // temporarily paused while OraCool speaks
+let spotRec=null;
+
+function setWakeArmed(on){
+  wakeArmed=on;
+  if(on){ wakeMode='off'; startSpot(); }
+  else { wakeMode='off'; stopSpot(); }
+  updateWakeUI();
+}
+function updateWakeUI(){
+  const w=$('#wakeBadge'); if(!w)return;
+  w.classList.toggle('armed', wakeArmed);
+  w.classList.toggle('listening', wakeMode==='command');
+  w.innerHTML='<i></i> '+(wakeMode==='command'?'LISTENING':'WAKE');
+  const tgl=$('#sWake'); if(tgl) tgl.classList.toggle('on', wakeArmed);
+}
+function startSpot(){
+  if(!wakeArmed || wakeMode!=='off' && wakeMode!=='spot') return;
+  if(wakePaused) return;
+  if(!SR){ addErr('Wake word needs Chrome/Edge with mic permission.'); return; }
+  stopSpot();
+  wakeMode='spot';
+  spotRec=new SR();
+  spotRec.continuous=true; spotRec.interimResults=true; spotRec.lang='en-US';
+  let rolling='';
+  spotRec.onresult=e=>{
+    let t=''; for(let i=e.resultIndex;i<e.results.length;i++) t+=' '+e.results[i][0].transcript;
+    rolling=(rolling+' '+t).toLowerCase().slice(-200);
+    if(WAKE_PHRASES.some(p=>rolling.includes(p))){ onWake(); }
+  };
+  spotRec.onend=()=>{ if(wakeArmed && wakeMode==='spot' && !wakePaused){ try{ spotRec.start(); }catch(e){} } };
+  spotRec.onerror=e=>{
+    if(e.error==='not-allowed'||e.error==='service-not-allowed'){ wakeArmed=false; settings.wake=false; saveSettings(); updateWakeUI(); addErr('🎙️ Mic blocked — wake word needs mic permission.'); }
+    else if(e.error==='no-speech'){ /* restart handled by onend */ }
+  };
+  try{ spotRec.start(); }catch(e){}
+  updateWakeUI();
+}
+function stopSpot(){ if(spotRec){ spotRec.onend=null; try{spotRec.stop();}catch(e){} spotRec=null; } }
+function pauseWake(){ if(wakeArmed && wakeMode==='spot'){ wakePaused=true; stopSpot(); } }
+function resumeWake(){ if(wakePaused){ wakePaused=false; if(wakeArmed){ wakeMode='off'; startSpot(); } } }
+
+function onWake(){
+  stopSpot();
+  wakeMode='command'; updateWakeUI();
+  chime();
+  listenCommand();
+}
+function chime(){
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    const ctx=new AC();
+    const play=(f,t0,dur,vol)=>{ const o=ctx.createOscillator(),g=ctx.createGain(); o.type='sine'; o.frequency.value=f;
+      g.gain.setValueAtTime(0.0001,ctx.currentTime+t0); g.gain.exponentialRampToValueAtTime(vol,ctx.currentTime+t0+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+t0+dur);
+      o.connect(g).connect(ctx.destination); o.start(ctx.currentTime+t0); o.stop(ctx.currentTime+t0+dur+0.05); };
+    play(880,0,0.15,0.18); play(1320,0.09,0.2,0.16);
+  }catch(e){}
+}
+function listenCommand(){
+  const r=new SR(); r.continuous=false; r.interimResults=false; r.lang='en-US';
+  r.onresult=e=>{ const t=e.results[0][0].transcript.trim(); if(t){ $('#input').value=t; send(t).finally(()=>{ wakeMode='off'; if(wakeArmed) startSpot(); else updateWakeUI(); }); } };
+  r.onend=()=>{ if(wakeMode==='command'){ wakeMode='off'; if(wakeArmed) startSpot(); else updateWakeUI(); } };
+  r.onerror=()=>{ if(wakeMode==='command'){ wakeMode='off'; if(wakeArmed) startSpot(); else updateWakeUI(); } };
+  try{ r.start(); }catch(e){}
+}
+$('#wakeBadge').onclick=()=>{
+  if(!SR){ addErr('Wake word not supported in this browser.'); return; }
+  setWakeArmed(!wakeArmed);
+  if(wakeArmed){ addSystemNote('🎙️ <b>Wake word armed.</b> Say "<b>Hey OraCool</b>" to get my attention.'); }
+  else addSystemNote('Wake word disarmed.');
+};
+
+/* ---------- chips ---------- */
+const chips=[
+  ['Morning briefing',()=>send(`Give me a quick briefing: today's date, the weather, and the top market movers right now.`)],
+  ['Who are you?',()=>send('Who are you? Introduce yourself briefly.')],
+  ['Tell me a joke',()=>send('Tell me a short, classy joke.')],
+  ['Weather in Lagos',()=>runWeather('Lagos',true)],
+  ['Clear chat',()=>{ chat.innerHTML=''; history.length=0; addAI('Conversation cleared, sir. Ready when you are.'); }]
+];
+chips.forEach(([label,fn])=>{ const c=document.createElement('span'); c.className='chip'; c.textContent=label; c.onclick=fn; $('#chips').appendChild(c); });
+
+/* ---------- generic helpers ---------- */
+async function post(url, body){
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({error:'Bad response '+r.status}));
+  if(r.status===402 && j.locked){ openUpgrade(); }
+  return j;
+}
+function kv(title,pairs){
+  return `<div class="tag" style="margin-top:6px">${escapeHtml(title)}</div><div class="kv">${pairs.map(([k,v])=>`<div class="k">${escapeHtml(k)}</div><div class="val">${escapeHtml(String(v==null||v===''?'—':v))}</div>`).join('')}</div>`;
+}
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('.tab').forEach(t=>{
+  t.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.panelbody').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active'); $('#p-'+t.dataset.p).classList.add('active');
+    if(t.dataset.p==='status')renderStatus();
+    if(t.dataset.p==='devices')renderDevices();
+    if(t.dataset.p==='code')renderCode();
+    if(t.dataset.p==='account')renderAccount();
+    if(t.dataset.p==='settings')renderSettings();
+    if(t.dataset.p==='trading'){ renderTrading(); refreshTrading(); }
+    if(t.dataset.p==='space')renderSpace();
+    if(t.dataset.p==='cores')renderCores();
+    if(t.dataset.p==='plans')renderPlans();
+    if(t.dataset.p==='admin')renderAdmin();
+  };
+});
+
+/* ---------- status ---------- */
+function renderStatus(){
+  const brainOK=!(srv && !srv.brain.openai && !srv.brain.groq);
+  const hasHA=!!(settings.haUrl&&settings.haToken);
+  const rows=[
+    ['Neural core (AI brain)', brainOK?'ok':'off', brainOK? (srv?(srv.brain.default_provider==='groq'?'Groq · online':'Online'):'online') : 'no key'],
+    ['Holographic interface','ok','v2.0 · online'],
+    ['Voice module (TTS)', settings.ttsOn?'ok':'warn', settings.ttsOn?'on':'off'],
+    ['Intelligence suite', isPro()?'ok':'warn', isPro()?'PRO unlocked':'Free tier'],
+    ['OSINT toolkit','ok','IP · Domain · Username · Email'],
+    ['Markets feed','ok','Stocks · Crypto · FRED'],
+    ['Payments (Paystack)', srv&&srv.keys.PAYSTACK_SECRET_KEY?'ok':'off', srv&&srv.keys.PAYSTACK_SECRET_KEY?'live keys loaded':'not configured'],
+    ['Device bridge (Home Assistant)', hasHA?'ok':'off', hasHA?'linked':'not configured'],
+  ];
+  $('#p-status').innerHTML=`
+    <h3 class="ptitle">System Status</h3>
+    <div style="text-align:center; margin:6px 0 14px;">
+      <div style="font-size:38px; letter-spacing:2px; color:var(--cyan2); font-variant-numeric:tabular-nums; text-shadow:0 0 18px rgba(0,229,255,.5);" id="bigclock">--:--:--</div>
+      <div class="muted" id="bigdate"></div>
+    </div>
+    ${rows.map(r=>`<div class="sysline"><span class="dot ${r[1]}"></span><span class="k">${r[0]}</span><span class="v">${r[2]}</span></div>`).join('')}
+    ${isPro()? '<div class="okbox">◈ PRO mode active — full intelligence suite unlocked.</div>' : '<div class="warnbox">Free tier. <a href="#" id="upLink">Upgrade to PRO</a> for web search, Shodan, VirusTotal, AbuseIPDB, URLScan &amp; LeakCheck.</div>'}
+    <div class="note">Keys are stored server-side (keys.json) and never exposed to the browser — except public keys.</div>`;
+  const up=$('#upLink'); if(up)up.onclick=e=>{e.preventDefault(); openUpgrade();};
+  const bc=$('#bigclock'),bd=$('#bigdate');
+  setInterval(()=>{ if(!$('#bigclock'))return; const n=new Date(); bc.textContent=n.toLocaleTimeString('en-GB'); bd.textContent=n.toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'}); },1000);
+  const n=new Date(); bc.textContent=n.toLocaleTimeString('en-GB'); bd.textContent=n.toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+}
+
+/* ---------- intel panel ---------- */
+const INTEL_TOOLS=[
+  {id:'ip',label:'IP Recon',free:true,ph:'8.8.8.8',hint:'Geolocation, ISP/ASN, reverse DNS, IPinfo.'},
+  {id:'domain',label:'Domain',free:true,ph:'example.com',hint:'WHOIS/RDAP + full DNS records.'},
+  {id:'email',label:'Email Breach',free:true,ph:'name@example.com',hint:'HaveIBeenPwned (add HIBP key in Settings).'},
+  {id:'username',label:'Username',free:true,ph:'johndoe',hint:'Checks ~50 platforms for matching profiles.'},
+  {id:'phone',label:'Phone Intel',free:true,ph:'+234 803 123 4567',hint:'Global — 200+ countries. Resolves country, state/region/city & carrier from a number\'s metadata.'},
+  {id:'weather',label:'Weather',free:true,ph:'Lagos',hint:'Live conditions & forecast.'},
+  {id:'search',label:'Web Search',free:false,ph:'any query',hint:'Deep web search via Tavily.'},
+  {id:'shodan',label:'Shodan Host',free:false,ph:'8.8.8.8',hint:'Open ports, services & host intelligence.'},
+  {id:'virustotal',label:'VirusTotal',free:false,ph:'google.com',hint:'Reputation for domains, IPs, URLs & hashes.'},
+  {id:'abuseipdb',label:'AbuseIPDB',free:false,ph:'8.8.8.8',hint:'IP abuse confidence & report history.'},
+  {id:'urlscan',label:'URL Scanner',free:false,ph:'example.com',hint:'Submit a URL for sandbox scanning.'},
+  {id:'leakcheck',label:'LeakCheck',free:false,ph:'email/username',hint:'Breach & leak intelligence (email/user/phone).'},
+];
+let curIntel='ip';
+function renderIntel(){
+  $('#p-intel').innerHTML=`
+    <h3 class="ptitle">Intelligence Suite</h3>
+    <div class="toolgrid">${INTEL_TOOLS.map(t=>`
+      <div class="toolbtn ${t.id===curIntel?'active':''}" data-t="${t.id}">
+        ${escapeHtml(t.label)}${t.free?'':' <span class="lk">'+(isPro()?'':'🔒')+'</span>'}
+      </div>`).join('')}
+    </div>
+    <div id="intelform"></div>
+    <div class="result" id="intelout"></div>
+    <div class="note">All lookups use public, legal sources. For research &amp; your own accounts only.</div>
+
+    <div class="tag" style="margin-top:16px">🔗 Link tracker <span class="muted">(visitor preview)</span></div>
+    <div id="consentBox"></div>`;
+  document.querySelectorAll('.toolbtn').forEach(btn=>{
+    btn.onclick=()=>{
+      const t=INTEL_TOOLS.find(x=>x.id===btn.dataset.t);
+      if(!t.free && !isPro()){ openUpgrade(); return; }
+      curIntel=t.id; renderIntel();
+    };
+  });
+  drawIntelForm();
+  renderTrackerBox();
+}
+function drawIntelForm(){
+  const t=INTEL_TOOLS.find(x=>x.id===curIntel);
+  $('#intelform').innerHTML=`
+    <label class="lbl">${escapeHtml(t.label)}</label>
+    <input type="text" id="oin" placeholder="${escapeHtml(t.ph)}" style="margin-top:4px">
+    <div class="hint">${escapeHtml(t.hint)}</div>
+    <div class="row"><button class="btn primary" id="orun">Run lookup</button>${t.id==='weather'?'<button class="btn ghost" id="oLoc">📍 My location</button>':''}</div>`;
+  if(t.id==='weather'){ const lb=$('#oLoc'); if(lb) lb.onclick=locWeather; }
+  $('#orun').onclick=runIntel;
+  $('#oin').addEventListener('keydown',e=>{ if(e.key==='Enter')runIntel(); });
+}
+async function runIntel(){
+  const val=$('#oin').value.trim();
+  if(!val){ $('#intelout').innerHTML='<div class="errbox">Enter a value first.</div>'; return; }
+  $('#intelout').innerHTML='<div style="text-align:center;padding:20px"><span class="spinner"></span></div>';
+  let r;
+  const body={}; if(!INTEL_TOOLS.find(t=>t.id===curIntel).free) body.token=proToken;
+  try{
+    switch(curIntel){
+      case 'ip': r=await post('/api/osint/ip',{ip:val}); break;
+      case 'domain': r=await post('/api/osint/domain',{domain:val}); break;
+      case 'email': r=await post('/api/osint/email',{email:val,hibp_key:settings.hibpKey}); break;
+      case 'username': r=await post('/api/osint/username',{username:val}); break;
+      case 'phone': r=await post('/api/osint/phone',{phone:val}); break;
+      case 'weather': r=await post('/api/weather',{city:val}); break;
+      case 'search': r=await post('/api/pro/search',{query:val,...body}); break;
+      case 'shodan': r=await post('/api/pro/shodan',{ip:val,...body}); break;
+      case 'virustotal': r=await post('/api/pro/virustotal',{target:val,kind:vtKind(val),...body}); break;
+      case 'abuseipdb': r=await post('/api/pro/abuseipdb',{ip:val,...body}); break;
+      case 'urlscan': r=await post('/api/pro/urlscan',{url:val,...body}); break;
+      case 'leakcheck': r=await post('/api/pro/leakcheck',{query:val,type:lkType(val),...body}); break;
+    }
+  }catch(e){ r={error:String(e)}; }
+  renderIntelResult(curIntel,val,r);
+}
+function vtKind(v){ if(/^\d{1,3}(\.\d{1,3}){3}$/.test(v))return'ip'; if(/^[a-f0-9]{32,64}$/i.test(v))return'hash'; if(v.startsWith('http'))return'url'; return'domain'; }
+function lkType(v){ if(/@/.test(v))return'email'; if(/^\+?\d[\d\s\-]{6,}$/.test(v))return'phone'; return'username'; }
+
+async function renderTrackerBox(){
+  const box=$('#consentBox'); if(!box) return;
+  box.innerHTML=`
+    <div class="hint" style="margin-top:6px">Paste any URL. OraCool makes a <b>tracking link named after it</b>. When someone opens it, their visit is logged automatically (IP, device, browser, screen, language, referrer) and they are instantly sent to the real site. You watch a live preview here.</div>
+    <input type="text" id="trUrl" placeholder="URL to track — e.g. https://example.com/page" style="margin-top:8px">
+    <input type="text" id="trName" placeholder="Link name (optional — defaults to the site's name)" style="margin-top:8px">
+    <div class="row" style="margin-top:8px"><button class="btn primary" id="trCreate">Create tracking link</button><button class="btn ghost" id="trList">My links</button></div>
+    <div class="result" id="trOut" style="margin-top:8px"></div>`;
+  $('#trCreate').onclick=async()=>{
+    const url=$('#trUrl').value.trim(), name=$('#trName').value.trim();
+    const out=$('#trOut');
+    if(!/^https?:\/\//i.test(url)){ out.innerHTML='<div class="errbox">Paste a full URL starting with http:// or https://</div>'; return; }
+    out.innerHTML='<div style="text-align:center;padding:8px"><span class="spinner"></span></div>';
+    const r=await post('/api/tracker/create',{url, name, email:myEmail()});
+    if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+    const link=location.origin+r.url;
+    out.innerHTML=`
+      <div class="okbox">Tracking link created for <b>${escapeHtml(r.target)}</b>.</div>
+      <input type="text" value="${escapeHtml(link)}" id="trLink" readonly style="margin-top:6px">
+      <div class="row" style="margin-top:8px"><button class="btn primary" id="trCopy">Copy link</button><button class="btn ghost" id="trOpen">Test it</button><button class="btn ghost" id="trView">View live preview</button></div>
+      <div class="hint" style="margin-top:6px">Send it anywhere. Every open is logged here — they land on the real site instantly.</div>`;
+    $('#trCopy').onclick=()=>{ const u=$('#trLink'); u.select(); try{ navigator.clipboard.writeText(u.value); }catch(e){} };
+    $('#trOpen').onclick=()=>{ try{ window.open(link,'_blank'); }catch(e){ location.href=link; } };
+    $('#trView').onclick=()=>trackerPreview(r.slug);
+  };
+  $('#trList').onclick=async()=>{
+    const out=$('#trOut'); out.innerHTML='<div style="text-align:center;padding:8px"><span class="spinner"></span></div>';
+    const r=await post('/api/tracker/list',{email:myEmail()});
+    if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+    if(!(r.links||[]).length){ out.innerHTML='<div class="hint">No links yet. Create one above.</div>'; return; }
+    out.innerHTML=r.links.map(l=>`<div class="kv" style="margin-bottom:8px"><div class="k">Link</div><div class="val"><span class="tag">/t/${escapeHtml(l.slug)}</span></div><div class="k">Name</div><div class="val">${escapeHtml(l.name||'—')}</div><div class="k">Target</div><div class="val">${escapeHtml(l.target||'')}</div><div class="k">Visits</div><div class="val">${l.visits} <button class="btn ghost small" data-slug="${escapeHtml(l.slug)}">▶ Live preview</button></div></div>`).join('');
+    out.querySelectorAll('[data-slug]').forEach(b=>{ b.onclick=()=>trackerPreview(b.dataset.slug); });
+  };
+}
+let trackerPoll=null;
+async function trackerPreview(slug){
+  if(trackerPoll){ clearInterval(trackerPoll); trackerPoll=null; }
+  const out=$('#trOut');
+  const paint=async()=>{
+    const r=await post('/api/tracker/visits',{email:myEmail(), slug});
+    if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+    const v=r.visits||[];
+    const cards=v.map(x=>`
+      <div style="border:1px solid var(--line); border-radius:10px; padding:10px; margin-top:8px; background:rgba(4,14,22,.5)">
+        <div style="display:flex; justify-content:space-between; align-items:center"><b style="color:var(--cyan2)">${escapeHtml(x.device?x.device.device+' · '+x.device.os:'Unknown device')}</b><span class="muted" style="font-size:11px">${escapeHtml(x.ts||'')}</span></div>
+        <div class="kv" style="margin-top:6px">
+          <div class="k">IP</div><div class="val">${escapeHtml(x.ip||'—')}</div>
+          <div class="k">Location</div><div class="val">${escapeHtml([x.geo&&x.geo.city, x.geo&&x.geo.region, x.geo&&x.geo.country].filter(Boolean).join(', ')||'—')}${x.geo&&x.geo.isp?' · '+escapeHtml(x.geo.isp):''}</div>
+          <div class="k">Browser</div><div class="val">${escapeHtml(x.device?x.device.browser:'—')}</div>
+          <div class="k">Screen</div><div class="val">${x.screen?x.screen.w+'×'+x.screen.h:'—'}</div>
+          <div class="k">Platform</div><div class="val">${escapeHtml(x.platform||'—')}</div>
+          <div class="k">Language</div><div class="val">${escapeHtml(x.lang||'—')}</div>
+          <div class="k">Timezone</div><div class="val">${escapeHtml(x.tz||'—')}</div>
+          <div class="k">CPU cores / RAM</div><div class="val">${x.cores||'—'} / ${x.memory?x.memory+' GB':'—'}</div>
+          <div class="k">Touch device</div><div class="val">${x.touch?'yes':'no'}</div>
+          <div class="k">Referrer</div><div class="val">${escapeHtml(x.referer||'(direct)')}</div>
+        </div>
+      </div>`).join('');
+    out.innerHTML=`
+      <div class="ptitle" style="margin-top:8px">🔗 Live preview — <span style="color:var(--cyan2)">/t/${escapeHtml(slug)}</span></div>
+      <div class="muted">${v.length} visit(s). Auto-refreshes every 4s. <button class="btn ghost small" id="trStop">⏸ Stop</button> <button class="btn ghost small" id="trBack">← Back</button></div>
+      ${cards||'<div class="hint" style="margin-top:8px">No visits yet — send the link and watch this panel.</div>'}`;
+    const s=$('#trStop'); if(s)s.onclick=()=>{ if(trackerPoll){clearInterval(trackerPoll); trackerPoll=null;} };
+    const b=$('#trBack'); if(b)b.onclick=()=>renderTrackerBox();
+  };
+  await paint();
+  trackerPoll=setInterval(paint, 4000);
+}
+function renderIntelResult(tool,val,r){
+  if(!r){ $('#intelout').innerHTML=''; return; }
+  if(r.error){ $('#intelout').innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  if(r.locked){ $('#intelout').innerHTML=''; openUpgrade(); return; }
+  let html='';
+  if(tool==='ip'){
+    const g=r.geo||{};
+    if(g.error) html+=`<div class="errbox">${escapeHtml(g.error)}</div>`;
+    else html+=kv('Geolocation',[['Location',[g.city,g.region,g.country].filter(Boolean).join(', ')],['Coordinates',g.latitude!=null?g.latitude+', '+g.longitude:'—'],['Timezone',typeof g.timezone==='object'?(g.timezone&&g.timezone.id):g.timezone],['ISP',g.isp],['Organization',g.org],['ASN',g.asn],['Domain',g.domain]]);
+    if(r.ipinfo&&r.ipinfo.hostname) html+=kv('IPinfo enrichment',[['Hostname',r.ipinfo.hostname],['Org',r.ipinfo.org],['ASN',r.ipinfo.asn],['Privacy',JSON.stringify(r.ipinfo.privacy||{})]]);
+    html+=`<div class="tag" style="margin-top:8px">Reverse DNS</div><div style="margin-top:6px">${(r.reverse_dns&&r.reverse_dns.length)?r.reverse_dns.map(d=>`<div class="tag">${escapeHtml(d)}</div>`).join(''):'<span class="muted">none</span>'}</div>`;
+  }
+  else if(tool==='domain'){
+    const w=r.whois||{};
+    if(w.error) html+=`<div class="errbox">${escapeHtml(w.error)}</div>`;
+    else html+=kv('WHOIS / RDAP',[['Registrar',w.registrar||'—'],['Status',(w.status||[]).join(', ')||'—'],['Registered',(w.dates&&w.dates.registration)||'—'],['Expires',(w.dates&&w.dates.expiration)||'—'],['Nameservers',(w.name_servers||[]).join(', ')||'—']]);
+    html+=`<div class="tag" style="margin-top:8px">DNS Records</div>`;
+    const d=r.dns||{}, nice={A:'IPv4',AAAA:'IPv6',MX:'Mail',NS:'Nameservers',TXT:'TXT',CNAME:'Alias',SOA:'SOA'};
+    for(const t of Object.keys(nice)){ const vals=d[t]||[]; html+=`<div style="margin-top:6px"><span class="muted">${nice[t]}</span>: ${vals.length?vals.slice(0,6).map(v=>`<div class="tag" style="word-break:break-all">${escapeHtml(v)}</div>`).join(''):'<span class="muted">none</span>'}</div>`; }
+  }
+  else if(tool==='email'){
+    if(r.breaches&&r.breaches.error) html+=`<div class="errbox">${escapeHtml(r.breaches.error)}</div>`;
+    else if(r.breaches&&r.breaches.length){
+      html+=`<div class="warnbox">⚠️ Found in ${r.breaches.length} known breach(es)</div>`;
+      r.breaches.forEach(b=>{ html+=`<div class="kv"><div class="k">Breach</div><div class="val">${escapeHtml(b.title||b.name)}</div><div class="k">Date</div><div class="val">${escapeHtml(b.date||'—')}</div><div class="k">Records</div><div class="val">${b.pwn_count!=null?b.pwn_count.toLocaleString():'—'}</div><div class="k">Exposed</div><div class="val">${(b.data_classes||[]).map(escapeHtml).join(', ')}</div></div>`; });
+    } else html+=`<div class="okbox">✔ No known breaches for this address.</div>`;
+    if(r.pastes&&r.pastes.length){ html+=`<div class="tag" style="margin-top:8px">Pastes</div>`; r.pastes.forEach(p=>{ html+=`<div class="tag">${escapeHtml(p.source)} — ${escapeHtml(p.title||p.id||'')}</div>`; }); }
+    if(r.infostealers&&r.infostealers.length){
+      html+=`<div class="tag" style="margin-top:8px">🦠 Infostealer exposure (Hudson Rock · free)</div><div class="warnbox">⚠️ Credentials from ${r.infostealers_count||r.infostealers.length} infected machine(s) tied to this address were found in infostealer logs.</div>`;
+      r.infostealers.forEach(s=>{ html+=`<div class="kv"><div class="k">Machine</div><div class="val">${escapeHtml(s.computer||'—')}</div><div class="k">Compromised</div><div class="val">${escapeHtml((s.date||'').slice(0,10))}</div><div class="k">OS</div><div class="val">${escapeHtml(s.os||'—')}</div><div class="k">Stolen logins</div><div class="val">${(s.logins||[]).map(escapeHtml).join(', ')}</div></div>`; });
+    }
+    if(r.note) html+=`<div class="okbox">${escapeHtml(r.note)}</div>`;
+  }
+  else if(tool==='username'){
+    const f=r.found||[],nf=r.not_found||[],er=r.errors||[];
+    html+=`<div style="margin-top:4px"><span class="tag">${f.length} found</span><span class="tag">${nf.length} not found</span><span class="tag">${er.length} blocked</span></div>`;
+    if(f.length) html+=`<div class="foundgrid">${f.map(x=>`<a class="foundcard" href="${escapeHtml(x.url)}" target="_blank" rel="noopener">${escapeHtml(x.platform)}</a>`).join('')}</div>`;
+    if(nf.length) html+=`<div style="margin-top:10px"><span class="muted">Not found:</span> ${nf.map(escapeHtml).map(x=>`<span class="tag">${x}</span>`).join('')}</div>`;
+    html+=`<div class="note">${escapeHtml(r.note||'')}</div>`;
+  }
+  else if(tool==='phone'){
+    html+=kv('Phone Intel',[
+      ['Number',r.e164||'—'],['Valid',r.valid?'✔ valid':'⚠️ check digits'],
+      ['Country',r.country+' (+'+r.country_code+')'],['Region',r.region||'—'],
+      ['Carrier',r.carrier||'—'],['Line type',r.line_type||'—'],
+      ['Timezone',r.timezone||'—'],['Local time',r.local_time||'—'],
+    ]);
+    if(r.numverify){
+      if(r.numverify.error) html+=`<div class="hint">numverify: ${escapeHtml(r.numverify.error)}</div>`;
+      else html+=kv('numverify (live)',[['Valid',r.numverify.valid?'yes':'no'],['Location',r.numverify.location||'—'],['Carrier',r.numverify.carrier||'—'],['Line type',r.numverify.line_type||'—']]);
+    }
+    html+=`<div class="tag" style="margin-top:8px">OSINT exposure check</div><div class="foundgrid" style="margin-top:6px">${(r.search_links||[]).map(s=>`<a class="foundcard" href="${escapeHtml(s.url)}" target="_blank" rel="noopener">🔎 ${escapeHtml(s.label)}</a>`).join('')}</div>`;
+    html+=`<div class="note">${escapeHtml(r.note||'')}</div>`;
+    html+=`<div class="hint">📡 Phone numbers carry no IP address — a device's IP is private, dynamic and only visible to its own network (or a server it connects to). The region/carrier above is the legal maximum from public metadata.</div>`;
+  }
+  else if(tool==='weather'){
+    if(r.current){
+      html+=kv(r.location||'Weather',[['Now',r.current.temperature_c+' °C · '+r.current.condition],['Feels like',r.current.feels_like_c+' °C'],['Humidity',r.current.humidity_pct+'%'],['Wind',r.current.wind_kmh+' km/h']]);
+      html+=`<div class="tag" style="margin-top:8px">7-day forecast</div>`;
+      html+=(r.forecast||[]).slice(0,7).map(d=>`
+        <div class="logline"><span class="ts">${escapeHtml((d.date||'').slice(5))}</span> ${escapeHtml(d.condition||'')} · ${d.min_c!=null?d.min_c+'° / '+d.max_c+'°':''} ${d.precip_prob!=null?'· 💧 '+d.precip_prob+'%':''}</div>`).join('');
+    }
+  }
+  else if(tool==='search'){
+    if(r.answer) html+=`<div class="okbox">${escapeHtml(r.answer)}</div>`;
+    (r.results||[]).forEach(x=>{ html+=`<div class="srchcard"><div class="t">${escapeHtml(x.title)}</div><div class="u">${escapeHtml(x.url)}</div><div class="c">${escapeHtml(x.content)}</div></div>`; });
+  }
+  else if(tool==='shodan'){
+    const h=r.host||{};
+    html+=kv('Host intelligence',[['IP',h.ip_str||val],['Location',[h.city,h.country_name].filter(Boolean).join(', ')],['ISP',h.isp],['Organization',h.org],['OS',h.os||'—'],['Last update',h.last_update||'—'],['Hostnames',(h.hostnames||[]).join(', ')||'—']]);
+    html+=`<div class="tag" style="margin-top:8px">Open ports</div><div style="margin-top:6px">${(h.ports||[]).length?(h.ports||[]).slice(0,24).map(p=>`<div class="tag">${p}</div>`).join(''):'<span class="muted">none found</span>'}</div>`;
+  }
+  else if(tool==='virustotal'){
+    const a=r.last_analysis_stats||{};
+    html+=kv('Reputation',[['Score',r.reputation!=null?r.reputation:'—'],['Harmless votes',r.harmless],['Malicious votes',r.malicious],['Detections',''+(a.malicious||0)+' / '+(a.harmless||0)+' harmless'],['Registrar',r.registrar||'—'],['Created',r.creation_date?new Date(r.creation_date*1000).toISOString().slice(0,10):'—'],['Country',r.country||'—'],['AS owner',r.as_owner||'—']]);
+  }
+  else if(tool==='abuseipdb'){
+    html+=kv('AbuseIPDB',[['IP',r.ip],['Confidence score',(r.abuse_confidence_score!=null?r.abuse_confidence_score+' / 100':'—')],['Usage type',r.usage_type||'—'],['ISP',r.isp||'—'],['Domain',r.domain||'—'],['Country',r.country||'—'],['Total reports',r.total_reports!=null?r.total_reports:'—'],['Last reported',r.last_reported||'—']]);
+    html+=`<div class="${r.abuse_confidence_score>=50?'warnbox':'okbox'}">${r.abuse_confidence_score>=50?'⚠️ This IP shows notable abuse reports.':'✔ Low abuse confidence — likely clean.'}</div>`;
+  }
+  else if(tool==='urlscan'){
+    html+=kv('Scan submitted',[['UUID',r.uuid||'—'],['Status',r.message||'—']]);
+    if(r.result_url) html+=`<div class="row"><a class="btn ghost small" href="${escapeHtml(r.result_url)}" target="_blank" rel="noopener">Open scan report ↗</a></div>`;
+    html+=`<div class="hint">${escapeHtml(r.hint||'')}</div>`;
+  }
+  else if(tool==='leakcheck'){
+    if(r.found!=null) html+=`<div class="${r.found?'warnbox':'okbox'}">${r.found?'⚠️ '+r.found+' leak record(s) found':'✔ No leaks found for '+escapeHtml(r.query)}</div>`;
+    (r.sources||[]).slice(0,20).forEach(s=>{
+      const parts=Object.entries(s).filter(([k])=>!['id'].includes(k)).map(([k,v])=>`${k}: ${escapeHtml(String(v).slice(0,80))}`).join(' · ');
+      html+=`<div class="srchcard"><div class="c">${parts}</div></div>`;
+    });
+  }
+  html+=`<div class="row" style="margin-top:12px"><button class="btn ghost small" id="oanalyze">🤖 Ask OraCool to analyze</button></div>`;
+  $('#intelout').innerHTML=html;
+  const btn=$('#oanalyze'); if(btn)btn.onclick=()=>{
+    const prompt=`Here are the raw results of my ${tool} lookup for "${val}":\n\n${JSON.stringify(r,null,2)}\n\nAnalyze and summarize these findings as a calm, precise intelligence analyst: what does this tell us, anything notable, and suggested next steps (staying legal and ethical). Keep it concise.`;
+    addUser('🔎 Intel '+(tool.toUpperCase())+': '+val);
+    history.push({role:'user',content:prompt});
+    runAssistantReply();
+  };
+}
+function locWeather(){
+  const out=$('#intelout');
+  if(!navigator.geolocation){ out.innerHTML='<div class="errbox">Geolocation not supported in this browser.</div>'; return; }
+  out.innerHTML='<div style="text-align:center;padding:20px"><span class="spinner"></span> Locating…</div>';
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    const r=await post('/api/weather',{lat:pos.coords.latitude, lon:pos.coords.longitude});
+    renderIntelResult('weather','',r);
+  }, err=>{
+    out.innerHTML='<div class="errbox">Location blocked — allow location access, or type a city (works for every country).</div>';
+  }, {timeout:10000});
+}
+function runWeather(city,fromChat){
+  if(fromChat) addSystemNote(`<span class="spinner"></span> Fetching weather for ${escapeHtml(city)}…`);
+  post('/api/weather',{city}).then(r=>{
+    if(r.error){ addErr('Weather: '+r.error); return; }
+    if(fromChat){
+      addSystemNote(`🌤 <b>${escapeHtml(r.location)}</b> — ${escapeHtml(r.current.temperature_c+'°C, '+r.current.condition)} · Today ${escapeHtml(r.today.min_c+'° / '+r.today.max_c+'°')}`);
+      history.push({role:'user',content:`The user asked for the weather. Live results: ${JSON.stringify(r)}. Report it briefly and naturally in character.`});
+      runAssistantReply();
+    }
+  }).catch(e=>addErr('Weather: '+e));
+}
+
+/* assistant reply using history[-1] */
+async function runAssistantReply(){
+  const b=addAI(''); const body=b.lastChild; body.innerHTML='<span class="dots"></span>';
+  const msgs=[{role:'system',content:systemPrompt()},...history];
+  try{
+    let acc='';
+    const payload={messages:msgs,stream:true,provider:settings.provider||'auto'};
+    if(settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
+    const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!resp.ok){ let j=null; try{j=await resp.json();}catch(e){} throw new Error((j&&j.error)||('AI provider error '+resp.status)); }
+    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){
+      const {done,value}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      let idx;
+      while((idx=buf.indexOf('\n\n'))>=0){
+        const chunk=buf.slice(0,idx); buf=buf.slice(idx+2);
+        for(const line of chunk.split('\n')){
+          if(line.startsWith('data:')){
+            const data=line.slice(5).trim();
+            if(data==='[DONE]'){ body.textContent=acc; history.push({role:'assistant',content:acc}); speak(acc); return; }
+            try{ const j=JSON.parse(data); const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; body.textContent=acc; scrollChat(); } }catch(e){}
+          }
+        }
+      }
+    }
+    body.textContent=acc; history.push({role:'assistant',content:acc}); speak(acc);
+  }catch(e){ body.textContent=''; addErr('⚠️ '+(e.message||e)); }
+}
+
+/* ---------- markets ---------- */
+function renderMarkets(){
+  $('#p-markets').innerHTML=`
+    <h3 class="ptitle">Markets</h3>
+    <label class="lbl">Stock quote (Finnhub)</label>
+    <div style="display:flex; gap:8px"><input type="text" id="stockSym" placeholder="AAPL, TSLA…"><button class="btn primary" id="stockGo">Go</button></div>
+    <label class="lbl">Crypto prices (CoinGecko)</label>
+    <div style="display:flex; gap:8px"><input type="text" id="coinId" placeholder="bitcoin (blank = top 10)"><button class="btn primary" id="coinGo">Go</button></div>
+    <label class="lbl">FRED economic series</label>
+    <div style="display:flex; gap:8px"><input type="text" id="fredSeries" placeholder="GDP, CPIAUCSL, DGS10"><button class="btn primary" id="fredGo">Go</button></div>
+    <div class="result" id="mktout"></div>
+    <div class="note">Market data is informational, not financial advice.</div>`;
+  $('#stockGo').onclick=()=>mkStock($('#stockSym').value.trim());
+  $('#coinGo').onclick=()=>mkCrypto($('#coinId').value.trim());
+  $('#fredGo').onclick=()=>mkFred($('#fredSeries').value.trim());
+  ['stockSym','coinId','fredSeries'].forEach(id=>{ $(`#${id}`).addEventListener('keydown',e=>{ if(e.key==='Enter'){ const f={stockSym:mkStock,coinId:mkCrypto,fredSeries:mkFred}[id]; f($(`#${id}`).value.trim()); } }); });
+}
+function mktSpin(){ $('#mktout').innerHTML='<div style="text-align:center;padding:20px"><span class="spinner"></span></div>'; }
+async function mkStock(sym){
+  if(!sym){ $('#mktout').innerHTML='<div class="errbox">Enter a symbol.</div>'; return; }
+  mktSpin(); const r=await post('/api/market/stock',{symbol:sym});
+  if(r.error){ $('#mktout').innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  const q=r.quote||{}, p=r.profile||{};
+  const ch=q.d!=null? (q.d>=0?'+':'')+q.d+' ('+(q.dp>=0?'+':'')+q.dp+'%)':'—';
+  $('#mktout').innerHTML=kv(sym+' — '+(p.name||''),[['Price',q.c!=null?q.c+' '+ (p.currency||'USD'):'—'],['Change',ch],['Open',q.o],['High',q.h],['Low',q.l],['Prev close',q.pc],['Exchange',p.exchange||'—'],['Market cap',p.marketCapitalization!=null?(p.marketCapitalization/1000).toFixed(1)+' B':'—']]);
+}
+async function mkCrypto(id){
+  mktSpin(); const r=await post('/api/market/crypto',{coin:id||''});
+  if(r.error){ $('#mktout').innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  const prices=r.prices||{};
+  if(!Object.keys(prices).length){ $('#mktout').innerHTML='<div class="muted">No data.</div>'; return; }
+  let html='';
+  for(const [k,v] of Object.entries(prices)){
+    const ch=v.usd_24h_change!=null?(v.usd_24h_change>=0?'+':'')+v.usd_24h_change.toFixed(2)+'%':'—';
+    html+=`<div class="kv"><div class="k">${escapeHtml(k)}</div><div class="val">$${(v.usd!=null?v.usd.toLocaleString():'—')} <span style="color:${(v.usd_24h_change||0)>=0?'var(--ok)':'var(--danger)'}">${ch}</span></div><div class="k">NGN</div><div class="val">₦${(v.ngn!=null?v.ngn.toLocaleString():'—')}</div><div class="k">Market cap</div><div class="val">$${(v.usd_market_cap!=null?v.usd_market_cap.toLocaleString():'—')}</div></div>`;
+  }
+  $('#mktout').innerHTML=html;
+}
+async function mkFred(series){
+  if(!series){ $('#mktout').innerHTML='<div class="errbox">Enter a series id.</div>'; return; }
+  mktSpin(); const r=await post('/api/market/fred',{series});
+  if(r.error){ $('#mktout').innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  let html=kv(r.series_id+' — '+(r.title||''),[['Units',r.units||'—'],['Frequency',r.frequency||'—']]);
+  (r.observations||[]).forEach(o=>{ html+=`<div class="kv"><div class="k">${escapeHtml(o.date)}</div><div class="val">${escapeHtml(o.value)}</div></div>`; });
+  $('#mktout').innerHTML=html;
+}
+
+/* ---------- devices ---------- */
+async function renderDevices(){
+  const hasHA=!!(settings.haUrl&&settings.haToken);
+  const apps=[['WhatsApp','https://wa.me/'],['YouTube','https://youtube.com'],['Instagram','https://instagram.com'],['Spotify','https://open.spotify.com'],['Netflix','https://netflix.com'],['X (Twitter)','https://x.com'],['Telegram','https://t.me'],['Gmail','https://mail.google.com'],['Google','https://google.com']];
+  $('#p-devices').innerHTML=`
+    <h3 class="ptitle">Device Control</h3>
+    <div class="tag" style="margin-bottom:8px">⚡ Quick launch</div>
+    <div class="foundgrid">${apps.map(a=>`<button class="foundcard" data-app="${a[1]}">${a[0]}</button>`).join('')}</div>
+    <div class="hint" style="margin-top:6px">Tap — or just tell me <b>"open WhatsApp"</b> in chat. When you run OraCool on your phone, these deep-links open the installed app.</div>
+    <div class="hint" style="margin-top:6px">📲 <b>Make OraCool take over your phone's look:</b> tap <b>Install</b> (or browser menu → Add to Home Screen). It becomes a full-screen JARVIS app with its own glowing icon, dark theme and splash — just like your wallpaper. Changing <i>other</i> apps' icons or the OS system theme isn't allowed by iOS/Android (no app can rewrite the system UI), so the installable app is the closest legal version of "the theme flows on the device."</div>
+    <h3 class="ptitle" style="margin-top:16px">📷 Camera <span class="muted">(this device)</span></h3>
+    <div class="row"><button class="btn ghost" id="camOpen">📷 Open camera</button><button class="btn primary" id="camShot" style="display:none">📸 Capture</button><button class="btn ghost" id="camStop" style="display:none">■ Stop</button></div>
+    <video id="camVideo" autoplay playsinline muted style="width:100%;border-radius:10px;margin-top:8px;display:none;border:1px solid var(--line)"></video>
+    <div class="result" id="camOut"></div>
+    <h3 class="ptitle" style="margin-top:16px">🏠 Home Assistant <span class="muted">(smart home)</span></h3>
+    <label class="lbl">Home Assistant URL</label>
+    <input type="text" id="haUrl" placeholder="http://192.168.1.10:8123" value="${escapeHtml(settings.haUrl)}">
+    <label class="lbl">Long-lived access token</label>
+    <input type="password" id="haToken" placeholder="Paste token…" value="${escapeHtml(settings.haToken)}">
+    <div class="row"><button class="btn primary" id="haSave">Save &amp; scan</button><button class="btn ghost" id="haDemo">Demo devices</button></div>
+    <div class="hint">Home Assistant → Profile → create a long-lived token. Controls lights, switches, fans, media players &amp; more.</div>
+    <div id="devout" style="margin-top:14px"></div>`;
+  $('#p-devices').querySelectorAll('[data-app]').forEach(b=>{ b.onclick=()=>{ try{ window.open(b.dataset.app,'_blank'); }catch(e){ window.location.href=b.dataset.app; } }; });
+  $('#haSave').onclick=()=>{ settings.haUrl=$('#haUrl').value.trim(); settings.haToken=$('#haToken').value.trim(); saveSettings(); scanDevices(); };
+  $('#haDemo').onclick=()=>showDemoDevices();
+  let stream=null;
+  $('#camOpen').onclick=async()=>{
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}});
+      const v=$('#camVideo'); v.srcObject=stream; v.style.display='block';
+      $('#camShot').style.display=''; $('#camStop').style.display=''; $('#camOpen').style.display='none';
+    }catch(e){ $('#camOut').innerHTML='<div class="errbox">Camera blocked or unavailable in this browser.</div>'; }
+  };
+  $('#camShot').onclick=()=>{
+    const v=$('#camVideo'); const c=document.createElement('canvas');
+    c.width=v.videoWidth||640; c.height=v.videoHeight||480;
+    c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+    $('#camOut').innerHTML='<img src="'+c.toDataURL('image/png')+'" style="width:100%;border-radius:10px;margin-top:8px"><div class="hint">Captured from your camera.</div>';
+  };
+  $('#camStop').onclick=()=>{ if(stream){ stream.getTracks().forEach(t=>t.stop()); } const v=$('#camVideo'); v.srcObject=null; v.style.display='none'; $('#camShot').style.display='none'; $('#camStop').style.display='none'; $('#camOpen').style.display=''; };
+  if(hasHA) scanDevices(); else showDemoDevices();
+}
+function startCamera(){
+  const t=document.querySelector('.tab[data-p="devices"]'); if(t) t.click();
+  setTimeout(()=>{ const b=$('#camOpen'); if(b) b.click(); }, 200);
+}
+async function scanDevices(){
+  const out=$('#devout'); out.innerHTML='<div style="text-align:center;padding:16px"><span class="spinner"></span></div>';
+  const r=await post('/api/home/states',{ha_url:settings.haUrl,ha_token:settings.haToken});
+  if(r.error){ out.innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  const entities=r.data||[];
+  const controllable=entities.filter(e=>/^(light|switch|fan|lock|media_player|cover|climate|scene|script)\./.test(e.entity_id));
+  if(!controllable.length){ out.innerHTML=`<div class="muted">Connected, but no controllable entities found (${entities.length} total).</div>`; return; }
+  out.innerHTML=controllable.map(e=>{
+    const on=['on','playing','unlocked','open','heat','cool'].includes(e.state);
+    const id=e.entity_id.replace(/[^a-z0-9_.-]/gi,'_');
+    return `<div class="devrow" data-id="${escapeHtml(e.entity_id)}"><span class="name">${escapeHtml((e.attributes&&e.attributes.friendly_name)||e.entity_id)}</span><span class="st">${escapeHtml(e.state)}</span><div class="switch ${on?'on':''}" id="sw-${id}"></div></div>`;
+  }).join('');
+  out.querySelectorAll('.switch').forEach(sw=>{ sw.onclick=async()=>{
+    const id=sw.closest('.devrow').dataset.id; sw.style.opacity='.4';
+    await post('/api/home/service',{ha_url:settings.haUrl,ha_token:settings.haToken,domain:id.split('.')[0],service:'toggle',entity_id:id});
+    sw.classList.toggle('on'); sw.style.opacity='1';
+  }; });
+}
+function showDemoDevices(){
+  const demo=[['Living room lights','on'],['Arc reactor floor lamp','on'],['Lab monitor','off'],['Thermostat','off'],['Main speakers','off'],['Security feed','on']];
+  $('#devout').innerHTML=`<div class="hint" style="margin-bottom:8px">Demo mode — link Home Assistant above to control real devices.</div>`+
+    demo.map(([n,s])=>{ const id='demo'+n.replace(/\W/g,''); return `<div class="devrow"><span class="name">${n}</span><span class="st">${s}</span><div class="switch ${s==='on'?'on':''}" id="${id}"></div></div>`; }).join('');
+  document.querySelectorAll('#devout .switch').forEach(sw=>{ sw.onclick=()=>sw.classList.toggle('on'); });
+}
+
+/* ---------- code (GitHub) ---------- */
+function renderCode(){
+  const gk = srv && srv.auth && srv.auth.github;
+  $('#p-code').innerHTML=`
+    <h3 class="ptitle">GitHub Console</h3>
+    ${!gk?'<div class="warnbox">GitHub token not configured on the server.</div>':''}
+    <div class="row"><button class="btn primary" id="ghMe">My profile</button><button class="btn ghost" id="ghRepos">My repos</button><button class="btn ghost" id="ghRate">Rate limit</button></div>
+    <label class="lbl">Search repositories</label>
+    <div style="display:flex; gap:8px"><input type="text" id="ghQ" placeholder="e.g. osint tools"><button class="btn primary" id="ghGo">Search</button></div>
+    <div class="result" id="ghOut"></div>`;
+  $('#ghMe').onclick=ghMe; $('#ghRepos').onclick=ghRepos; $('#ghRate').onclick=ghRate;
+  $('#ghGo').onclick=()=>ghSearch($('#ghQ').value.trim());
+  $('#ghQ').addEventListener('keydown',e=>{ if(e.key==='Enter')ghSearch($('#ghQ').value.trim()); });
+  if(gk) ghMe();
+}
+function ghSpin(){ $('#ghOut').innerHTML='<div style="text-align:center;padding:20px"><span class="spinner"></span></div>'; }
+async function ghMe(){
+  ghSpin(); const r=await post('/api/github/me',{});
+  if(r.error){ $('#ghOut').innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  const u=r.data||{};
+  const avatar=u.avatar_url?`<img src="${escapeHtml(u.avatar_url)}" style="width:46px;height:46px;border-radius:50%;border:1px solid var(--line2);float:right" onerror="this.remove()">`:'';
+  $('#ghOut').innerHTML=avatar+kv('Profile',[
+    ['Login',u.login||'—'],['Name',u.name||'—'],['Bio',u.bio||'—'],['Company',u.company||'—'],
+    ['Location',u.location||'—'],['Followers',u.followers],['Following',u.following],
+    ['Public repos',u.public_repos],['Created',u.created_at?u.created_at.slice(0,10):'—'],
+    ['URL',u.html_url?`<a href="${escapeHtml(u.html_url)}" target="_blank" rel="noopener">${escapeHtml(u.html_url)}</a>`:'—']]);
+}
+async function ghRepos(){
+  ghSpin(); const r=await post('/api/github/repos',{});
+  if(r.error){ $('#ghOut').innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  const rs=r.data||[];
+  if(!rs.length){ $('#ghOut').innerHTML='<div class="muted">No repositories.</div>'; return; }
+  $('#ghOut').innerHTML=rs.map(x=>`<div class="srchcard">
+    <div class="t"><a href="${escapeHtml(x.html_url)}" target="_blank" rel="noopener">${escapeHtml(x.full_name)}</a> <span class="tag">⭐ ${x.stargazers_count||0}</span>${x.language?`<span class="tag">${escapeHtml(x.language)}</span>`:''}${x.private?'<span class="tag">private</span>':''}</div>
+    <div class="c">${escapeHtml(x.description||'')}</div>
+    <div class="u">updated ${escapeHtml((x.updated_at||'').slice(0,10))}</div>
+  </div>`).join('');
+}
+async function ghSearch(q){
+  if(!q){ $('#ghOut').innerHTML='<div class="errbox">Enter a search query.</div>'; return; }
+  ghSpin(); const r=await post('/api/github/search',{query:q});
+  if(r.error){ $('#ghOut').innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  const d=r.data||{}; const items=d.items||[];
+  if(!items.length){ $('#ghOut').innerHTML='<div class="muted">No results for "${escapeHtml(q)}".</div>'; return; }
+  $('#ghOut').innerHTML=`<div class="muted">${d.total_count!=null?d.total_count.toLocaleString()+' repos found':''}</div>`+
+    items.map(x=>`<div class="srchcard">
+      <div class="t"><a href="${escapeHtml(x.html_url)}" target="_blank" rel="noopener">${escapeHtml(x.full_name)}</a> <span class="tag">⭐ ${x.stargazers_count||0}</span>${x.language?`<span class="tag">${escapeHtml(x.language)}</span>`:''}</div>
+      <div class="c">${escapeHtml((x.description||'').slice(0,140))}</div>
+    </div>`).join('');
+}
+async function ghRate(){
+  ghSpin(); const r=await post('/api/github/rate',{});
+  if(r.error){ $('#ghOut').innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  const d=r.data||{}; const core=((d.resources||{}).core||{});
+  const t=core.reset?new Date(core.reset*1000).toLocaleTimeString('en-GB'):'—';
+  $('#ghOut').innerHTML=kv('API rate limit',[['Used',(core.used!=null?core.used+' / '+core.limit:'—')],['Remaining',core.remaining!=null?core.remaining:'—'],['Resets at',t]]);
+}
+
+/* ---------- account (Supabase) ---------- */
+function renderAcctChip(){
+  const chip=$('#acctChip'), av=$('#acctAvatar'), em=$('#acctEmail');
+  if(!chip) return;
+  if(session && session.user){
+    const email=session.user.email||'user';
+    av.textContent=email[0].toUpperCase();
+    em.textContent=email;
+    chip.title='Signed in as '+email;
+  } else { av.textContent='?'; em.textContent='Sign in'; chip.title='Account'; }
+}
+function renderAccount(){
+  const sb = srv && srv.auth && srv.auth.supabase;
+  const u = session && session.user;
+  if(!sb){ $('#p-account').innerHTML=`<h3 class="ptitle">Account</h3><div class="warnbox">Supabase is not configured on the server — accounts unavailable.</div>`; return; }
+  if(u){
+    $('#p-account').innerHTML=`
+      <h3 class="ptitle">Account</h3>
+      <div class="sysline"><span class="dot ok"></span><span class="k">${escapeHtml(u.email||'')}</span><span class="v">signed in</span></div>
+      <div class="muted" style="margin-top:6px">User ID: ${escapeHtml((u.id||'').slice(0,18))}…</div>
+      ${isPro()?'<div class="okbox" style="margin-top:10px">◈ PRO is active on this account.</div>':'<div class="warnbox" style="margin-top:10px">This account is on the FREE tier. <a href="#" id="acctUp">Upgrade to PRO</a> to link it to your subscription.</div>'}
+      <div class="row"><button class="btn ghost" id="acctSignout">Sign out</button><button class="btn ghost" id="acctSync">Sync PRO status</button></div>
+      <div class="note">Your PRO subscription follows your email — sign in on any device and it restores automatically.</div>
+      <h3 class="ptitle" style="margin-top:16px">🛡️ Security</h3>
+      <div class="sysline"><span class="dot ${settings.proactive!==false?'ok':'warn'}"></span><span class="k">Two-factor (2FA)</span><span class="v" id="a2faState">checking…</span></div>
+      <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap">
+        <button class="btn ghost small" id="a2faBtn">Enable 2FA</button>
+        <button class="btn ghost small" id="aPassBtn">Register face / fingerprint</button>
+      </div>
+      <div class="result" id="aSecOut" style="margin-top:8px"></div>`;
+    $('#acctUp').onclick=e=>{e.preventDefault(); openUpgrade();};
+    $('#acctSignout').onclick=()=>{
+      clearSession(); setProToken('');
+      renderAccount(); renderStatus(); updateTier();
+      addAI('Signed out. All systems standing by, sir.');
+    };
+    $('#acctSync').onclick=async()=>{
+      const r=await post('/api/auth/me',{access_token:session.access_token});
+      if(r.status===200 && r.pro_token){ setProToken(r.pro_token); addAI('PRO status synced from your account. Welcome back, sir.'); renderStatus(); renderAccount(); }
+      else addAI('No active PRO subscription found for this account.');
+    };
+    post('/api/auth/2fa/status',{email:u.email}).then(r=>{ const s=$('#a2faState'); if(s) s.textContent = r.enabled?'enabled ✓':'off'; });
+    $('#a2faBtn').onclick=async()=>{
+      const out=$('#aSecOut'); out.innerHTML='<div style="text-align:center;padding:8px"><span class="spinner"></span></div>';
+      const r=await post('/api/auth/2fa/setup',{email:u.email});
+      if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+      out.innerHTML=`
+        <div class="hint">1) Open your authenticator app (Google Authenticator, Authy, 1Password…) and add this secret:</div>
+        <div class="okbox" style="word-break:break-all">${escapeHtml(r.secret)}</div>
+        <div class="hint" style="margin-top:6px">2) Enter the 6-digit code to confirm:</div>
+        <input type="text" id="a2faCode" placeholder="000000" inputmode="numeric" maxlength="6" style="margin-top:6px; text-align:center; letter-spacing:6px">
+        <button class="btn primary small" id="a2faConf" style="margin-top:8px">Confirm & enable</button>`;
+      $('#a2faConf').onclick=async()=>{
+        const c=$('#a2faCode').value.trim();
+        const rr=await post('/api/auth/2fa/enable',{email:u.email, code:c});
+        if(rr.status==='enabled'){ out.innerHTML='<div class="okbox">✓ 2FA enabled. You will be asked for a code at sign-in.</div>'; const s=$('#a2faState'); if(s)s.textContent='enabled ✓'; }
+        else out.innerHTML='<div class="errbox">'+escapeHtml(rr.error||'Wrong code.')+'</div>';
+      };
+    };
+    $('#aPassBtn').onclick=()=>registerPasskey($('#aSecOut'));
+    return;
+  }
+  $('#p-account').innerHTML=`
+    <h3 class="ptitle">Account</h3>
+    <div class="muted">Create an account so your PRO plan follows you across devices.</div>
+    <label class="lbl">Email</label>
+    <input type="email" id="aEmail" placeholder="you@example.com">
+    <label class="lbl">Password</label>
+    <input type="password" id="aPass" placeholder="••••••••">
+    <div class="row"><button class="btn primary" id="aSignup">Create account</button><button class="btn ghost" id="aLogin">Sign in</button></div>
+    <div class="hint">Password: 8+ characters with uppercase, lowercase & a number. You'll be signed in instantly.</div>
+    <div class="result" id="aOut"></div>`;
+  $('#aSignup').onclick=async()=>{
+    const email=$('#aEmail').value.trim(), pass=$('#aPass').value;
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ $('#aOut').innerHTML='<div class="errbox">Enter a valid email.</div>'; return; }
+    $('#aOut').innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span></div>';
+    const r=await post('/api/auth/signup',{email,password:pass});
+    if(r.status===200 && r.data && r.data.access_token){
+      setSession({user:r.data.user, access_token:r.data.access_token, refresh_token:r.data.refresh_token, pro_token:r.pro_token||null, admin:r.admin, blocked:r.blocked});
+      renderAccount(); renderStatus(); updateTier(); updateAdminUI();
+      if(r.blocked) addErr('⚠️ This account has been suspended by an administrator.');
+      else addAI('Account created and signed in. Welcome aboard, sir.');
+    }
+    else { const m=(r.data&&(r.data.msg||r.data.error_description))||r.error||'signup failed'; $('#aOut').innerHTML=`<div class="errbox">${escapeHtml(m)}</div>`; }
+  };
+  $('#aLogin').onclick=async()=>{
+    const email=$('#aEmail').value.trim(), pass=$('#aPass').value;
+    if(!email||!pass){ $('#aOut').innerHTML='<div class="errbox">Enter email and password.</div>'; return; }
+    $('#aOut').innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span></div>';
+    const r=await post('/api/auth/login',{email,password:pass});
+    if(r.status===200 && r.data && r.data.access_token){
+      setSession({user:r.data.user, access_token:r.data.access_token, refresh_token:r.data.refresh_token, pro_token:r.pro_token||null, admin:r.admin, blocked:r.blocked});
+      renderAccount(); renderStatus(); updateTier();
+      if(r.blocked) addErr('⚠️ This account has been suspended by an administrator.');
+      else addAI(r.admin?'Welcome back, admin. Full access granted.':(r.pro_token?'Welcome back, sir. PRO access restored.':'Signed in successfully. Welcome, sir.'));
+    } else { const m=(r.data&&(r.data.msg||r.data.error_description))||r.error||'login failed'; $('#aOut').innerHTML=`<div class="errbox">${escapeHtml(m)}</div>`; }
+  };
+}
+$('#acctChip').onclick=()=>{ document.querySelector('.tab[data-p="account"]').click(); };
+
+/* ---------- admin panel ---------- */
+async function renderAdmin(){
+  $('#p-admin').innerHTML=`
+    <h3 class="ptitle">Admin Console</h3>
+    <div style="display:flex; gap:8px; align-items:center">
+      <input type="text" id="aSearch" placeholder="Search users by email…" style="flex:1">
+      <button class="btn ghost" id="aRefresh">↻ Refresh</button>
+    </div>
+    <div class="statcards" id="aStats" style="margin-top:10px"></div>
+    <div id="aUsers"><div style="text-align:center;padding:16px"><span class="spinner"></span></div></div>
+    <div class="result" id="aOut"></div>`;
+  $('#aRefresh').onclick=refreshAdmin;
+  $('#aSearch').addEventListener('input',()=>{ renderAdminRows(adminCache); });
+  await refreshAdmin();
+}
+let adminCache=[];
+async function refreshAdmin(){
+  const tok=proToken;
+  const r=await post('/api/admin/users',{token:tok});
+  if(r.locked || r.error){ $('#p-admin').innerHTML=`<h3 class="ptitle">Admin Console</h3><div class="errbox">Admin access required. Sign in with an admin account.</div>`; return; }
+  const st=r.stats||{};
+  $('#aStats').innerHTML=`
+    <div class="stat"><div class="l">Users</div><div class="v">${st.users||0}</div></div>
+    <div class="stat"><div class="l">Blocked</div><div class="v" style="color:${(st.blocked||0)>0?'var(--danger)':'var(--ok)'}">${st.blocked||0}</div></div>
+    <div class="stat"><div class="l">PRO</div><div class="v">${st.pro||0}</div></div>
+    <div class="stat"><div class="l">Total paper P&amp;L</div><div class="v ${(st.total_pnl||0)>=0?'pos':'neg'}">${(st.total_pnl||0)>=0?'+':''}$${(st.total_pnl||0).toLocaleString()}</div></div>`;
+  adminCache=r.users||[];
+  renderAdminRows(adminCache);
+}
+function renderAdminRows(users){
+  const q=($('#aSearch').value||'').trim().toLowerCase();
+  const list=users.filter(u=>!q || (u.email||'').toLowerCase().includes(q));
+  const box=$('#aUsers');
+  if(!box) return;
+  box.innerHTML=list.length? list.map((u,i)=>{
+    const cls=u.blocked?'var(--danger)':'var(--text)';
+    const pnlCls=(u.pnl||0)>=0?'var(--ok)':'var(--danger)';
+    const tierCls=u.pro?'var(--ok)':'var(--dim)';
+    return `<div class="devrow" style="flex-wrap:wrap">
+      <div style="flex:1; min-width:170px">
+        <div style="font-size:12.5px; color:${cls}">${escapeHtml(u.email)} ${u.admin?'<span class="tag" style="color:var(--gold);border-color:var(--gold)">ADMIN</span>':''}</div>
+        <div class="muted" style="font-size:10px">joined ${escapeHtml((u.created||'—').slice(0,16))} · last seen ${escapeHtml((u.last_seen||'—').slice(0,16))} · <span style="color:${tierCls}">${u.pro?'PRO':'FREE'}</span>${u.blocked?' · <b style="color:var(--danger)">BLOCKED</b>'+(u.block_reason?': '+escapeHtml(u.block_reason):''):''}</div>
+      </div>
+      <div style="text-align:right; min-width:90px">
+        <div style="font-size:12px; color:${pnlCls}; font-variant-numeric:tabular-nums">${u.pnl==null?'—':((u.pnl>=0?'+':'')+'$'+u.pnl.toLocaleString())}</div>
+        <div class="muted" style="font-size:9px">paper P&amp;L</div>
+      </div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap">
+        ${u.admin?'':`<button class="btn small ghost" data-act="block" data-i="${i}" style="color:${u.blocked?'var(--ok)':'var(--danger)'};border-color:${u.blocked?'var(--ok)':'var(--danger)'}">${u.blocked?'Unblock':'Block'}</button>`}
+        <button class="btn small ghost" data-act="pro" data-i="${i}" style="color:var(--cyan2)">${u.pro?'Revoke PRO':'Grant PRO'}</button>
+      </div>
+    </div>`;
+  }).join(''):'<div class="muted">No users found.</div>';
+  box.querySelectorAll('[data-act]').forEach(b=>{ b.onclick=()=>adminAction(b.dataset.act, b.dataset.i); });
+}
+async function adminAction(act, idx){
+  const u=adminCache[idx]; if(!u) return;
+  const out=$('#aOut');
+  if(act==='block'){
+    if(u.blocked){ await post('/api/admin/block',{email:u.email, blocked:false, token:proToken}); addSystemNote(`Unblocked <b>${escapeHtml(u.email)}</b>.`); refreshAdmin(); return; }
+    const reason=prompt('Reason for blocking '+u.email+':','Misuse of the AI')||'Misuse of the AI';
+    const r2=await post('/api/admin/block',{email:u.email, blocked:true, reason, token:proToken});
+    if(r2.ok){ addSystemNote(`Blocked <b>${escapeHtml(u.email)}</b> — ${escapeHtml(reason)}.`); refreshAdmin(); }
+    else addErr('Admin: '+(r2.error||'failed'));
+  } else if(act==='pro'){
+    if(u.pro){
+      const r2=await post('/api/admin/pro',{email:u.email, tier:'free', token:proToken});
+      if(r2.ok){ addSystemNote(`Revoked PRO for <b>${escapeHtml(u.email)}</b>.`); refreshAdmin(); }
+      else addErr('Admin: '+(r2.error||'failed'));
+    } else {
+      const days=prompt('Grant PRO for how many days?','30');
+      const r2=await post('/api/admin/pro',{email:u.email, tier:'pro', days:parseInt(days||'30',10), token:proToken});
+      if(r2.ok){ addSystemNote(`Granted <b>PRO</b> to ${escapeHtml(u.email)} (${r2.days} days).`); refreshAdmin(); }
+      else addErr('Admin: '+(r2.error||'failed'));
+    }
+  }
+}
+
+/* ---------- trading desk (paper) ---------- */
+const TRADE_SYMBOLS=['AAPL','TSLA','NVDA','MSFT','AMZN','GOOGL','META','NFLX','AMD','INTC','JPM','V','DIS','KO','PFE','WMT','XOM','JNJ','BA','NKE','SPY','QQQ','BTC','ETH','SOL','BNB','XRP','DOGE','ADA','LINK','DOT','LTC','AVAX','TRX','SHIB','UNI','ATOM','NEAR','MATIC'];
+let curSym='BTC';
+function myEmail(){ return (session && session.user && session.user.email) || ''; }
+function renderTrading(){
+  $('#p-trading').innerHTML=`
+    <h3 class="ptitle">Trading Desk <span class="muted">(paper · simulated)</span></h3>
+    <div class="warnbox" style="margin-top:0">⚠️ <b>Paper account only.</b> No real money is used. OraCool cannot guarantee profit — markets are risky, and simulated results don't predict real ones.</div>
+    <div class="statcards" id="tStats"></div>
+    <div class="tag">Equity curve</div>
+    <canvas id="tChart" width="360" height="120" style="width:100%; border:1px solid var(--line); border-radius:10px; margin-top:6px; background:rgba(4,14,22,.5)"></canvas>
+    <label class="lbl">Symbol</label>
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:4px" id="tSyms"></div>
+    <div style="display:flex; gap:8px; margin-top:10px; align-items:center">
+      <input type="text" id="tAmt" placeholder="Amount (USD)" style="flex:1">
+      <button class="btn primary" id="tBuy">Buy</button>
+      <button class="btn ghost" id="tSell">Sell all</button>
+    </div>
+    <div class="row"><button class="btn ghost" id="tSignal">🤖 AI trade idea</button><button class="btn ghost" id="tReset">Reset paper account</button></div>
+    <div id="tSigOut"></div>
+    <div class="tag" style="margin-top:12px">Positions</div>
+    <div id="tPos"></div>
+    <label class="lbl" style="margin-top:14px">Auto-trader <span class="muted">(paper)</span></label>
+    <div style="display:flex; align-items:center; gap:10px; margin-top:6px"><div class="switch" id="tAuto"></div><span class="muted" id="tAutoLbl">OFF</span></div>
+    <div class="hint">Every 10 min it checks BTC &amp; ETH and trades simulated money using the AI brain (Groq). Uses up to 10% of cash per trade.</div>
+    <div id="tAutoLog" style="margin-top:8px"></div>
+    <div class="tag" style="margin-top:12px">Trade history</div>
+    <div id="tHist"></div>
+    <div class="tag" style="margin-top:12px">🏆 Leaderboard <span class="muted">(paper)</span></div>
+    <div id="tBoard"></div>
+
+    <h3 class="ptitle" style="margin-top:18px">Alpaca paper <span class="muted">(real broker · paper money)</span></h3>
+    <div id="tAlpaca"></div>
+
+    <h3 class="ptitle" style="margin-top:18px">Pocket Option <span class="muted">(DEMO only)</span></h3>
+    <div class="warnbox" style="margin-top:0">⚠️ Binary options are extremely high-risk. This is <b>demo only</b> and needs <b>your own SSID</b> (Settings → Trading). OraCool cannot register accounts or extract SSIDs for you — it's against Pocket Option's ToS.</div>
+    <div style="display:flex; gap:8px; margin-top:8px; align-items:center">
+      <input type="text" id="poAsset" placeholder="Asset e.g. EURUSD_otc" style="flex:1.2">
+      <input type="text" id="poAmt" placeholder="$" style="flex:.5">
+      <input type="text" id="poDur" placeholder="sec" style="flex:.5">
+    </div>
+    <div class="row">
+      <button class="btn primary small" id="poCall">▲ CALL (up)</button>
+      <button class="btn ghost small" id="poPut">▼ PUT (down)</button>
+      <button class="btn ghost small" id="poConn">Connect (demo)</button>
+    </div>
+    <div id="tPoOut" style="margin-top:8px"></div>
+    <div class="note">Educational simulator. Not financial advice.</div>`;
+  $('#tSyms').innerHTML=TRADE_SYMBOLS.map(s=>`<span class="chip tsc ${s===curSym?'active':''}" data-s="${s}" style="${s===curSym?'border-color:var(--line2);box-shadow:0 0 10px rgba(0,229,255,.35);':''}">${s}</span>`).join('');
+  $('#tSyms').querySelectorAll('.tsc').forEach(c=>{
+    c.onclick=()=>{ curSym=c.dataset.s; renderTrading(); refreshTrading(); };
+  });
+  $('#tBuy').onclick=()=>tradeOrder('buy');
+  $('#tSell').onclick=()=>tradeOrder('sell');
+  $('#tSignal').onclick=aiSignal;
+  $('#tReset').onclick=async()=>{ await post('/api/trade/reset',{}); refreshTrading(); addSystemNote('Paper account reset to $100,000.'); };
+  $('#tAuto').onclick=toggleAuto;
+  $('#poConn').onclick=poConnect;
+  $('#poCall').onclick=()=>poDeal('call');
+  $('#poPut').onclick=()=>poDeal('put');
+  renderAlpaca();
+}
+async function renderAlpaca(){
+  const el=$('#tAlpaca'); if(!el) return;
+  const ready=srv && srv.trading && srv.trading.alpaca_ready;
+  if(!ready){ el.innerHTML='<div class="hint">Not connected. Add your free <b>ALPACA_PAPER_KEY_ID</b> + <b>ALPACA_PAPER_SECRET</b> to <b>keys.json</b> (alpaca.markets → Paper Trading). Then restart the server.</div>'; return; }
+  el.innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span> Loading Alpaca paper account…</div>';
+  const a=await post('/api/alpaca/account',{});
+  if(a.error){ el.innerHTML=`<div class="errbox">${escapeHtml(a.error)}</div>`; return; }
+  el.innerHTML=`
+    <div class="statcards" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat"><div class="l">Equity</div><div class="v">$${parseFloat(a.equity||0).toLocaleString()}</div></div>
+      <div class="stat"><div class="l">Buying power</div><div class="v">$${parseFloat(a.buying_power||0).toLocaleString()}</div></div>
+      <div class="stat"><div class="l">Status</div><div class="v">${escapeHtml(a.status||'—')}</div></div>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center; margin-top:6px">
+      <input type="text" id="alSym" placeholder="Symbol" style="flex:1">
+      <input type="text" id="alAmt" placeholder="$ amount" style="flex:1">
+      <button class="btn primary small" id="alBuy">Buy</button>
+      <button class="btn ghost small" id="alSell">Sell</button>
+    </div>
+    <div id="alOut" style="margin-top:8px"></div>`;
+  $('#alBuy').onclick=()=>alOrder('buy');
+  $('#alSell').onclick=()=>alOrder('sell');
+}
+async function alOrder(side){
+  const sym=$('#alSym').value.trim(), amt=$('#alAmt').value.trim();
+  const r=await post('/api/alpaca/order',{side,symbol:sym,notional:amt});
+  if(r.error){ $('#alOut').innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  $('#alOut').innerHTML=`<div class="okbox">✔ ${r.order.side.toUpperCase()} ${r.order.symbol} submitted (paper).</div>`;
+  renderAlpaca();
+}
+async function poConnect(){
+  const out=$('#tPoOut');
+  out.innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span> Connecting to Pocket Option demo…</div>';
+  const r=await post('/api/po/connect',{ssid:settings.poSSID});
+  if(r.error){ out.innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  out.innerHTML=`<div class="${r.ok?'okbox':'warnbox'}">${escapeHtml(r.message||'')}${r.detail&&r.detail.balance_raw?'<br><span class="muted">'+escapeHtml(r.detail.balance_raw)+'</span>':''}</div>`;
+}
+async function poDeal(action){
+  const out=$('#tPoOut');
+  const asset=$('#poAsset').value.trim(), amt=$('#poAmt').value.trim(), dur=$('#poDur').value.trim();
+  if(!asset||!amt||!dur){ out.innerHTML='<div class="errbox">Fill asset, amount and duration first.</div>'; return; }
+  if(!settings.poSSID){ out.innerHTML='<div class="errbox">Set your Pocket Option SSID in Settings → Trading first.</div>'; return; }
+  out.innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span> Sending DEMO deal…</div>';
+  const r=await post('/api/po/order',{ssid:settings.poSSID,asset,amount:amt,action,duration:dur});
+  if(r.error){ out.innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  out.innerHTML=`<div class="okbox">✔ DEMO ${action.toUpperCase()} on ${escapeHtml(r.asset)} — $${escapeHtml(r.amount)} / ${escapeHtml(r.duration_sec)}s submitted.</div><div class="note">Raw: ${escapeHtml(r.raw_response||'no response')}</div>`;
+}
+async function refreshTrading(){
+  const el=$('#tStats'); if(!el) return;
+  let a=await post('/api/trade/account',{email:myEmail()});
+  if(a.error){ return; }
+  const pnlCls=a.pnl>=0?'pos':'neg';
+  el.innerHTML=`
+    <div class="stat"><div class="l">Cash</div><div class="v">$${(a.cash||0).toLocaleString()}</div></div>
+    <div class="stat"><div class="l">Equity</div><div class="v">$${(a.equity||0).toLocaleString()}</div></div>
+    <div class="stat"><div class="l">P&amp;L</div><div class="v ${pnlCls}">${a.pnl>=0?'+':''}$${(a.pnl||0).toLocaleString()} (${a.pnl_pct>=0?'+':''}${a.pnl_pct}%)</div></div>`;
+  drawChart(a.history||[], a.initial||100000);
+  const pos=a.positions||[];
+  $('#tPos').innerHTML = pos.length? `<table class="ptable"><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Last</th><th>Value</th><th>P&amp;L</th></tr>${pos.map(p=>`
+    <tr><td style="color:var(--cyan2)">${p.symbol}</td><td>${p.qty.toFixed(6)}</td><td>$${(p.avg||0).toLocaleString()}</td><td>$${(p.price||0).toLocaleString()}</td><td>$${(p.value||0).toLocaleString()}</td><td style="color:${(p.pnl||0)>=0?'var(--ok)':'var(--danger)'}">${(p.pnl||0)>=0?'+':''}$${(p.pnl||0).toLocaleString()}</td></tr>`).join('')}</table>`
+    : '<div class="muted" style="margin-top:6px">No open positions.</div>';
+  const tr=a.trades||[];
+  $('#tHist').innerHTML=tr.length? tr.map(t=>`<div class="logline"><span class="ts">${t.ts.slice(11)}</span> ${t.side.toUpperCase()} ${t.symbol} ${t.qty.toFixed(6)} @ $${(t.price||0).toLocaleString()} <span style="color:${t.side==='buy'?'var(--ok)':'var(--danger)'}">$${(t.notional||0).toLocaleString()}</span> <span class="muted">(${t.reason})</span></div>`).join('')
+    : '<div class="muted" style="margin-top:6px">No trades yet.</div>';
+  // leaderboard
+  const lb=await post('/api/trade/leaderboard',{});
+  const rows=(lb.leaderboard||[]);
+  $('#tBoard').innerHTML = rows.length? rows.slice(0,8).map((u,i)=>`
+    <div class="logline"><span class="ts">#${i+1}</span> ${escapeHtml(u.email)} <span style="float:right; color:${(u.pnl||0)>=0?'var(--ok)':'var(--danger)'}">${(u.pnl||0)>=0?'+':''}$${(u.pnl||0).toLocaleString()} (${(u.pct||0)>=0?'+':''}${u.pct}%)</span></div>`).join('')
+    : '<div class="muted" style="margin-top:6px">No traders yet — be the first.</div>';
+  // auto status
+  const au=await post('/api/trade/auto/status',{});
+  $('#tAuto').classList.toggle('on', au.enabled);
+  $('#tAutoLbl').textContent=au.enabled? 'ON (paper)' : 'OFF';
+  $('#tAutoLog').innerHTML=(au.log||[]).map(l=>`<div class="logline"><span class="ts">${l.ts}</span> ${escapeHtml(l.msg)}</div>`).join('');
+}
+function drawChart(hist, initial){
+  const c=$('#tChart'); if(!c) return;
+  const ctx=c.getContext('2d');
+  ctx.clearRect(0,0,c.width,c.height);
+  const pts=hist||[];
+  const W=c.width, H=c.height;
+  ctx.strokeStyle='rgba(0,229,255,.12)'; ctx.lineWidth=1;
+  for(let i=0;i<4;i++){ const y=H/4*i; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  const base=initial||100000;
+  const vals=[base].concat(pts.map(p=>p.equity));
+  const min=Math.min(...vals), max=Math.max(...vals);
+  const span=(max-min)||1;
+  if(pts.length<2){
+    ctx.fillStyle='rgba(126,166,184,.6)'; ctx.font='11px monospace';
+    ctx.fillText('Trade to build your equity curve', 12, H/2);
+    return;
+  }
+  const n=pts.length;
+  const px=i=> 4 + i*(W-8)/(n-1);
+  const py=v=> 6 + (H-12)*(1-(v-min)/span);
+  const col= pts[n-1].equity>=base ? '#3dffa5' : '#ff5f6d';
+  ctx.beginPath();
+  pts.forEach((p,i)=>{ const x=px(i), y=py(p.equity); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+  ctx.strokeStyle=col; ctx.lineWidth=2; ctx.stroke();
+  const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0, col+'33'); g.addColorStop(1,'transparent');
+  ctx.beginPath(); ctx.moveTo(px(0), py(base));
+  pts.forEach((p,i)=>{ ctx.lineTo(px(i), py(p.equity)); });
+  ctx.lineTo(px(n-1), H); ctx.lineTo(px(0), H); ctx.closePath();
+  ctx.fillStyle=g; ctx.fill();
+  ctx.fillStyle=col; ctx.font='10px monospace';
+  ctx.fillText('$'+pts[n-1].equity.toLocaleString(), 6, 12);
+}
+async function tradeOrder(side){
+  const amt=parseFloat($('#tAmt').value);
+  if(side==='buy' && (!amt||amt<=0)){ addSystemNote('Enter an amount (USD) to buy.'); return; }
+  const r=await post('/api/trade/order',{side,symbol:curSym,notional:side==='buy'?amt:null,reason:'manual',email:myEmail()});
+  if(r.error){ addErr('Trade: '+r.error); return; }
+  addSystemNote(`📈 <b>Paper ${side.toUpperCase()}</b> ${curSym} ${r.order.qty.toFixed(6)} @ $${r.order.price.toLocaleString()}`);
+  refreshTrading();
+}
+async function aiSignal(){
+  const out=$('#tSigOut'); if(!out) return;
+  out.innerHTML='<div style="text-align:center;padding:14px"><span class="spinner"></span> OraCool is analyzing '+curSym+'…</div>';
+  const r=await post('/api/trade/signal',{symbol:curSym});
+  if(r.error){ out.innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
+  const s=r.signal||{}, q=r.quote||{}, ind=r.indicators||{};
+  out.innerHTML=`
+    <div class="sigcard">
+      <div style="display:flex; justify-content:space-between; align-items:center">
+        <div class="bias ${s.bias}">${escapeHtml((s.bias||'neutral').toUpperCase())} · ${escapeHtml((s.action||'hold').toUpperCase())}</div>
+        <div class="muted">conf ${s.confidence||0}%</div>
+      </div>
+      <div style="margin-top:6px; font-size:13px">${escapeHtml(q.name||curSym)} — $${(q.price||0).toLocaleString()}</div>
+      <div style="margin-top:6px" class="muted">RSI ${ind.rsi14} · SMA20 $${(ind.sma20||0).toLocaleString()} · SMA50 $${(ind.sma50||0).toLocaleString()} · trend ${escapeHtml(ind.trend||'—')}</div>
+      <div style="margin-top:10px; font-size:12.5px; line-height:1.6">${escapeHtml(s.thesis||'')}</div>
+      ${s.entry!=null?`<div class="kv" style="margin-top:10px"><div class="k">Entry</div><div class="val">$${(s.entry||0).toLocaleString()}</div><div class="k">Stop loss</div><div class="val">$${(s.stop_loss||0).toLocaleString()}</div><div class="k">Take profit</div><div class="val">$${(s.take_profit||0).toLocaleString()}</div></div>`:''}
+      <div class="hint" style="margin-top:8px">⚠️ ${escapeHtml(s.risks||'')}</div>
+      <div class="note">${escapeHtml(r.disclaimer||'')}</div>
+      <div class="row"><button class="btn primary small" id="tSigDo">Execute as paper trade</button></div>
+    </div>`;
+  const doBtn=$('#tSigDo');
+  if(doBtn && s.action==='buy') doBtn.onclick=()=>{ $('#tAmt').value='1000'; tradeOrder('buy'); };
+  else if(doBtn && s.action==='sell') doBtn.onclick=()=>{ tradeOrder('sell'); };
+  else if(doBtn) doBtn.disabled=true, doBtn.textContent='Hold';
+}
+async function toggleAuto(){
+  const st=await post('/api/trade/auto/status',{});
+  const r=await post('/api/trade/auto',{enabled:!st.enabled, interval_min:10, watchlist:['BTC','ETH'], email:myEmail()});
+  $('#tAuto').classList.toggle('on', r.enabled);
+  $('#tAutoLbl').textContent=r.enabled?'ON (paper)':'OFF';
+  if(r.enabled) addSystemNote('🤖 <b>Auto-trader ON</b> (paper). It will check BTC & ETH every 10 min and trade simulated money with the AI brain.');
+  else addSystemNote('Auto-trader stopped.');
+  refreshTrading();
+}
+
+/* ---------- settings ---------- */
+function renderSettings(){
+  const k=srv?srv.keys:{};
+  const keynames=['OPENAI_API_KEY','GROQ_API_KEY','PAYSTACK_SECRET_KEY','SUPABASE_URL','SHODAN_API_KEY','VIRUSTOTAL_API_KEY','ABUSEIPDB_API_KEY','IPINFO_API_KEY','NUMVERIFY_API_KEY','TAVILY_API_KEY','URLSCAN_API_KEY','LEAKCHECK_API_KEY','FINNHUB_API_KEY','COINGECKO_API_KEY','FRED_API_KEY','ALPACA_PAPER_KEY_ID','ALPACA_PAPER_SECRET','NASA_API_KEY','HIBP_API_KEY','JWT_SECRET','ENCRYPTION_KEY','ENCRYPTION_IV'];
+  $('#p-settings').innerHTML=`
+    <h3 class="ptitle">Settings</h3>
+    <label class="lbl">What should I call you?</label>
+    <input type="text" id="sName" value="${escapeHtml(settings.userName)}" placeholder="sir">
+    <label class="lbl">Brain provider</label>
+    <select id="sProvider">
+      <option value="auto" ${settings.provider==='auto'?'selected':''}>Auto (server default)</option>
+      <option value="groq" ${settings.provider==='groq'?'selected':''}>Groq (fast, free tier)</option>
+      <option value="openai" ${settings.provider==='openai'?'selected':''}>OpenAI</option>
+    </select>
+    <label class="lbl">Response speed</label>
+    <select id="sBrainMode">
+      <option value="fast" ${settings.brainMode!=='smart'?'selected':''}>⚡ Turbo — fastest replies</option>
+      <option value="smart" ${settings.brainMode==='smart'?'selected':''}>🧠 Smart — deeper reasoning</option>
+    </select>
+    <div class="hint">Turbo uses ${srv&&srv.brain?srv.brain.fast_model:'a fast model'} (~2× faster). Smart uses ${srv&&srv.brain?srv.brain.default_model:'the full model'}. Switch anytime.</div>
+    <div class="hint">${k.OPENAI_API_KEY?'OpenAI key loaded, but currently has <b>no credits</b> (429). ':''}${k.GROQ_API_KEY?'Groq key loaded ✓':'Groq key missing.'}</div>
+    <label class="lbl">Override API key <span class="muted">(optional — uses server keys if blank)</span></label>
+    <input type="password" id="sKey" value="${escapeHtml(settings.apiKey)}" placeholder="sk-…">
+    <label class="lbl">Override base URL</label>
+    <input type="text" id="sBase" value="${escapeHtml(settings.baseUrl)}" placeholder="https://api.openai.com/v1">
+    <label class="lbl">Override model</label>
+    <input type="text" id="sModel" value="${escapeHtml(settings.model)}" placeholder="(server default)">
+    <label class="lbl">HaveIBeenPwned API key <span class="muted">(optional)</span></label>
+    <input type="password" id="sHibp" value="${escapeHtml(settings.hibpKey)}" placeholder="optional">
+    <label class="lbl">Pocket Option SSID <span class="muted">(demo trading — yours only)</span></label>
+    <input type="text" id="sPoSSID" value="${escapeHtml(settings.poSSID||'')}" placeholder="paste SSID from your logged-in session">
+    <div class="hint">Get it: pocketoption.com → F12 → Application → Session Storage → copy the "ssid" value. Demo mode only.</div>
+    <label class="lbl">Voice output</label>
+    <div style="display:flex; align-items:center; gap:10px; margin-top:6px"><div class="switch ${settings.ttsOn?'on':''}" id="sTts"></div><span class="muted">Speak replies aloud</span></div>
+    <label class="lbl">Proactive intelligence</label>
+    <div style="display:flex; align-items:center; gap:10px; margin-top:6px"><div class="switch ${settings.proactive!==false?'on':''}" id="sPro"></div><span class="muted">Talk to you before you ask (predicts what you need)</span></div>
+    <label class="lbl">Wake word</label>
+    <div style="display:flex; align-items:center; gap:10px; margin-top:6px"><div class="switch ${wakeArmed?'on':''}" id="sWake"></div><span class="muted">"Hey OraCool" always listening</span></div>
+    <div class="hint">Wake word needs Chrome/Edge + mic permission. While armed, saying "Hey OraCool" triggers a chime, then it listens for your command.</div>
+    <label class="lbl">Voice</label>
+    <select id="sVoice"><option value="">System default</option>${voices.map(v=>`<option value="${escapeHtml(v.name)}" ${v.name===settings.voiceName?'selected':''}>${escapeHtml(v.name)} (${escapeHtml(v.lang||'')})</option>`).join('')}</select>
+    <div class="row" style="margin-top:16px"><button class="btn primary" id="sSave">Save settings</button><button class="btn ghost" id="sTest">🔊 Test voice</button></div>
+
+    <h3 class="ptitle" style="margin-top:20px">Server Key Vault</h3>
+    ${keynames.map(n=>`<div class="keyrow"><span class="n">${n}</span><span class="s" style="color:${k[n]?'var(--ok)':'var(--dim)'}">${k[n]?'✓ loaded':'—'}</span></div>`).join('')}
+    <div class="hint" style="margin-top:8px">Keys live in <b>keys.json</b> on the server and are never exposed to the browser.</div>
+
+    <h3 class="ptitle" style="margin-top:20px">Plan</h3>
+    ${isPro()? '<div class="okbox">◈ PRO mode active.</div>':'<div class="warnbox">You are on the FREE tier.</div>'}
+    <div class="row"><button class="btn ${isPro()?'ghost':'gold'}" id="sUpgrade">${isPro()?'Manage PRO':'⚡ Upgrade to PRO'}</button>${isPro()?'<button class="btn ghost" id="sLogout">Sign out</button>':''}</div>`;
+  $('#sTts').onclick=()=>{ settings.ttsOn=!settings.ttsOn; $('#sTts').classList.toggle('on',settings.ttsOn); };
+  $('#sPro').onclick=()=>{ settings.proactive=settings.proactive===false; $('#sPro').classList.toggle('on',settings.proactive); saveSettings(); applyProactive(); };
+  $('#sWake').onclick=()=>{ setWakeArmed(!wakeArmed); };
+  $('#sTest').onclick=()=>speak('All systems operational. This is OraCool AI.');
+  $('#sUpgrade').onclick=openUpgrade;
+  const lg=$('#sLogout'); if(lg)lg.onclick=()=>{ setProToken(''); renderSettings(); renderStatus(); addAI('Signed out of PRO mode.'); };
+  $('#sSave').onclick=()=>{
+    settings.userName=$('#sName').value.trim()||'sir';
+    settings.provider=$('#sProvider').value;
+    settings.brainMode=$('#sBrainMode').value;
+    settings.apiKey=$('#sKey').value.trim();
+    settings.baseUrl=$('#sBase').value.trim();
+    settings.model=$('#sModel').value.trim();
+    settings.hibpKey=$('#sHibp').value.trim();
+    settings.poSSID=$('#sPoSSID').value.trim();
+    settings.voiceName=$('#sVoice').value;
+    saveSettings(); renderSettings(); renderStatus();
+    addAI('Settings saved. I am fully operational, '+settings.userName+'.');
+  };
+}
+
+/* ---------- upgrade / paystack ---------- */
+let pendingPlan='pro';
+const PLAN_BENEFITS={
+  starter:['Unlimited chat messages','Extended memory (100 msgs)','Unlimited OSINT lookups','Wake word "Hey OraCool"','NASA Picture of the Day'],
+  pro:['Everything in Starter','Full OSINT suite — Shodan, VirusTotal, AbuseIPDB, URLScan, LeakCheck','Trading signals + paper trading desk','Pocket Option (demo)','Full NASA space intel','Dark-web monitoring (basic)'],
+  ultra:['Everything in PRO','Full trading automation','Unlimited image generation','Video generation (20/mo)','Full dark-web monitoring','API access + 5 team seats'],
+  enterprise:['Everything in Ultra','Custom AI models on your data','White-label + custom branding','SOC2-ready · SSO · audit logs','Unlimited team members','24/7 support + SLA guarantee']
+};
+function openUpgrade(plan){
+  plan=plan||'pro'; pendingPlan=plan;
+  const plans=(srv&&srv.plans)||[];
+  const pick=$('#planPick');
+  if(pick){
+    pick.innerHTML=['starter','pro','ultra','enterprise'].map(id=>{
+      const p=plans.find(x=>x.id===id)||{label:id,price_usd:0};
+      return `<button class="planchip ${id===pendingPlan?'active':''}" data-plan="${id}"><b>${escapeHtml(p.label)}</b><span class="pc-price">$${p.price_usd}<span class="muted" style="font-size:10px">/mo</span></span></button>`;
+    }).join('');
+    pick.querySelectorAll('.planchip').forEach(b=>{ b.onclick=()=>openUpgrade(b.dataset.plan); });
+  }
+  const p=(srv&&srv.plans||[]).find(x=>x.id===pendingPlan)||{label:'PRO',price_usd:50,price_ngn:50000,days:30};
+  $('#proPrice').innerHTML='$'+p.price_usd+'<span class="muted" style="font-size:15px">/month</span>';
+  $('#proLabel').textContent=p.label+' plan';
+  $('#proNgn').textContent='≈ ₦'+p.price_ngn.toLocaleString()+' · '+p.days+' days access'+(srv&&srv.paystack_test?' · TEST MODE':'');
+  $('#benefitList').innerHTML=(PLAN_BENEFITS[pendingPlan]||[]).map(b=>`<li>${escapeHtml(b)}</li>`).join('');
+  const e=$('#upEmail'); if(e && !e.value) e.value = myEmail();
+  const cur=(srv&&srv.paystack_currency)||'NGN';
+  $('#payNote').textContent = srv&&srv.paystack_test ? 'TEST MODE — no real money moves.' : ('You collect in '+(cur==='USD'?'USD ($'+p.price_usd+')':'₦ '+p.price_ngn.toLocaleString())+' — foreign cards are converted to Naira at settlement by Paystack Nigeria.');
+  $('#upgradeModal').classList.add('open');
+}
+$('#upgradeClose').onclick=()=>$('#upgradeModal').classList.remove('open');
+$('#upgradeModal').addEventListener('click',e=>{ if(e.target.id==='upgradeModal')$('#upgradeModal').classList.remove('open'); });
+$('#tierBadge').onclick=()=>{ const t=document.querySelector('.tab[data-p="plans"]'); if(t) t.click(); };
+$('#trialBtn').onclick=async()=>{
+  const email=$('#upEmail').value.trim()||'trial@oracool.local';
+  const r=await post('/api/pro/trial',{email});
+  if(r.token){ setProToken(r.token); $('#upgradeModal').classList.remove('open'); addAI('Free trial started — PRO mode active for 24 hours. Enjoy, sir.'); renderStatus(); renderIntel(); renderSettings(); }
+  else addErr('Trial failed: '+(r.error||''));
+};
+$('#payBtn').onclick=async()=>{
+  const email=$('#upEmail').value.trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ addErr('Enter a valid email for your receipt.'); return; }
+  $('#payBtn').disabled=true; $('#payBtn').textContent='Redirecting…';
+  const cb=window.location.origin+window.location.pathname;
+  const r=await post('/api/paystack/initialize',{email,callback_url:cb,plan:pendingPlan,currency:$('#upCur').value});
+  if(r.error){ addErr('Payment error: '+r.error); $('#payBtn').disabled=false; $('#payBtn').textContent='💳 Pay with Paystack'; return; }
+  window.location.href=r.authorization_url;
+};
+// handle Paystack return (?reference=…)
+(async function handleCallback(){
+  const ref=new URLSearchParams(window.location.search).get('reference') || new URLSearchParams(window.location.search).get('trxref');
+  if(!ref) return;
+  const r=await post('/api/paystack/verify',{reference:ref});
+  if(r.token){ setProToken(r.token); addAI('Payment verified. PRO access is now active — the full intelligence suite is at your command.'); }
+  else addErr('Payment verification: '+(r.message||r.error||'failed'));
+  history.replaceState({},'',window.location.pathname);
+})();
+
+
+/* ---------- space (NASA) ---------- */
+const SPIN='<div style="text-align:center;padding:12px"><span class="spinner"></span></div>';
+function spaceAuth(){ return {email: myEmail()||''}; }
+function spFail(out, r){ out.innerHTML=`<div class="errbox">${escapeHtml(r.error||r.message||'failed')}</div>`; }
+function renderSpace(){
+  $('#p-space').innerHTML=`
+    <h3 class="ptitle">🪐 Space Intelligence (NASA)</h3>
+    <div class="row">
+      <button class="btn primary" id="spApod">🌌 Picture of the Day</button>
+      <button class="btn" id="spEpic">🌍 Earth (DSCOVR)</button>
+      <button class="btn" id="spNeo">☄️ Near-Earth Objects</button>
+      <button class="btn" id="spMars">🛰️ Mars Rovers</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input type="text" id="spLibQ" placeholder="Search NASA image library (e.g. orion nebula)" style="flex:1">
+      <button class="btn ghost" id="spLib">Search</button>
+    </div>
+    <div class="result" id="spOut"><div class="muted">Select a tool. Live NASA data streams into the interface.</div></div>`;
+  const out=()=>$('#spOut');
+  $('#spApod').onclick=async()=>{ out().innerHTML=SPIN; const r=await post('/api/space/apod',spaceAuth());
+    if(r.error||r.locked){ spFail(out(),r); return; }
+    const media = r.media_type==='video'
+      ? `<video controls src="${escapeHtml(r.url)}" style="width:100%;border-radius:10px;margin-top:8px"></video>`
+      : `<img src="${escapeHtml(r.url)}" style="width:100%;border-radius:10px;margin-top:8px" onerror="this.outerHTML='<div class=\\'errbox\\'>Image cannot load inside the sandboxed preview — open the app in a full browser tab.</div>'">`;
+    out().innerHTML=`<div class="ptitle">${escapeHtml(r.title||'Astronomy Picture of the Day')}</div><div class="muted">${escapeHtml(r.date||'')}${r.copyright?' · © '+escapeHtml(r.copyright):''}</div>${media}<div class="note">${escapeHtml(r.explanation||'')}</div>`; };
+  $('#spEpic').onclick=async()=>{ out().innerHTML=SPIN; const r=await post('/api/space/epic',spaceAuth());
+    if(r.error||r.locked){ spFail(out(),r); return; }
+    out().innerHTML=`<div class="ptitle">🌍 Earth today — DSCOVR EPIC</div><div class="muted">${r.count} frames</div><div class="foundgrid">${(r.items||[]).map(x=>`<a class="foundcard" href="${escapeHtml(x.url)}" target="_blank" rel="noopener" title="${escapeHtml(x.date||'')}"><img src="${escapeHtml(x.url)}" style="width:100%;border-radius:8px" onerror="this.style.display='none';this.parentNode.textContent='🌍 view'"></a>`).join('')}</div>`; };
+  $('#spNeo').onclick=async()=>{ out().innerHTML=SPIN; const r=await post('/api/space/neo',spaceAuth());
+    if(r.error||r.locked){ spFail(out(),r); return; }
+    const rows=(r.asteroids||[]).map(a=>`<div class="logline"><span class="ts">${a.hazardous?'⚠️':'•'}</span> ${escapeHtml(a.name)} — ~${a.diameter_km!=null?Math.round(a.diameter_km*1000)+' m':'?'} wide · ${a.miss_km?Number(a.miss_km).toLocaleString()+' km away':''}</div>`).join('');
+    out().innerHTML=`<div class="ptitle">☄️ Near-Earth Objects today</div><div class="muted">${escapeHtml(r.note||'')} · ${r.element_count||0} tracked</div>${rows||'<div class="muted">None today.</div>'}`; };
+  $('#spMars').onclick=async()=>{ out().innerHTML=SPIN; const r=await post('/api/space/mars',spaceAuth());
+    if(r.error||r.locked){ spFail(out(),r); return; }
+    out().innerHTML=`<div class="ptitle">🛰️ ${escapeHtml(r.rover||'Mars')} rover imagery</div><div class="muted">${escapeHtml(r.note||'')}</div><div class="foundgrid">${(r.items||[]).map(x=>`<a class="foundcard" href="${escapeHtml(x.url)}" target="_blank" rel="noopener" title="${escapeHtml(x.title||'')}"><img src="${escapeHtml(x.url)}" style="width:100%;border-radius:8px" onerror="this.style.display='none';this.parentNode.textContent='🛰️ view'"></a>`).join('')}</div>`; };
+  const libGo=async()=>{ const q=$('#spLibQ').value.trim(); if(!q) return; out().innerHTML=SPIN;
+    const r=await post('/api/space/library',{...spaceAuth(),query:q});
+    if(r.error||r.locked){ spFail(out(),r); return; }
+    out().innerHTML=`<div class="ptitle">🔎 NASA Library — ${escapeHtml(q)}</div><div class="muted">${r.count} results</div>${(r.items||[]).map(x=>`<div class="srchcard"><div class="t">${escapeHtml(x.title||x.nasa_id)}</div><div class="c">${escapeHtml(x.description||'')}</div>${x.url?`<img src="${escapeHtml(x.url)}" style="width:100%;border-radius:8px;margin-top:6px" onerror="this.style.display='none'">`:''}</div>`).join('')}`; };
+  $('#spLib').onclick=libGo;
+  $('#spLibQ').addEventListener('keydown',e=>{ if(e.key==='Enter')libGo(); });
+}
+
+/* ---------- cores (1,000-core intelligence map) ---------- */
+let coreSearchTimer=null;
+function renderCores(){
+  const act = activeCore
+    ? `<div class="okbox">⚡ Active core: <b>${escapeHtml(activeCore.name)}</b> — ${escapeHtml(activeCore.role)} <button class="btn ghost" id="coreClear" style="margin-left:8px">Deactivate</button></div>`
+    : `<div class="hint">No active core. Type <b>@CORE</b> in chat (e.g. <b>@SOCRATES</b>, <b>@SUN_TZU</b>) or tap a core below to activate it for the session.</div>`;
+  $('#p-cores').innerHTML=`<h3 class="ptitle">🧠 Core Intelligence Map</h3>${act}
+    <input type="text" id="coreQ" placeholder="Search 1,000 cores… (trading, OSINT, strategy, Nigeria…)" style="margin-top:8px">
+    <div class="muted" id="coreMeta"></div>
+    <div class="result" id="coreList"></div>`;
+  const cc=$('#coreClear'); if(cc) cc.onclick=()=>{ setActiveCore(null); renderCores(); };
+  $('#coreQ').addEventListener('input',()=>{ clearTimeout(coreSearchTimer); coreSearchTimer=setTimeout(coreSearch,250); });
+  coreSearch();
+}
+async function coreSearch(){
+  const q=$('#coreQ').value.trim();
+  const r=await post('/api/cores',{query:q||undefined, limit:60});
+  const cores=r.cores||[];
+  const meta=$('#coreMeta'), list=$('#coreList');
+  if(meta) meta.textContent=`${r.total||1000} cores across ${(r.clusters||[]).length} clusters${q?' · matching "'+q+'"':''}`;
+  if(!list) return;
+  list.innerHTML=cores.map(c=>`<div class="logline" style="cursor:pointer" data-core="${encodeURIComponent(JSON.stringify(c))}"><span class="ts">#${c.id}</span><b>${escapeHtml(c.name)}</b> — ${escapeHtml(c.role)}<div class="muted">${escapeHtml(c.example)}</div></div>`).join('') || '<div class="muted">No cores matched.</div>';
+  list.querySelectorAll('[data-core]').forEach(el=>{ el.onclick=async()=>{
+    const c=JSON.parse(decodeURIComponent(el.dataset.core));
+    const rr=await post('/api/core/route',{query:'@'+c.name});
+    const persona=(rr.personas&&rr.personas[0])||'';
+    setActiveCore({name:c.name, role:c.role, persona});
+    renderCores();
+    addAI('⚡ '+c.name+' core activated — '+c.role+'.');
+  }; });
+}
+
+/* ---------- plans ---------- */
+async function renderPlans(){
+  $('#p-plans').innerHTML=`<h3 class="ptitle">💳 Pricing Plans</h3>${SPIN}`;
+  const r=await post('/api/plan',{email:myEmail()});
+  const plans=(srv&&srv.plans)||[];
+  const myTier=(r.tier)||'free';
+  const feats={
+    free:'10 messages/day · core OSINT (1/day) · voice I/O · basic device control',
+    starter:'Unlimited chat · 100-msg memory · unlimited OSINT · wake word · NASA APOD',
+    pro:'Full OSINT suite · trading signals · Paper & Pocket Option · full NASA · dark-web monitoring',
+    ultra:'Full automation · video gen · full dark-web · API access · 5 team seats',
+    enterprise:'Custom AI models · white-label · SOC2-ready · SSO · unlimited seats · dedicated support'
+  };
+  const cards=[{id:'free',label:'Free',price_usd:0,price_ngn:0,days:0},...plans].map(p=>{
+    const cur=p.id===myTier;
+    return `<div style="border:1px solid ${cur?'var(--cyan2)':'var(--line)'};border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px;${cur?'box-shadow:0 0 14px rgba(0,229,255,.25);':''}">
+      <div class="t" style="font-weight:700">${escapeHtml(p.label)}</div>
+      <div style="font-size:20px;color:var(--cyan2)">${p.price_usd?'$'+p.price_usd:'$0'}<span class="muted" style="font-size:11px">/mo</span></div>
+      <div class="muted">${p.price_ngn?'₦'+p.price_ngn.toLocaleString()+' · '+p.days+' days':'free forever'}</div>
+      <div class="muted" style="font-size:11px;flex:1">${escapeHtml(feats[p.id]||'')}</div>
+      ${cur?'<div class="okbox">✓ Your plan</div>':(p.id!=='free'?`<button class="btn ${p.id==='pro'?'gold':''}" data-plan="${p.id}">Upgrade</button>`:'')}
+    </div>`;}).join('');
+  const matrix=[
+    ['Messages / day','10','Unlimited','Unlimited','Unlimited','Unlimited'],
+    ['5-core AI (JARVIS · KIMI · GO · OMNI · GROK)','✅','✅','✅','✅','✅'],
+    ['Voice in / out','✅','✅','✅','✅','✅'],
+    ['1,000-core intelligence map','✅','✅','✅','✅','✅'],
+    ['Device control','Basic','Full','Full','Full','Full'],
+    ['OSINT tools','3/day','10/day','Unlimited','Unlimited','Unlimited'],
+    ['Email breach (HIBP + infostealer)','✅','✅','✅','✅','✅'],
+    ['Shodan · VirusTotal · AbuseIPDB','❌','❌','✅','✅','✅'],
+    ['Dark-web monitoring','❌','❌','Basic','Full','Full'],
+    ['Phone intel (global)','✅','✅','✅','✅','✅'],
+    ['Stocks / Crypto data','❌','5+5','100+','Unlimited','Unlimited'],
+    ['Paper trading','✅','✅','✅','✅','✅'],
+    ['Pocket Option (demo)','❌','❌','✅','✅','✅'],
+    ['Trading automation','❌','❌','Basic','Full','Custom'],
+    ['NASA space intel','❌','APOD','Full','Full','Full'],
+    ['Image generation','❌','❌','50/mo','Unlimited','Unlimited'],
+    ['Video generation','❌','❌','❌','20/mo','100/mo'],
+    ['Website builder','❌','1 site','10 sites','Unlimited','Unlimited'],
+    ['Encrypted vault','❌','❌','✅','✅','✅'],
+    ['API access','❌','❌','❌','✅','✅'],
+    ['White-label / custom AI models','❌','❌','❌','✅','✅'],
+    ['Team members','1','1','5','20','Unlimited'],
+    ['Support','Community','Email','Priority','Premium','24/7 + SLA'],
+  ];
+  const hdr=['','Free','Starter','PRO','Ultra','Enterprise'];
+  const rows=matrix.map(m=>`<tr><td class="fm">${m[0]}</td>${m.slice(1).map(c=>`<td class="${c==='❌'?'no':(c==='✅'?'yes':'')}">${escapeHtml(c)}</td>`).join('')}</tr>`).join('');
+  $('#p-plans').innerHTML=`<h3 class="ptitle">💳 Pricing Plans</h3>
+    <div class="muted">Current plan: <b style="color:var(--cyan2)">${escapeHtml(myTier.toUpperCase())}</b>${r.email?' · '+escapeHtml(r.email):''}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:10px">${cards}</div>
+    <div style="overflow-x:auto;margin-top:16px">
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr>${hdr.map(x=>`<th style="padding:6px 4px;border-bottom:1px solid var(--line);text-align:center;color:var(--cyan2)">${x}</th>`).join('')}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div class="note">✅ = live in this build · ❌ = not in this plan. Plans match your pricing spec. Some future features (image/video gen, white-label) activate when their provider keys are added. ${escapeHtml(r.note||'')} Payments are processed securely by Paystack.</div>`;
+  $('#p-plans').querySelectorAll('[data-plan]').forEach(b=>{ b.onclick=()=>{ openUpgrade(b.dataset.plan); }; });
+}
+
+/* ---------- init ---------- */
+setInterval(()=>{ if($('#tStats')) refreshTrading(); }, 15000);
+
+/* ---------- auth gate (mandatory signup/login) ---------- */
+let gateMode = 'signup';
+function strengthScore(pw){
+  let s = 0;
+  if((pw||'').length >= 8) s++;
+  if(/[A-Z]/.test(pw||'') && /[a-z]/.test(pw||'')) s++;
+  if(/[0-9]/.test(pw||'')) s++;
+  if(/[^A-Za-z0-9]/.test(pw||'')) s++;
+  return s;
+}
+function showGate(){
+  const g = $('#authGate'); if(!g) return;
+  renderGate(); g.classList.add('open');
+}
+function hideGate(){ const g=$('#authGate'); if(g) g.classList.remove('open'); }
+function renderGate(){
+  const card = $('#gateCard'); if(!card) return;
+  if(gate2fa){
+    card.innerHTML = `
+      <div style="text-align:center; margin-bottom:6px"><span id="gateReactor"></span></div>
+      <div class="gatebrand">ORA-COOL AI</div>
+      <div class="gatesub">Two-factor authentication</div>
+      <div class="hint">Enter the 6-digit code from your authenticator app for <b>${escapeHtml(gate2fa.email)}</b>.</div>
+      <input type="text" id="g2fa" placeholder="000000" inputmode="numeric" maxlength="6" style="text-align:center; letter-spacing:8px; font-size:22px">
+      <button class="btn primary" style="width:100%; justify-content:center; margin-top:14px" id="g2faGo">Verify & enter</button>
+      <button class="btn ghost" style="width:100%; justify-content:center; margin-top:6px" id="g2faBack">← Back</button>
+      <div class="result" id="gOut" style="margin-top:10px"></div>`;
+    $('#gateReactor').innerHTML = reactor(56);
+    $('#g2faGo').onclick=async()=>{
+      const code=$('#g2fa').value.trim(); const out=$('#gOut');
+      if(!code){ out.innerHTML='<div class="errbox">Enter your code.</div>'; return; }
+      out.innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span></div>';
+      const r=await post('/api/auth/2fa/verify',{email:gate2fa.email, code});
+      if(r.status===200){ completeGate(r, gate2fa.session.user, gate2fa.session.access_token, gate2fa.session.refresh_token); gate2fa=null; }
+      else out.innerHTML='<div class="errbox">'+escapeHtml(r.error||'Incorrect code.')+'</div>';
+    };
+    $('#g2faBack').onclick=()=>{ gate2fa=null; renderGate(); };
+    return;
+  }
+  card.innerHTML = `
+    <div style="text-align:center; margin-bottom:6px"><span id="gateReactor"></span></div>
+    <div class="gatebrand">ORA-COOL AI</div>
+    <div class="gatesub">Sign in to activate the interface</div>
+    <div class="gatetabs">
+      <div class="gatetab ${gateMode==='signup'?'active':''}" id="gtSignup">Create account</div>
+      <div class="gatetab ${gateMode==='signin'?'active':''}" id="gtSignin">Sign in</div>
+    </div>
+    ${gateMode==='signup' ? `<label class="lbl">What should I call you?</label><input type="text" id="gName" placeholder="e.g. sir, boss, chief…" autocomplete="nickname">` : ''}
+    <label class="lbl">Email</label>
+    <input type="email" id="gEmail" placeholder="you@example.com" autocomplete="email">
+    <label class="lbl">Password</label>
+    <input type="password" id="gPass" placeholder="••••••••" autocomplete="new-password">
+    <div class="strength" id="gStrength"><i></i></div>
+    <div class="hint" id="gHint">Password: 8+ characters with uppercase, lowercase & a number.</div>
+    <button class="btn primary" style="width:100%; justify-content:center; margin-top:16px" id="gGo">${gateMode==='signup'?'Create account & enter':'Enter OraCool'}</button>
+    <div style="display:flex; gap:8px; margin-top:10px">
+      <button class="btn ghost" style="flex:1; justify-content:center" id="gGoogle">Google</button>
+      <button class="btn ghost" style="flex:1; justify-content:center" id="gGithub">GitHub</button>
+    </div>
+    <button class="btn ghost" style="width:100%; justify-content:center; margin-top:8px" id="gFace">🫆 Face / Fingerprint login</button>
+    <div class="hint" style="margin-top:8px">OAuth needs the provider enabled in Supabase (Authentication → Providers). Face login uses your device's secure Face ID / fingerprint.</div>
+    <div class="result" id="gOut" style="margin-top:10px"></div>`;
+  $('#gateReactor').innerHTML = reactor(56);
+  $('#gtSignup').onclick = ()=>{ gateMode='signup'; renderGate(); };
+  $('#gtSignin').onclick = ()=>{ gateMode='signin'; renderGate(); };
+  $('#gGoogle').onclick = ()=>oauthGo('google', $('#gOut'));
+  $('#gGithub').onclick = ()=>oauthGo('github', $('#gOut'));
+  $('#gFace').onclick = ()=>faceLogin($('#gOut'));
+  $('#gEmail').addEventListener('input', ()=>{ $('#gOut').innerHTML=''; });
+  $('#gPass').addEventListener('input', ()=>{
+    const pw = $('#gPass').value, s = strengthScore(pw);
+    const colors = ['#ff5f6d','#ff5f6d','#ffc24b','#ffc24b','#3dffa5'];
+    const labels = ['', 'weak', 'weak', 'good', 'strong'];
+    const bar = $('#gStrength i'); if(bar){ bar.style.width=(s*25)+'%'; bar.style.background=colors[s]; }
+    if(s>0) $('#gHint').textContent = 'Password strength: ' + labels[s];
+  });
+  $('#gPass').addEventListener('keydown', e=>{ if(e.key==='Enter') submitGate(); });
+  $('#gGo').onclick = submitGate;
+  async function submitGate(){
+    const email = $('#gEmail').value.trim(), pass = $('#gPass').value;
+    const out = $('#gOut');
+    if(!email || !pass){ out.innerHTML='<div class="errbox">Enter your email and password.</div>'; return; }
+    if(gateMode==='signup'){ const nm=$('#gName'); if(nm){ settings.userName=nm.value.trim()||'sir'; saveSettings(); } }
+    out.innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span></div>';
+    const r = gateMode==='signup'
+      ? await post('/api/auth/signup',{email,password:pass})
+      : await post('/api/auth/login',{email,password:pass});
+    if(r.status===200 && r.data && r.data.access_token){
+      if(r.requires_2fa){
+        gate2fa = {email, session:{user:r.data.user, access_token:r.data.access_token, refresh_token:r.data.refresh_token}};
+        renderGate(); return;
+      }
+      completeGate(r, r.data.user, r.data.access_token, r.data.refresh_token);
+    } else {
+      out.innerHTML = `<div class="errbox">${escapeHtml(r.error || ((r.data && (r.data.msg || r.data.error_description)) || 'Something went wrong.'))}</div>`;
+    }
+  }
+}
+function finishAuth(){
+  hideGate();
+  updateTier(); updateAdminUI(); renderStatus(); renderAccount(); renderAcctChip();
+  setOrbStatus('online');
+  greeting();
+  setTimeout(()=>{ const i=$('#input'); if(i) i.focus(); }, 350);
+  /* proactive speech now only fires after 30 minutes of inactivity */
+}
+
+async function init(){
+  try{ srv=await fetch('/api/config').then(r=>r.json()); }catch(e){}
+  applyProactive();
+  updateTier();
+  renderAcctChip();
+  updateCoreUI();
+  renderStatus();
+  renderIntel();
+  renderMarkets();
+  renderDevices();
+  renderCode();
+  renderAccount();
+  renderSettings();
+  updateWakeUI();
+  // restore Supabase session + PRO status, else show mandatory gate
+  if(session && session.access_token){
+    post('/api/auth/me',{access_token:session.access_token}).then(r=>{
+      if(r.status===200 && r.data && r.data.email){
+        session.user=r.data; session.admin=r.admin; session.blocked=r.blocked;
+        saveSession(); renderAcctChip(); renderAccount(); updateAdminUI();
+        if(r.pro_token) setProToken(r.pro_token);
+        finishAuth();
+      } else { clearSession(); showGate(); }
+    }).catch(()=>{ clearSession(); showGate(); });
+  } else {
+    // OAuth return (Google/GitHub)
+    let oauth=null; try{ oauth=JSON.parse(localStorage.getItem('oracool_oauth')||'null'); localStorage.removeItem('oracool_oauth'); }catch(e){}
+    if(oauth && oauth.access_token){
+      post('/api/auth/oauth/exchange',{access_token:oauth.access_token, refresh_token:oauth.refresh_token}).then(r=>{
+        if(r.status===200 && r.user){ setSession({user:r.user, access_token:oauth.access_token, refresh_token:oauth.refresh_token, pro_token:r.pro_token||null, admin:r.admin, blocked:r.blocked}); finishAuth(); }
+        else { addErr('⚠️ '+(r.error||'OAuth sign-in failed.')); showGate(); }
+      });
+    } else if(oauth && oauth.error){
+      showGate(); setTimeout(()=>{ const out=$('#gOut'); if(out) out.innerHTML='<div class="errbox">'+escapeHtml(oauth.error)+'</div>'; }, 300);
+    } else {
+      showGate();
+    }
+  }
+}
+
+/* ---------- PWA: register service worker + install prompt ---------- */
+if('serviceWorker' in navigator){ try{ navigator.serviceWorker.register('/sw.js'); }catch(e){} }
+let deferredInstall=null;
+window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); deferredInstall=e; const b=$('#installBtn'); if(b){ b.style.display=''; b.onclick=async()=>{ deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall=null; b.style.display='none'; }; } });
+</script>
+</body>
+</html>

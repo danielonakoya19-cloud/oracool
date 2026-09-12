@@ -1,0 +1,10 @@
+# ---- secrets & runtime data (NEVER commit these) ----
+keys.json
+data/
+*.tmp
+__pycache__/
+.cache/
+bin/cloudflared
+# ---- OS junk ----
+.DS_Store
+Thumbs.db

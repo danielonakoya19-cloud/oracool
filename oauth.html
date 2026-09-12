@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Signing in…</title>
+<style>body{background:#04070d;color:#d9f6ff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}.b{text-align:center}.o{font-size:34px;color:#00e5ff;text-shadow:0 0 18px rgba(0,229,255,.6);animation:p 1.2s infinite}p{opacity:.7;font-size:13px}@keyframes p{0%,100%{opacity:.4}50%{opacity:1}}</style></head>
+<body><div class="b"><div class="o">◤</div><p>Linking your account…</p></div>
+<script>
+(function(){
+  var h = location.hash ? location.hash.slice(1) : '';
+  if(!h){
+    // error path: provider may have rejected or returned an error
+    var q = new URLSearchParams(location.search);
+    var err = q.get('error_description') || q.get('error') || '';
+    try{ localStorage.setItem('oracool_oauth', JSON.stringify({error: err || 'OAuth sign-in was cancelled or failed. Enable the provider in Supabase and try again.'})); }catch(e){}
+    location.replace('/');
+    return;
+  }
+  var p = new URLSearchParams(h);
+  var tok = p.get('access_token');
+  var ref = p.get('refresh_token');
+  if(!tok){
+    try{ localStorage.setItem('oracool_oauth', JSON.stringify({error: p.get('error_description')||'OAuth failed — provider not configured or declined.'})); }catch(e){}
+    location.replace('/');
+    return;
+  }
+  try{ localStorage.setItem('oracool_oauth', JSON.stringify({access_token:tok, refresh_token:ref})); }catch(e){}
+  location.replace('/');
+})();
+</script></body></html>
