@@ -700,8 +700,61 @@ WEATHER_CODES = {0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Over
     75: "Heavy snow", 80: "Light showers", 81: "Showers", 82: "Violent showers",
     95: "Thunderstorm", 96: "Thunderstorm w/ hail", 99: "Thunderstorm w/ hail"}
 
+
+def _num(v):
+    try:
+        return float(v)
+    except Exception:
+        return None
+
+
+def _weather_wttr(city, lat, lon):
+    """Fallback weather provider (wttr.in, no key) mapped to the app's shape.
+    Prefers precise coordinates (passed from open-meteo geocoding); only falls
+    back to a name query when no coordinates are available."""
+    q = None
+    if lat is not None and lon is not None:
+        q = f"{lat},{lon}"
+    elif (city or "").strip():
+        q = urllib.parse.quote((city or "").strip())
+    if not q:
+        return None
+    try:
+        _, raw, _ = http_fetch(f"https://wttr.in/{q}?format=j1", timeout=20)
+        d = json.loads(raw)
+        cur = (d.get("current_condition") or [{}])[0]
+        area = (d.get("nearest_area") or [{}])[0]
+        name = ((area.get("areaName") or [{}])[0].get("value") if area.get("areaName") else "") or (city or "")
+        country = ((area.get("country") or [{}])[0].get("value") if area.get("country") else "")
+        forecast = []
+        for wd in (d.get("weather") or []):
+            hr = (wd.get("hourly") or [{}])[0]
+            forecast.append({
+                "date": wd.get("date"),
+                "max_c": _num(wd.get("maxtempC")),
+                "min_c": _num(wd.get("mintempC")),
+                "condition": ((hr.get("weatherDesc") or [{}])[0].get("value") or "").strip(),
+                "precip_prob": None,
+            })
+        cur_cond = ((cur.get("weatherDesc") or [{}])[0].get("value") or "").strip()
+        return {"location": f"{name}, {country}".strip(", "),
+                "latitude": lat, "longitude": lon,
+                "current": {"temperature_c": _num(cur.get("temp_C")),
+                            "feels_like_c": _num(cur.get("FeelsLikeC")),
+                            "humidity_pct": _num(cur.get("humidity")),
+                            "wind_kmh": _num(cur.get("windspeedKmph")),
+                            "condition": cur_cond},
+                "today": forecast[0] if forecast else {},
+                "forecast": forecast,
+                "global": True}
+    except Exception:
+        return None
+
+
 def weather(city=None, lat=None, lon=None):
     # Works globally: any city or country name, or direct coordinates.
+    # Uses open-meteo first; on any failure (e.g. rate-limiting on shared
+    # hosting IPs) it falls back to wttr.in so weather never breaks.
     try:
         if lat is not None and lon is not None:
             try:
@@ -751,6 +804,9 @@ def weather(city=None, lat=None, lon=None):
                 "forecast": forecast,
                 "global": True}
     except Exception as e:
+        fb = _weather_wttr(city, lat, lon)
+        if fb:
+            return fb
         return {"error": f"Weather lookup failed: {e}"}
 
 # ---------------------------------------------------------------- markets (free)
@@ -1675,7 +1731,7 @@ def get_config():
         "brain": {"openai": bool(key("OPENAI_API_KEY")), "groq": bool(key("GROQ_API_KEY")),
                   "default_provider": KEYS.get("BRAIN_PROVIDER", "groq"),
                   "default_model": KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL),
-                  "fast_model": KEYS.get("GROQ_FAST_MODEL", "allam-2-7b"),
+                  "fast_model": KEYS.get("GROQ_FAST_MODEL", GROQ_DEFAULT_MODEL),
                   "chat_max_tokens": int(KEYS.get("CHAT_MAX_TOKENS", 600))},
         "keys": loaded(["OPENAI_API_KEY", "GROQ_API_KEY", "PAYSTACK_SECRET_KEY",
                         "SUPABASE_URL", "GITHUB_TOKEN", "SHODAN_API_KEY",
