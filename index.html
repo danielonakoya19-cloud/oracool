@@ -294,6 +294,13 @@
     .hdr-right .clock{display:none;}
     .bubble{max-width:95%;}
   }
+  /* tidy header on phones so nothing overflows */
+  @media (max-width: 560px){
+    .live, .wake, .clock{display:none !important;}
+    .hdr-right{gap:6px;}
+    .brand .title{letter-spacing:2px; font-size:15px;}
+    header{gap:8px;}
+  }
   /* short landscape phones: keep everything visible */
   @media (max-height: 560px) and (orientation: landscape){
     header{padding:6px 12px;}
@@ -320,12 +327,21 @@
   .planchip.active{border-color:var(--cyan2);box-shadow:0 0 12px rgba(0,229,255,.3)}
   .planchip:hover{border-color:var(--line2)}
   /* ---- holographic orb centerpiece ---- */
-  .orbwrap{position:relative; width:120px; height:120px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; margin:0; overflow:hidden}
-  .orb{filter:drop-shadow(0 0 22px rgba(0,229,255,.45)); animation:orbfloat 5.5s ease-in-out infinite}
+  .orbwrap{position:relative; width:120px; height:120px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; margin:0; overflow:visible}
+  .orb{position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center; filter:drop-shadow(0 0 18px rgba(0,229,255,.45)); animation:orbfloat 5.5s ease-in-out infinite}
   .orbwrap.talking .orb{animation:orbtalk .6s ease-in-out infinite}
+  /* glowing orb that continuously changes colour (cyan→blue→violet→pink→gold→green) */
+  .orbcore{position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center}
+  .orbcore .sphere{position:absolute; inset:0; border-radius:50%;
+    background:radial-gradient(circle at 32% 26%, #eafdff 0%, #7df9ff 16%, #00c8f0 38%, #0a5677 66%, #03202f 100%);
+    animation:huecycle 9s linear infinite, glowpulse 3.2s ease-in-out infinite}
+  .orbcore .emblem{position:relative; z-index:2; filter:drop-shadow(0 0 7px rgba(255,194,75,.85))}
+  .orbwrap.talking .sphere{animation-duration:1.6s,1.6s}
+  @keyframes huecycle{0%{filter:hue-rotate(0deg)}100%{filter:hue-rotate(360deg)}}
+  @keyframes glowpulse{0%,100%{box-shadow:0 0 26px 6px rgba(0,229,255,.5), inset 0 0 16px rgba(255,255,255,.22)}50%{box-shadow:0 0 52px 14px rgba(0,229,255,.75), inset 0 0 26px rgba(255,255,255,.34)}}
   .orbring{position:absolute; left:50%; top:50%; width:52px; height:52px; margin:-26px 0 0 -26px; border:1px solid rgba(0,229,255,.5); border-radius:50%; animation:ring 4s ease-out infinite; pointer-events:none}
   .orbring.b{animation-delay:2s; border-color:rgba(255,194,75,.5)}
-  @keyframes ring{0%{transform:scale(.6); opacity:.8}100%{transform:scale(3.1); opacity:0}}
+  @keyframes ring{0%{transform:scale(.6); opacity:.8}100%{transform:scale(2.4); opacity:0}}
   @keyframes orbfloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
   @keyframes orbtalk{0%,100%{transform:scale(1)}50%{transform:scale(1.045)}}
   .orbstatus{margin-top:6px; font-size:10px; letter-spacing:4px; text-align:center; font-weight:700}
@@ -411,6 +427,7 @@
         <div class="tab" data-p="markets">Markets</div>
         <div class="tab" data-p="trading">Trading</div>
         <div class="tab" data-p="space">Space</div>
+        <div class="tab" data-p="create">Create</div>
         <div class="tab" data-p="cores">Cores</div>
         <div class="tab" data-p="plans">Plans</div>
         <div class="tab" data-p="devices">Devices</div>
@@ -424,6 +441,7 @@
       <div class="panelbody" id="p-markets"></div>
       <div class="panelbody" id="p-trading"></div>
       <div class="panelbody" id="p-space"></div>
+      <div class="panelbody" id="p-create"></div>
       <div class="panelbody" id="p-cores"></div>
       <div class="panelbody" id="p-plans"></div>
       <div class="panelbody" id="p-devices"></div>
@@ -556,9 +574,17 @@ let proToken = '';         // PRO JWT
 try{ if(storageOK) proToken = localStorage.getItem('oracool_pro') || ''; }catch(e){}
 function setProToken(t){ proToken = t; try{ if(storageOK){ if(t) localStorage.setItem('oracool_pro', t); else localStorage.removeItem('oracool_pro'); } }catch(e){} updateTier(); }
 function isPro(){ return !!proToken; }
+const TIER_RANK = {free:0, starter:1, pro:2, ultra:3, enterprise:4};
+function myTier(){
+  if(!proToken) return 'free';
+  try{ const p=JSON.parse(atob(proToken.split('.')[1])); return p.admin?'enterprise':((p.tier||'pro').toLowerCase()); }
+  catch(e){ return 'pro'; }
+}
+function tierGte(t){ return (TIER_RANK[myTier()]||0) >= (TIER_RANK[t]||0); }
 function updateTier(){
   const b = $('#tierBadge');
-  if(isPro()){ b.textContent = 'PRO ◈'; b.className = 'tier pro'; }
+  const t = myTier();
+  if(isPro() && t!=='free'){ b.textContent = t.toUpperCase(); b.className = 'tier pro'; }
   else { b.textContent = 'FREE'; b.className = 'tier'; }
   const locks = document.querySelectorAll('.toolbtn .lk');
   locks.forEach(l=>{ l.textContent = isPro() ? '' : '🔒'; });
@@ -584,9 +610,20 @@ function reactor(size){
     </circle>
   </svg>`;
 }
-$('#bootReactor').innerHTML = reactor(150);
-$('#hdrReactor').innerHTML = reactor(38);
-$('#bigOrb').innerHTML = reactor(120);
+$('#bootReactor').innerHTML = orbCore(150);
+$('#hdrReactor').innerHTML = orbCore(38);
+$('#bigOrb').innerHTML = orbCore(120);
+function orbCore(size){
+  /* Glowing, colour-cycling orb with the gold triangle emblem at its core. */
+  const c = size/2;
+  const gold = `<svg class="emblem" viewBox="0 0 ${size} ${size}" width="${Math.round(size*0.5)}" height="${Math.round(size*0.5)}">
+    <polygon points="${c},${c-c*0.30} ${c-c*0.26},${c+c*0.15} ${c+c*0.26},${c+c*0.15}" fill="none" stroke="#ffc24b" stroke-width="${Math.max(1.1,size*0.016)}" stroke-linejoin="round"/>
+    <polygon points="${c},${c-c*0.15} ${c-c*0.13},${c+c*0.07} ${c+c*0.13},${c+c*0.07}" fill="#ffc24b" opacity=".95">
+      <animate attributeName="opacity" values="0.5;1;0.5" dur="2.6s" repeatCount="indefinite"/>
+    </polygon>
+  </svg>`;
+  return `<div class="orbcore" style="width:${size}px;height:${size}px"><div class="sphere"></div>${gold}</div>`;
+}
 function setOrbStatus(s){
   const el=$('#orbStatus'); if(!el) return;
   el.textContent=s.toUpperCase(); el.className='orbstatus '+s;
@@ -659,9 +696,28 @@ const history=[];
 const MAXH=30;
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function scrollChat(){ chat.scrollTop=chat.scrollHeight; }
+function renderRich(el, text){
+  let s = escapeHtml(text||'');
+  // markdown images ![alt](url)
+  s = s.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:10px;margin:8px 0" onerror="this.style.display=\'none\'">');
+  // markdown links [text](url) — inline the image if the URL is an image
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, txt, url)=>{
+    if(/\.(png|jpe?g|gif|webp)(\?[^\s)]*)?$/i.test(url))
+      return '<a href="'+url+'" target="_blank" rel="noopener"><img src="'+url+'" alt="'+txt+'" style="max-width:100%;border-radius:10px;margin:8px 0" onerror="this.outerHTML=\'<a href=&quot;'+url+'&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;>'+txt+' ↗</a>\'"></a>';
+    return '<a href="'+url+'" target="_blank" rel="noopener">'+txt+'</a>';
+  });
+  // bare image urls
+  s = s.replace(/(https?:\/\/\S+?\.(?:png|jpe?g|gif|webp))(\?[^\s<]*)?/gi, '<a href="$1$2" target="_blank" rel="noopener"><img src="$1$2" style="max-width:100%;border-radius:10px;margin:8px 0" onerror="this.style.display=\'none\'"></a>');
+  // bare video urls
+  s = s.replace(/(https?:\/\/\S+?\.(?:mp4|webm|mov))(\?[^\s<]*)?/gi, '<video controls src="$1$2" style="max-width:100%;border-radius:10px;margin:8px 0"></video>');
+  // bold **text**
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  s = s.replace(/\n/g, '<br>');
+  el.innerHTML = s;
+}
 function systemPrompt(){
   const name=settings.userName||'sir';
-  return `You are OraCool AI, a refined, calm, confident and subtly witty artificial intelligence — a personal assistant in the spirit of J.A.R.V.I.S. from Iron Man. Address the user as "${name}". LANGUAGE RULE (very important): always reply in the same language the user writes in. If the user writes in English, you reply in English. Never switch to Arabic, French, or any other language unless the user themselves wrote in that language. Keep replies concise and conversational, as if spoken aloud, unless the user asks for detail. You can help with knowledge, reasoning, writing, coding, security/OSINT analysis, markets/finance, weather, and smart-home control. When the user shares tool results, analyze them like a calm intelligence analyst. Never claim to have run a tool whose output you have not seen. Stay helpful, lawful, and ethical. Never break character.`;
+  return `You are OraCool AI, a refined, calm, confident and subtly witty artificial intelligence — a personal assistant in the spirit of J.A.R.V.I.S. from Iron Man. Address the user as "${name}". LANGUAGE RULE (very important): always reply in the same language the user writes in. If the user writes in English, you reply in English. Never switch to Arabic, French, or any other language unless the user themselves wrote in that language. Keep replies concise and conversational, as if spoken aloud, unless the user asks for detail. You can help with knowledge, reasoning, writing, coding, security/OSINT analysis, markets/finance, weather, smart-home control, and creating images and videos. When the user asks you to create/generate an image or a video, describe it and rely on your live tools — if a generated image or video URL is provided to you in the tool results, include that URL in your reply on its own line so it can be displayed. When the user shares tool results, analyze them like a calm intelligence analyst. Never claim to have run a tool whose output you have not seen. Stay helpful, lawful, and ethical. Never break character.`;
 }
 function addUser(text, histText){
   const b=document.createElement('div'); b.className='bubble user'; b.textContent=text;
@@ -823,6 +879,7 @@ async function send(text){
     let acc='';
     const payload={messages:msgs, stream:true, provider:settings.provider||'auto', max_tokens:600};
     const _em=myEmail(); if(_em) payload.email=_em; if(proToken) payload.token=proToken;
+    if(settings.haUrl && settings.haToken){ payload.ha_url=settings.haUrl; payload.ha_token=settings.haToken; }
     if(settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
     else if(settings.brainMode==='fast' && srv && srv.brain && srv.brain.fast_model){ payload.provider='groq'; payload.model=srv.brain.fast_model; }
     const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -848,7 +905,7 @@ async function send(text){
         }
       }
     }
-    if(!finished){ body.textContent=acc||'(no response)'; }
+    renderRich(body, acc||'(no response)');
     history.push({role:'assistant',content:acc}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
     speak(acc);
   }catch(e){
@@ -1011,6 +1068,7 @@ document.querySelectorAll('.tab').forEach(t=>{
     if(t.dataset.p==='settings')renderSettings();
     if(t.dataset.p==='trading'){ renderTrading(); refreshTrading(); }
     if(t.dataset.p==='space')renderSpace();
+    if(t.dataset.p==='create')renderCreate();
     if(t.dataset.p==='cores')renderCores();
     if(t.dataset.p==='plans')renderPlans();
     if(t.dataset.p==='admin')renderAdmin();
@@ -2085,6 +2143,46 @@ function renderSpace(){
   $('#spLibQ').addEventListener('keydown',e=>{ if(e.key==='Enter')libGo(); });
 }
 
+/* ---------- create (AI image & video generation) ---------- */
+function renderCreate(){
+  const canImg = tierGte('pro'), canVid = tierGte('ultra');
+  $('#p-create').innerHTML=`
+    <h3 class="ptitle">🎨 Create with OraCool</h3>
+    <div class="muted" style="margin-bottom:8px">Describe anything — OraCool generates images and videos, or just ask it in the chat ("create an image of…").</div>
+    <textarea id="crPrompt" rows="3" placeholder="A neon-lit futuristic city floating above the ocean, cinematic" style="width:100%; resize:vertical; font-family:inherit; font-size:14px; background:rgba(4,14,22,.6); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px"></textarea>
+    <div class="row" style="margin:10px 0">
+      <select id="crRatio" style="background:rgba(4,14,22,.6);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px">
+        <option value="1:1">Square 1:1</option>
+        <option value="16:9" selected>Wide 16:9</option>
+        <option value="9:16">Portrait 9:16</option>
+        <option value="3:4">Portrait 3:4</option>
+        <option value="4:3">Landscape 4:3</option>
+      </select>
+      <button class="btn primary" id="crImg" ${canImg?'':'disabled'}>🖼 Generate Image${canImg?'':' · PRO'}</button>
+      <button class="btn gold" id="crVid" ${canVid?'':'disabled'}>🎬 Generate Video${canVid?'':' · ULTRA'}</button>
+    </div>
+    <div class="result" id="crOut"><div class="muted">${canImg||canVid?'Ready — image generation takes ~30–90s, video longer.':'Image generation unlocks on the PRO plan; video on ULTRA.'}</div></div>`;
+  const out=()=>$('#crOut');
+  const media=(urls, kind)=>{
+    if(kind==='video') return urls.map(u=>`<video controls src="${escapeHtml(u)}" style="width:100%;border-radius:10px;margin-top:8px"></video>`).join('');
+    return urls.map(u=>`<img src="${escapeHtml(u)}" style="width:100%;border-radius:10px;margin-top:8px" onerror="this.outerHTML='<a class=&quot;btn ghost&quot; href=&quot;${escapeHtml(u)}&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;>Open image ↗</a>'">`).join('');
+  };
+  $('#crImg').onclick=async()=>{
+    const p=$('#crPrompt').value.trim(); if(p.length<3){ out().innerHTML='<div class="errbox">Describe the image in a few words first.</div>'; return; }
+    out().innerHTML=SPIN+' <span class="muted">Painting your image…</span>';
+    const r=await post('/api/image',{prompt:p, aspect_ratio:$('#crRatio').value, token:proToken});
+    if(r.error||r.locked){ spFail(out(),r); return; }
+    out().innerHTML=`<div class="ptitle">🖼 Generated image</div><div class="muted">${escapeHtml(r.model||'')}</div>${media(r.images||[],'img')}`;
+  };
+  $('#crVid').onclick=async()=>{
+    const p=$('#crPrompt').value.trim(); if(p.length<3){ out().innerHTML='<div class="errbox">Describe the video in a few words first.</div>'; return; }
+    out().innerHTML=SPIN+' <span class="muted">Rendering your video (this takes a while)…</span>';
+    const r=await post('/api/video',{prompt:p, token:proToken});
+    if(r.error||r.locked){ spFail(out(),r); return; }
+    out().innerHTML=`<div class="ptitle">🎬 Generated video</div><div class="muted">${escapeHtml(r.model||'')}</div>${media(r.videos||[],'video')}`;
+  };
+}
+
 /* ---------- cores (1,000-core intelligence map) ---------- */
 let coreSearchTimer=null;
 function renderCores(){
@@ -2200,7 +2298,7 @@ function renderGate(){
   const card = $('#gateCard'); if(!card) return;
   if(gate2fa){
     card.innerHTML = `
-      <div style="text-align:center; margin-bottom:6px"><span id="gateReactor"></span></div>
+      <div style="text-align:center; margin-bottom:6px"><div id="gateReactor" style="display:flex;justify-content:center"></div></div>
       <div class="gatebrand">ORA-COOL AI</div>
       <div class="gatesub">Two-factor authentication</div>
       <div class="hint">Enter the 6-digit code from your authenticator app for <b>${escapeHtml(gate2fa.email)}</b>.</div>
@@ -2208,7 +2306,7 @@ function renderGate(){
       <button class="btn primary" style="width:100%; justify-content:center; margin-top:14px" id="g2faGo">Verify & enter</button>
       <button class="btn ghost" style="width:100%; justify-content:center; margin-top:6px" id="g2faBack">← Back</button>
       <div class="result" id="gOut" style="margin-top:10px"></div>`;
-    $('#gateReactor').innerHTML = reactor(56);
+    $('#gateReactor').innerHTML = orbCore(56);
     $('#g2faGo').onclick=async()=>{
       const code=$('#g2fa').value.trim(); const out=$('#gOut');
       if(!code){ out.innerHTML='<div class="errbox">Enter your code.</div>'; return; }
@@ -2221,7 +2319,7 @@ function renderGate(){
     return;
   }
   card.innerHTML = `
-    <div style="text-align:center; margin-bottom:6px"><span id="gateReactor"></span></div>
+    <div style="text-align:center; margin-bottom:6px"><div id="gateReactor" style="display:flex;justify-content:center"></div></div>
     <div class="gatebrand">ORA-COOL AI</div>
     <div class="gatesub">Sign in to activate the interface</div>
     <div class="gatetabs">
@@ -2243,7 +2341,7 @@ function renderGate(){
     <button class="btn ghost" style="width:100%; justify-content:center; margin-top:8px" id="gFace">🫆 Face / Fingerprint login</button>
     <div class="hint" style="margin-top:8px">OAuth needs the provider enabled in Supabase (Authentication → Providers). Face login uses your device's secure Face ID / fingerprint.</div>
     <div class="result" id="gOut" style="margin-top:10px"></div>`;
-  $('#gateReactor').innerHTML = reactor(56);
+  $('#gateReactor').innerHTML = orbCore(56);
   $('#gtSignup').onclick = ()=>{ gateMode='signup'; renderGate(); };
   $('#gtSignin').onclick = ()=>{ gateMode='signin'; renderGate(); };
   $('#gGoogle').onclick = ()=>oauthGo('google', $('#gOut'));

@@ -72,6 +72,11 @@ def _load_keys():
                  "URLSCAN_API_KEY", "TAVILY_API_KEY", "FINNHUB_API_KEY",
                  "COINGECKO_API_KEY", "FRED_API_KEY", "HIBP_API_KEY", "NASA_API_KEY",
                  "ALPACA_PAPER_KEY_ID", "ALPACA_PAPER_SECRET",
+                 "HIA_API_KEY", "HIA_IMAGE_MODEL", "HIA_VIDEO_MODEL",
+                 "PIXAZO_KEY", "SHORTAPI_KEY", "TOKENMIX_API_KEY",
+                 "FCS_API_KEY", "FCS_PUBLIC_API_KEY", "DOMSCAN_API_KEY",
+                 "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
+                 "HA_URL", "HA_TOKEN",
                  "JWT_SECRET", "ENCRYPTION_KEY", "ENCRYPTION_IV"):
         env = os.environ.get(name)
         if not env:
@@ -1571,6 +1576,237 @@ def _require_admin(self, body):
     return None
 
 
+# ---------------------------------------------------------------- media generation (HiAPI + Pixazo)
+
+HIA_BASE = "https://api.hiapi.ai"
+HIA_IMAGE_DEFAULT = "gpt-image-2/text-to-image"
+HIA_VIDEO_DEFAULT = "seedance-2.0-fast"
+
+
+def hiapi_submit(model, input_obj, api_key, timeout=30):
+    """Submit an async generation task. Returns taskId or None."""
+    st, raw, _ = http_fetch(HIA_BASE + "/v1/tasks", method="POST",
+                            headers={"Authorization": "Bearer " + api_key,
+                                     "Content-Type": "application/json"},
+                            json_body={"model": model, "input": input_obj},
+                            timeout=timeout)
+    d = json.loads(raw)
+    return (d.get("data") or {}).get("taskId") or d.get("taskId")
+
+
+def hiapi_poll(task_id, api_key, budget=90):
+    """Poll a task until success/fail. Returns dict with urls on success."""
+    start = time.time()
+    delay = 2.0
+    while time.time() - start < budget:
+        try:
+            st, raw, _ = http_fetch(HIA_BASE + "/v1/tasks/" + urllib.parse.quote(str(task_id)),
+                                    headers={"Authorization": "Bearer " + api_key}, timeout=20)
+            d = json.loads(raw)
+        except Exception:
+            time.sleep(delay)
+            delay = min(delay * 1.5, 8)
+            continue
+        data = d.get("data") or {}
+        status = data.get("status") or d.get("status")
+        if status in ("success", "succeeded", "complete", "completed"):
+            outs = data.get("output") or []
+            urls = []
+            for o in outs:
+                u = o.get("url") if isinstance(o, dict) else str(o)
+                if u:
+                    urls.append(u)
+            return {"ok": True, "urls": urls, "status": status}
+        if status in ("fail", "failed", "error", "cancelled"):
+            return {"ok": False, "error": (data.get("error") or data.get("message") or "Generation failed")[:200]}
+        time.sleep(delay)
+        delay = min(delay * 1.5, 8)
+    return {"ok": False, "error": "Generation timed out (still processing — try again)."}
+
+
+def gen_image(prompt, aspect_ratio="1:1"):
+    """Text-to-image. Primary: HiAPI async tasks. Fallback: Pixazo reveal-image."""
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return {"error": "Describe the image you want, e.g. 'a neon city at night'."}
+    if len(prompt) < 3:
+        return {"error": "Prompt too short."}
+    # 1) HiAPI
+    k = key("HIA_API_KEY")
+    if k:
+        model = KEYS.get("HIA_IMAGE_MODEL", HIA_IMAGE_DEFAULT)
+        try:
+            tid = hiapi_submit(model, {"prompt": prompt,
+                                       "aspect_ratio": aspect_ratio or "1:1",
+                                       "resolution": "1K"}, k)
+            if tid:
+                res = hiapi_poll(tid, k, budget=90)
+                if res.get("ok"):
+                    return {"ok": True, "provider": "hiapi", "model": model,
+                            "prompt": prompt, "images": res.get("urls", [])}
+                # fall through to Pixazo on failure/timeout
+            else:
+                return {"error": "HiAPI did not return a task id (check key/credits)."}
+        except Exception as e:
+            # fall through to Pixazo
+            pass
+    # 2) Pixazo fallback
+    pk = key("PIXAZO_KEY")
+    if pk:
+        try:
+            st, raw, _ = http_fetch("https://gateway.pixazo.ai/reve-image/v1/image-edit",
+                                    method="POST",
+                                    headers={"Ocp-Apim-Subscription-Key": pk,
+                                             "Content-Type": "application/json"},
+                                    json_body={"prompt": prompt,
+                                               "aspect_ratio": aspect_ratio or "1:1"},
+                                    timeout=120)
+            d = json.loads(raw)
+            urls = []
+            def _dig(x):
+                if isinstance(x, dict):
+                    for kk in ("url", "image_url", "image", "output", "result"):
+                        v = x.get(kk)
+                        if isinstance(v, str) and v.startswith("http"):
+                            urls.append(v)
+                        elif isinstance(v, dict):
+                            _dig(v)
+                        elif isinstance(v, list):
+                            for it in v:
+                                _dig(it)
+                elif isinstance(x, list):
+                    for it in x:
+                        _dig(it)
+            _dig(d)
+            if urls:
+                return {"ok": True, "provider": "pixazo", "prompt": prompt, "images": urls[:4]}
+            if isinstance(d, dict) and d.get("error"):
+                return {"error": "Pixazo: " + str(d.get("error"))[:200]}
+        except Exception as e:
+            return {"error": f"Image generation failed: {e}"}
+    return {"error": "No image provider configured (HIA_API_KEY / PIXAZO_KEY missing)."}
+
+
+def gen_video(prompt, duration=None):
+    """Text-to-video via HiAPI async tasks."""
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return {"error": "Describe the video you want, e.g. 'a drone flying over a rainforest'."}
+    if len(prompt) < 3:
+        return {"error": "Prompt too short."}
+    k = key("HIA_API_KEY")
+    if not k:
+        return {"error": "Video needs HIA_API_KEY configured."}
+    model = KEYS.get("HIA_VIDEO_MODEL", HIA_VIDEO_DEFAULT)
+    inp = {"prompt": prompt}
+    if duration:
+        inp["duration"] = duration
+    try:
+        tid = hiapi_submit(model, inp, k)
+        if not tid:
+            return {"error": "HiAPI did not return a task id (check key/credits)."}
+        res = hiapi_poll(tid, k, budget=150)
+        if res.get("ok"):
+            return {"ok": True, "provider": "hiapi", "model": model,
+                    "prompt": prompt, "videos": res.get("urls", [])}
+        return {"error": res.get("error") or "Video generation failed."}
+    except Exception as e:
+        return {"error": f"Video generation failed: {e}"}
+
+
+# ---------------------------------------------------------------- smart home (Home Assistant)
+
+def _ha_headers(tok=None):
+    return {"Authorization": "Bearer " + (tok or key("HA_TOKEN")),
+            "Content-Type": "application/json"}
+
+
+def smart_list(ha_url=None, ha_token=None):
+    url = ha_url or key("HA_URL"); tok = ha_token or key("HA_TOKEN")
+    if not url or not tok:
+        return {"configured": False, "message": "Home Assistant not linked. Add HA_URL + HA_TOKEN."}
+    try:
+        st, raw, _ = http_fetch(url.rstrip("/") + "/api/states",
+                                headers=_ha_headers(tok), timeout=15)
+        states = json.loads(raw)
+        ents = []
+        for s in states:
+            eid = s.get("entity_id", "")
+            ent = {"id": eid, "state": s.get("state"),
+                   "name": (s.get("attributes") or {}).get("friendly_name") or eid}
+            if eid.startswith(("light.", "switch.", "fan.", "climate.", "lock.", "media_player.", "cover.")):
+                ents.append(ent)
+        return {"configured": True, "devices": ents}
+    except Exception as e:
+        return {"configured": True, "error": f"Home Assistant error: {e}"}
+
+
+def smart_control(entity_id, action, ha_url=None, ha_token=None, **extra):
+    url = ha_url or key("HA_URL"); tok = ha_token or key("HA_TOKEN")
+    if not url or not tok:
+        return {"error": "Home Assistant not linked."}
+    entity_id = (entity_id or "").strip()
+    action = (action or "").strip().lower()
+    if not entity_id:
+        return {"error": "Provide entity_id (e.g. light.living_room)."}
+    domain = entity_id.split(".")[0]
+    if not action:
+        action = "toggle"
+    service = f"{domain}/{action}"
+    body = {"entity_id": entity_id}
+    if extra:
+        body.update(extra)
+    try:
+        st, raw, _ = http_fetch(url.rstrip("/") + "/api/services/" + service,
+                                method="POST", headers=_ha_headers(tok),
+                                json_body=body, timeout=20)
+        return {"ok": True, "service": service, "entity_id": entity_id,
+                "status": st}
+    except Exception as e:
+        return {"error": f"Smart control failed: {e}"}
+
+
+def _smart_intent(text, ha_url=None, ha_token=None):
+    """Map natural language to a Home Assistant action, if HA is linked."""
+    url = ha_url or key("HA_URL"); tok = ha_token or key("HA_TOKEN")
+    if not (url and tok):
+        return None
+    low = (text or "").lower()
+    if not any(k in low for k in ("turn", "switch", "light", "fan", "thermostat",
+                                  "lock", "tv", "speaker", "ac", "aircon", "device")):
+        return None
+    on = bool(re.search(r"\bon\b|open|start|unlock|arm", low))
+    off = bool(re.search(r"\boff\b|close|stop|lock|disarm", low))
+    action = None
+    if on and not off:
+        action = "turn_on"
+    elif off and not on:
+        action = "turn_off"
+    else:
+        action = "toggle"
+    try:
+        st, raw, _ = http_fetch(url.rstrip("/") + "/api/states",
+                                headers=_ha_headers(tok), timeout=12)
+        states = json.loads(raw)
+    except Exception:
+        return None
+    best = None
+    best_score = 0
+    words = re.findall(r"[a-z0-9]+", low)
+    for s in states:
+        eid = s.get("entity_id", "")
+        if not eid.startswith(("light.", "switch.", "fan.", "climate.", "lock.", "media_player.", "cover.")):
+            continue
+        fname = str((s.get("attributes") or {}).get("friendly_name") or eid).lower()
+        score = sum(1 for w in words if w in fname or w in eid)
+        if score > best_score:
+            best_score, best = score, {"id": eid, "name": fname, "state": s.get("state")}
+    if best and best_score >= 1:
+        return {"action": action, "entity_id": best["id"], "name": best["name"],
+                "current_state": best["state"]}
+    return None
+
+
 # ---------------------------------------------------------------- PRO tools
 
 def pro_search(query, max_results=5):
@@ -1817,8 +2053,37 @@ def paystack_verify(reference):
 
 # ---------------------------------------------------------------- tier helpers
 
-FREE_TOOLS = ["ip", "domain", "email", "username", "phone", "weather", "stock", "crypto", "fred"]
-PRO_TOOLS = ["search", "shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck"]
+# Each tier unlocks everything in the tiers BELOW it, plus its own extras.
+# free < starter < pro < ultra < enterprise  (strict cumulative access)
+TIER_ORDER = ["free", "starter", "pro", "ultra", "enterprise"]
+TIER_TOOL_SETS = {
+    "free":       ["ip", "domain", "email", "username", "phone", "weather", "stock", "crypto", "fred", "time", "math", "space"],
+    "starter":    ["search"],
+    "pro":        ["shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck", "image"],
+    "ultra":      ["video", "github", "domscan", "fcs", "smart"],
+    "enterprise": ["*"],
+}
+FREE_TOOLS = TIER_TOOL_SETS["free"]
+PRO_TOOLS = TIER_TOOL_SETS["starter"] + TIER_TOOL_SETS["pro"] + TIER_TOOL_SETS["ultra"]
+
+def tools_for_tier(tier):
+    """Cumulative tool list for a tier (inherits everything below it)."""
+    tier = (tier or "free").lower()
+    if tier not in TIER_RANK:
+        tier = "free"
+    out = []
+    for t2 in TIER_ORDER:
+        out.extend(TIER_TOOL_SETS.get(t2, []))
+        if t2 == tier:
+            break
+    return out
+
+def tier_of_tool(tool):
+    """Lowest tier that unlocks a given tool (for gating messages)."""
+    for t2 in TIER_ORDER:
+        if tool in TIER_TOOL_SETS.get(t2, []):
+            return t2
+    return "free"
 
 def get_config():
     def loaded(names):
@@ -1834,13 +2099,18 @@ def get_config():
                         "VIRUSTOTAL_API_KEY", "ABUSEIPDB_API_KEY", "IPINFO_API_KEY",
                         "NUMVERIFY_API_KEY", "LEAKCHECK_API_KEY", "URLSCAN_API_KEY",
                         "TAVILY_API_KEY", "FINNHUB_API_KEY", "COINGECKO_API_KEY",
-                        "FRED_API_KEY", "ALPACA_PAPER_KEY_ID", "ALPACA_PAPER_SECRET", "NASA_API_KEY"]),
+                        "FRED_API_KEY", "ALPACA_PAPER_KEY_ID", "ALPACA_PAPER_SECRET",
+                        "NASA_API_KEY", "HIA_API_KEY", "PIXAZO_KEY", "SHORTAPI_KEY",
+                        "TOKENMIX_API_KEY", "FCS_API_KEY", "DOMSCAN_API_KEY",
+                        "GOOGLE_CLIENT_ID", "HA_URL"]),
         "paystack_public_key": key("PAYSTACK_PUBLIC_KEY") if not key("PAYSTACK_TEST") else key("PAYSTACK_TEST_PUBLIC"),
         "paystack_test": bool(key("PAYSTACK_TEST")),
         "paystack_currency": (KEYS.get("PAYSTACK_CURRENCY") or "NGN").upper(),
-        "pro_price_ngn": int(KEYS.get("PRO_PRICE_NGN", 5000)),
-        "pro_label": KEYS.get("PRO_LABEL", "PRO Access · 90 days"),
+        "pro_price_ngn": int(KEYS.get("PRO_PRICE_NGN", 50000)),
+        "pro_label": KEYS.get("PRO_LABEL", "PRO Access · 30 days"),
         "free_tools": FREE_TOOLS, "pro_tools": PRO_TOOLS,
+        "tier_tools": {t: tools_for_tier(t) for t in TIER_ORDER},
+        "tier_tool_sets": TIER_TOOL_SETS,
         "auth": {"supabase": bool(key("SUPABASE_URL") and key("SUPABASE_ANON_KEY")),
                  "github": bool(key("GITHUB_TOKEN"))},
         "trading": {"symbols": list(TRADING_SYMBOLS.keys()),
@@ -1850,6 +2120,9 @@ def get_config():
                   for pid, p in PLANS.items()],
         "tiers": list(TIER_RANK.keys()),
         "nasa_ready": bool(key("NASA_API_KEY")),
+        "image_ready": bool(key("HIA_API_KEY") or key("PIXAZO_KEY")),
+        "video_ready": bool(key("HIA_API_KEY")),
+        "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
     }
@@ -2110,7 +2383,7 @@ def _shrink(obj, limit=1200):
         txt = str(obj)
     return txt[:limit]
 
-def auto_tools(text, tier="free"):
+def auto_tools(text, tier="free", ha_url=None, ha_token=None):
     """Detect intent in the user's message and RUN the matching live tool(s)."""
     t = (text or "").strip()
     if not t:
@@ -2183,11 +2456,21 @@ def auto_tools(text, tier="free"):
                 out.append({"tool": "math", "label": expr, "result": json.dumps({"expression": expr, "value": val})})
             except Exception:
                 pass
-    # PRO-tier tools (search, shodan, virustotal, abuseipdb, urlscan, leakcheck)
-    if tier_gte(tier, "pro"):
+    # Smart home (free when Home Assistant is linked — the AI drives devices itself)
+    sm = _smart_intent(t, ha_url, ha_token)
+    if sm:
+        r = smart_control(sm["entity_id"], sm["action"], ha_url, ha_token)
+        out.append({"tool": "smart", "label": "smart · " + sm.get("name", sm["entity_id"]),
+                    "result": _shrink(r)})
+
+    # Starter-tier tools (web search)
+    if tier_gte(tier, "starter"):
         if any(k in low for k in ("search for", "search the web", "web search", "google ")):
             out.append({"tool": "search", "label": "web search",
                         "result": _shrink(pro_search(t, 3), 1500)})
+
+    # Pro-tier tools (deep OSINT + image creation)
+    if tier_gte(tier, "pro"):
         if "shodan" in low and ipm:
             out.append({"tool": "shodan", "label": "shodan " + ipm.group(1),
                         "result": _shrink(pro_shodan(ipm.group(1)), 1500)})
@@ -2202,6 +2485,40 @@ def auto_tools(text, tier="free"):
             q = em.group(0) if em else ph.group(0)
             out.append({"tool": "leakcheck", "label": "leakcheck",
                         "result": _shrink(pro_leakcheck(q, "email" if em else "phone"), 1500)})
+        # image creation straight from chat
+        im = re.search(r"(?:generate|create|make|draw|imagine|show me)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
+        if im and any(k in low for k in ("generate", "create", "make", "draw", "imagine")):
+            prompt = im.group(1).strip().rstrip("?!., ")
+            if prompt:
+                r = gen_image(prompt)
+                out.append({"tool": "image", "label": "image · " + prompt[:40],
+                            "result": _shrink(r, 1200)})
+
+    # Ultra-tier tools (video creation)
+    if tier_gte(tier, "ultra"):
+        vm = re.search(r"(?:generate|create|make)\s+(?:a\s+)?(?:video|clip|animation|film)\s*(?:of|about|for)?\s*(.{6,200})", low)
+        if vm and any(k in low for k in ("video", "clip", "animation", "film")):
+            prompt = vm.group(1).strip().rstrip("?!., ")
+            if prompt:
+                r = gen_video(prompt)
+                out.append({"tool": "video", "label": "video · " + prompt[:40],
+                            "result": _shrink(r, 1200)})
+
+    # Locked-feature notices: the AI explains what plan unlocks it (honest, no fake results)
+    def _locked(feature, plan):
+        out.append({"tool": "locked", "label": feature,
+                    "result": json.dumps({"feature": feature, "unlocks_on": plan,
+                                          "note": f"This feature unlocks on the {plan.title()} plan. The user is currently on {tier.title()}."})})
+    if not tier_gte(tier, "starter") and any(k in low for k in ("search for", "search the web", "web search")):
+        _locked("web search", "starter")
+    if not tier_gte(tier, "pro"):
+        if any(k in low for k in ("shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck")):
+            _locked("deep OSINT (Shodan / VirusTotal / AbuseIPDB / URLScan / LeakCheck)", "pro")
+        im2 = re.search(r"(?:generate|create|make|draw|imagine)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
+        if im2 and any(k in low for k in ("generate", "create", "make", "draw", "imagine", "image", "picture")):
+            _locked("image creation", "pro")
+    if not tier_gte(tier, "ultra") and any(k in low for k in ("video", "clip", "animation", "film")):
+        _locked("video creation", "ultra")
     return out[:4]
 
 
@@ -2958,7 +3275,7 @@ class Handler(BaseHTTPRequestHandler):
         if tier_gte(tier, required):
             return tier
         self._send_json({"locked": True, "tier": tier,
-                         "message": f"This space tool requires the {required.title()} plan (you are on {tier.title()})."}, 402)
+                         "message": f"This tool requires the {required.title()} plan (you are on {tier.title()})."}, 402)
         return None
 
     def do_GET(self):
@@ -3159,25 +3476,38 @@ class Handler(BaseHTTPRequestHandler):
                 if payload:
                     self._send_json(admin_set_pro(body.get("email"), body.get("tier"),
                                                   body.get("days"), payload.get("sub", "")))
-            # ---- PRO tools (JWT-gated)
+            # ---- PRO tools (JWT-gated by tier; each tier inherits the ones below)
             elif path == "/api/pro/search":
-                if self._require_pro(body):
+                if self._require_tier(body, "starter"):
                     self._send_json(pro_search(body.get("query"), body.get("max_results", 5)))
             elif path == "/api/pro/shodan":
-                if self._require_pro(body):
+                if self._require_tier(body, "pro"):
                     self._send_json(pro_shodan(body.get("ip")))
             elif path == "/api/pro/virustotal":
-                if self._require_pro(body):
+                if self._require_tier(body, "pro"):
                     self._send_json(pro_virustotal(body.get("target"), body.get("kind", "domain")))
             elif path == "/api/pro/abuseipdb":
-                if self._require_pro(body):
+                if self._require_tier(body, "pro"):
                     self._send_json(pro_abuseipdb(body.get("ip"), body.get("days", 90)))
             elif path == "/api/pro/urlscan":
-                if self._require_pro(body):
+                if self._require_tier(body, "pro"):
                     self._send_json(pro_urlscan(body.get("url")))
             elif path == "/api/pro/leakcheck":
-                if self._require_pro(body):
+                if self._require_tier(body, "pro"):
                     self._send_json(pro_leakcheck(body.get("query"), body.get("type", "email")))
+            # ---- media generation (image: pro+, video: ultra+)
+            elif path == "/api/image":
+                if self._require_tier(body, "pro"):
+                    self._send_json(gen_image(body.get("prompt"), body.get("aspect_ratio", "1:1")))
+            elif path == "/api/video":
+                if self._require_tier(body, "ultra"):
+                    self._send_json(gen_video(body.get("prompt"), body.get("duration")))
+            # ---- smart home (free when linked; AI drives devices by voice)
+            elif path == "/api/smart/list":
+                self._send_json(smart_list(body.get("ha_url"), body.get("ha_token")))
+            elif path == "/api/smart/control":
+                self._send_json(smart_control(body.get("entity_id"), body.get("action"),
+                                              body.get("ha_url"), body.get("ha_token")))
             # ---- payments
             elif path == "/api/pro/trial":
                 email = (body.get("email") or "trial@oracool.local").strip()
@@ -3396,7 +3726,9 @@ class Handler(BaseHTTPRequestHandler):
                     break
             if last_user:
                 try:
-                    tool_runs = auto_tools(last_user, tier)
+                    tool_runs = auto_tools(last_user, tier,
+                                           ha_url=body.get("ha_url"),
+                                           ha_token=body.get("ha_token"))
                 except Exception as e:
                     tool_runs = [{"tool": "error", "label": "auto-tools", "result": str(e)[:200]}]
         tool_ctx = tool_context(tool_runs)
