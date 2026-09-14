@@ -7,7 +7,7 @@
   "OPENAI_API_KEY": "",
   "GROQ_API_KEY": "",
   "GROQ_MODEL": "qwen/qwen3.8-27b",
-  "GROQ_FAST_MODEL": "allam-2-7b",
+  "GROQ_FAST_MODEL": "qwen/qwen3.8-27b",
   "BRAIN_PROVIDER": "groq",
   "PAYSTACK_SECRET_KEY": "",
   "PAYSTACK_PUBLIC_KEY": "",
