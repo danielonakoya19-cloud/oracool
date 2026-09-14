@@ -3350,13 +3350,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(market_fred(body.get("series")))
             # ---- space (NASA) ----
             elif path == "/api/space/apod":
-                if self._require_tier(body, "starter"):
-                    self._send_json(space_apod(body.get("date"), body.get("count", 1)))
+                self._send_json(space_apod(body.get("date"), body.get("count", 1)))
             elif path == "/api/space/epic":
-                if self._require_tier(body, "pro"):
+                if self._require_tier(body, "starter"):
                     self._send_json(space_epic())
             elif path == "/api/space/neo":
-                if self._require_tier(body, "pro"):
+                if self._require_tier(body, "starter"):
                     self._send_json(space_neo())
             elif path == "/api/space/mars":
                 if self._require_tier(body, "pro"):

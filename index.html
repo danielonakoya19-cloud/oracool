@@ -2102,7 +2102,7 @@ $('#payBtn').onclick=async()=>{
 
 /* ---------- space (NASA) ---------- */
 const SPIN='<div style="text-align:center;padding:12px"><span class="spinner"></span></div>';
-function spaceAuth(){ return {email: myEmail()||''}; }
+function spaceAuth(){ const b={email: myEmail()||''}; if(proToken) b.token=proToken; return b; }
 function spFail(out, r){ out.innerHTML=`<div class="errbox">${escapeHtml(r.error||r.message||'failed')}</div>`; }
 function renderSpace(){
   $('#p-space').innerHTML=`
