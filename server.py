@@ -18,6 +18,7 @@ import hmac as hmac_mod
 import json
 import os
 import re
+import random
 import ssl
 import threading
 import time
@@ -140,6 +141,8 @@ def verify_jwt(token, secret):
             return None
         payload = json.loads(_b64u_decode(seg2))
         if payload.get("exp", 0) < time.time():
+            return None
+        if payload.get("trial"):  # the free 24h PRO trial was removed — old trial tokens are dead
             return None
         return payload
     except Exception:
@@ -421,8 +424,50 @@ def password_strength(pw):
     return errs
 
 
-def auth_signup(email, password):
-    """Create the account (auto-confirmed via admin API) and log the user in."""
+def _supa_admin_user(email):
+    """Look up one Supabase Auth user record by exact email (None on miss/error)."""
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    if not url or not svc or not email:
+        return None
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/auth/v1/admin/users?filter=" + urllib.parse.quote(email),
+                                headers={"apikey": svc, "Authorization": "Bearer " + svc},
+                                timeout=20)
+        for u in (json.loads(raw).get("users") or []):
+            if (u.get("email") or "").lower() == email.lower():
+                return u
+        return None
+    except Exception:
+        return None
+
+
+def is_verified(email):
+    """Email-verification state. Admins are always trusted. We fail OPEN on any
+    Supabase outage so the app can never lock its own users out."""
+    if not email:
+        return True
+    email = email.strip().lower()
+    if is_admin(email):
+        return True
+    rec = user_record(email)
+    if rec and rec.get("verified"):
+        return True
+    if not key("SUPABASE_URL") or not key("SUPABASE_SERVICE_KEY"):
+        return True
+    u = _supa_admin_user(email)
+    if u is None:
+        return True  # unknown/legacy state — do not lock anyone out
+    if u.get("email_confirmed_at"):
+        touch_user(email, verified=True)
+        return True
+    return False
+
+
+def auth_signup(email, password, name=""):
+    """Create the account. Non-admin emails receive a REAL verification email
+    from Supabase (public signup endpoint — Supabase sends it, we never store
+    more of the password than the hash). Admin/creator emails are auto-confirmed
+    so the owners can never be locked out by an email-template problem."""
     email = (email or "").strip().lower()
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         return {"error": "Enter a valid email address."}
@@ -432,31 +477,106 @@ def auth_signup(email, password):
     url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
     if not url or not svc:
         return {"error": "Supabase is not configured on the server."}
-    try:
-        http_fetch(url.rstrip("/") + "/auth/v1/admin/users", method="POST",
-                   headers={"apikey": svc, "Authorization": "Bearer " + svc,
-                            "Content-Type": "application/json"},
-                   json_body={"email": email, "password": password,
-                              "email_confirm": True}, timeout=25)
-    except urllib.error.HTTPError as e:
+    display = (name or "").strip()[:60]
+    if is_admin(email):
         try:
-            d = json.loads(e.read().decode("utf-8", "replace"))
-        except Exception:
-            d = {}
-        msg = d.get("msg") or d.get("error_description") or ("error " + str(e.code))
-        if e.code == 422:
+            http_fetch(url.rstrip("/") + "/auth/v1/admin/users", method="POST",
+                       headers={"apikey": svc, "Authorization": "Bearer " + svc,
+                                "Content-Type": "application/json"},
+                       json_body={"email": email, "password": password,
+                                  "email_confirm": True,
+                                  "data": {"display_name": display or "Admin"}}, timeout=25)
+        except urllib.error.HTTPError as e:
+            try:
+                d = json.loads(e.read().decode("utf-8", "replace"))
+            except Exception:
+                d = {}
+            if e.code == 422:
+                return {"error": "That email is already registered — please sign in."}
+            return {"error": "Signup failed: " + str(d.get("msg") or ("error " + str(e.code)))[:200]}
+        except Exception as e:
+            return {"error": "Signup failed: " + str(e)}
+        r = supabase_auth("/auth/v1/token?grant_type=password", method="POST",
+                          json_body={"email": email, "password": password})
+        if r.get("status") == 200:
+            touch_user(email, verified=True)
+            return {"status": 200, "data": r["data"], "admin": True,
+                    "blocked": is_blocked(email), "pro_token": check_subscription(email)}
+        return {"error": "Admin account created — please sign in now."}
+    # public signup → Supabase emails the verification link (needs 'Confirm email' ON,
+    # which is the default). If confirmation is disabled, Supabase logs us straight in.
+    r = supabase_auth("/auth/v1/signup", method="POST",
+                      json_body={"email": email, "password": password,
+                                 "data": {"display_name": display or email.split("@")[0]}})
+    if r.get("status") not in (200, 201):
+        d = r.get("data") or {}
+        msg = ""
+        if isinstance(d, dict):
+            msg = d.get("msg") or d.get("error_description") or d.get("code") or ""
+        else:
+            msg = str(d)[:160]
+        if r.get("status") == 422:
             return {"error": "That email is already registered — please sign in."}
+        if r.get("status") == 429:
+            return {"error": "Too many signup emails right now (Supabase free tier limit). "
+                             "Wait an hour and tap Resend."}
         return {"error": "Signup failed: " + str(msg)[:200]}
-    except Exception as e:
-        return {"error": "Signup failed: " + str(e)}
-    r = supabase_auth("/auth/v1/token?grant_type=password", method="POST",
-                      json_body={"email": email, "password": password})
-    if r.get("status") == 200:
-        u = r.get("data", {}).get("user") or {}
-        touch_user(email)
-        return {"status": 200, "data": r["data"], "admin": is_admin(email),
+    data = r.get("data") or {}
+    if isinstance(data, dict) and data.get("access_token"):
+        # 'Confirm email' is OFF on the Supabase project → log the user straight in
+        touch_user(email, verified=True)
+        return {"status": 200, "data": data, "admin": False,
                 "blocked": is_blocked(email), "pro_token": check_subscription(email)}
-    return {"error": "Account created — please sign in now."}
+    touch_user(email, verified=False)
+    return {"verify_sent": True, "email": email,
+            "message": "A verification link was emailed to " + email
+                       + ". Open it to finish creating your account."}
+
+
+def auth_confirm(token_hash):
+    """Exchange the token_hash from the verification link for a real session."""
+    token_hash = (token_hash or "").strip()
+    if not token_hash:
+        return {"error": "Confirmation token required — open the link from the email we sent."}
+    r = supabase_auth("/auth/v1/verify", method="POST",
+                      json_body={"token_hash": token_hash, "type": "signup"})
+    if r.get("status") != 200:
+        d = r.get("data") or {}
+        msg = (d.get("msg") or d.get("error_description")) if isinstance(d, dict) else str(d)
+        if isinstance(d, dict) and "already" in str(d.get("msg", "")).lower():
+            return {"error": "This link was already used — just sign in with your email and password."}
+        return {"error": "Could not confirm: " + str(msg or "invalid or expired link")[:180]}
+    data = r.get("data") or {}
+    email = ((data.get("user") or {}).get("email") or "").lower()
+    if email:
+        touch_user(email, verified=True)
+    return {"status": 200, "data": data, "admin": is_admin(email),
+            "blocked": is_blocked(email), "pro_token": check_subscription(email)}
+
+
+def auth_resend(email):
+    """Re-send the verification email (Supabase native mailer)."""
+    email = (email or "").strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return {"error": "Enter a valid email address."}
+    u = _supa_admin_user(email)
+    if u is None:
+        return {"error": "No account found with that email — create one first."}
+    if u.get("email_confirmed_at"):
+        touch_user(email, verified=True)
+        return {"already_verified": True, "message": "That email is already verified — just sign in."}
+    r = supabase_auth("/auth/v1/resend", method="POST", json_body={"email": email, "type": "signup"})
+    if r.get("status") == 200:
+        return {"sent": True, "message": "Verification email re-sent to " + email + "."}
+    d = r.get("data") or {}
+    msg = (d.get("msg") or d.get("error_description")) if isinstance(d, dict) else str(d)
+    ml = str(msg).lower()
+    if "rate" in ml or "limit" in ml or "invalid" in ml:
+        return {"error": "Supabase's built-in mailer is rate-limited (few emails/hour on the free plan). "
+                         "Your first verification email may already be in " + email + " (check spam too) — or wait an hour and tap Resend again.",
+                "rate_limited": True}
+    return {"error": "Supabase could not send the email: " + str(msg)[:160],
+            "hint": "Check Supabase → Authentication → Providers → Email (enabled + within hourly limits)."}
 
 
 def check_tier(email):
@@ -1485,6 +1605,19 @@ def admin_users_payload():
     accounts = _load_accounts()
     subs = load_subscribers()
     sub_emails = {str(s.get("email", "")).lower() for s in subs}
+    # highest unexpired paid plan per email (no extra network calls)
+    _today = time.strftime("%Y-%m-%d")
+    plan_by_email = {}
+    for s in subs:
+        em = str(s.get("email") or "").lower()
+        exp = str(s.get("expires_at") or "")
+        if not em or (exp and exp < _today):
+            continue
+        plan = str(s.get("tier") or s.get("plan") or "pro").lower()
+        if plan not in PLANS:
+            continue
+        if TIER_RANK.get(plan, 0) >= TIER_RANK.get(plan_by_email.get(em), -1):
+            plan_by_email[em] = plan
     # Merge in the persistent Supabase user base. Render's local filesystem is
     # ephemeral, so data/users.json alone would show an empty/partial list.
     flags = supabase_all_flags()
@@ -1521,16 +1654,123 @@ def admin_users_payload():
                     pass
             equity = round(eq, 2)
             pnl = round(eq - acc.get("initial", PAPER_INITIAL), 2)
+        # plan (highest unexpired paid tier from local+supabase subscription rows)
+        plan = plan_by_email.get(email, "free")
+        if is_admin(email):
+            plan = "enterprise"
         out.append({"email": email, "created": rec.get("created"), "last_seen": rec.get("last_seen"),
                     "blocked": bool(rec.get("blocked")), "block_reason": rec.get("block_reason") or "",
                     "admin": is_admin(email), "pro": is_admin(email) or email in sub_emails,
+                    "plan": plan, "verified": rec.get("verified") if rec.get("verified") is not None else None,
                     "equity": equity, "pnl": pnl})
     out.sort(key=lambda x: (x.get("pnl") is None, -(x.get("pnl") or 0)))
     stats = {"users": len(out),
              "blocked": sum(1 for u in out if u["blocked"]),
              "pro": sum(1 for u in out if u["pro"]),
+             "paid": sum(1 for u in out if u.get("plan") in PLANS),
+             "unverified": sum(1 for u in out if u.get("verified") is False),
+             "active24h": sum(1 for u in out if _recent(u.get("last_seen"), 86400)),
+             "new24h": sum(1 for u in out if _recent(u.get("created"), 86400)),
              "total_pnl": round(sum(u.get("pnl") or 0 for u in out), 2)}
     return {"stats": stats, "users": out, "admins": admin_emails()}
+
+
+def _recent(ts, max_age_s):
+    """True if a '%Y-%m-%d %H:%M:%S' timestamp is within max_age_s of now."""
+    if not ts:
+        return False
+    try:
+        t = time.mktime(time.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S"))
+        return (time.time() - t) <= max_age_s
+    except Exception:
+        return False
+
+
+def admin_revenue_payload():
+    """Every payment OraCool has ever earned — totals by plan, MRR and history.
+    Combines local subscribers.json with the durable Supabase table."""
+    subs = load_subscribers()
+    seen = {str(s.get("reference") or "") for s in subs}
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    if url and svc:
+        try:
+            _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/subscribers?select=*&order=subscribed_at.desc&limit=500",
+                                   headers={"apikey": svc, "Authorization": "Bearer " + svc}, timeout=15)
+            for row in (json.loads(raw) or []):
+                if str(row.get("reference") or "") not in seen:
+                    subs.append(row)
+        except Exception:
+            pass
+    seen_refs = set()
+    payments = []
+    total_ngn = 0.0
+    usd_real = 0.0
+    have_usd = False
+    this_month = time.strftime("%Y-%m")
+    month_ngn = 0.0
+    by_plan = {}
+    for s in subs:
+        ref = str(s.get("reference") or "")
+        if ref and ref in seen_refs:
+            continue
+        seen_refs.add(ref)
+        amt = 0.0
+        try:
+            amt = float(s.get("amount_ngn") or 0)
+        except Exception:
+            amt = 0.0
+        plan = str(s.get("tier") or s.get("plan") or "pro").lower()
+        if plan not in PLANS:
+            plan = "pro"
+        paid_at = str(s.get("paid_at") or s.get("subscribed_at") or "")
+        row = {"email": s.get("email"), "plan": plan, "amount_ngn": amt,
+               "amount_usd": s.get("amount_usd"), "paid_at": paid_at,
+               "channel": s.get("channel") or "", "reference": ref,
+               "expires_at": s.get("expires_at") or ""}
+        if amt > 0:
+            payments.append(row)
+            total_ngn += amt
+            usd = s.get("amount_usd")
+            try:
+                if usd:
+                    usd_real += float(usd)
+                    have_usd = True
+            except Exception:
+                pass
+            if paid_at.startswith(this_month):
+                month_ngn += amt
+            by_plan[plan] = by_plan.get(plan, 0) + 1
+    payments.sort(key=lambda x: x["paid_at"], reverse=True)
+    total_usd = usd_real if have_usd else (round(total_ngn / 1550.0) if total_ngn else 0.0)
+    # MRR + active subscribers: latest unexpired subscription per email, best plan
+    today = time.strftime("%Y-%m-%d")
+    best_by_email = {}
+    for s in subs:
+        em = str(s.get("email") or "").lower()
+        if not em or str(s.get("channel") or "") == "admin":
+            continue  # admin grants are access, not revenue
+        exp = str(s.get("expires_at") or "")
+        if exp and exp < today:
+            continue
+        plan = str(s.get("tier") or s.get("plan") or "pro").lower()
+        if plan not in PLANS:
+            continue
+        if TIER_RANK.get(plan, 0) > TIER_RANK.get(best_by_email.get(em), -1):
+            best_by_email[em] = plan
+    mrr_ngn = 0.0
+    active_by_plan = {}
+    for em, plan in best_by_email.items():
+        if em in {str(x.get("email") or "").lower() for x in load_subscribers() if str(x.get("channel") or "") == "admin"}:
+            pass  # admin grants count as active but add no money
+        mrr_ngn += PLANS[plan]["price_ngn"]
+        active_by_plan[plan] = active_by_plan.get(plan, 0) + 1
+    return {"total_ngn": round(total_ngn), "total_usd": round(total_usd, 2),
+            "usd_estimated": not have_usd,
+            "this_month_ngn": round(month_ngn),
+            "payments": len(payments), "by_plan": by_plan,
+            "active_subscribers": len(best_by_email), "active_by_plan": active_by_plan,
+            "mrr_ngn": round(mrr_ngn), "recent": payments[:25],
+            "note": "Revenue = only real Paystack payments (₦). Admin grants are listed as active but never counted as money."}
 
 
 def mask_email(e):
@@ -1583,15 +1823,37 @@ HIA_IMAGE_DEFAULT = "gpt-image-2/text-to-image"
 HIA_VIDEO_DEFAULT = "seedance-2.0-fast"
 
 
+def _err_text(raw):
+    """Best-effort human-readable error string from a provider's JSON error body."""
+    try:
+        d = json.loads(raw)
+        err = d.get("error")
+        if isinstance(err, dict):
+            err = err.get("message")
+        return str(err or d.get("message") or d.get("error_code") or "request failed")[:180]
+    except Exception:
+        return str(raw)[:140]
+
+
 def hiapi_submit(model, input_obj, api_key, timeout=30):
-    """Submit an async generation task. Returns taskId or None."""
-    st, raw, _ = http_fetch(HIA_BASE + "/v1/tasks", method="POST",
-                            headers={"Authorization": "Bearer " + api_key,
-                                     "Content-Type": "application/json"},
-                            json_body={"model": model, "input": input_obj},
-                            timeout=timeout)
-    d = json.loads(raw)
-    return (d.get("data") or {}).get("taskId") or d.get("taskId")
+    """Submit an async generation task. Returns (taskId, error). The error is a
+    human string (e.g. 'HTTP 402 — insufficient account balance; top up and retry')
+    so the AI can tell the user exactly what to fix — never a silent failure."""
+    try:
+        st, raw, _ = http_fetch(HIA_BASE + "/v1/tasks", method="POST",
+                                headers={"Authorization": "Bearer " + api_key,
+                                         "Content-Type": "application/json"},
+                                json_body={"model": model, "input": input_obj},
+                                timeout=timeout)
+    except urllib.error.HTTPError as e:
+        return None, "HTTP %s — %s" % (e.code, _err_text(e.read().decode("utf-8", "replace")))
+    except Exception as e:
+        return None, str(e)[:160]
+    try:
+        d = json.loads(raw)
+    except Exception:
+        return None, "non-JSON response"
+    return ((d.get("data") or {}).get("taskId") or d.get("taskId")), None
 
 
 def hiapi_poll(task_id, api_key, budget=90):
@@ -1624,71 +1886,96 @@ def hiapi_poll(task_id, api_key, budget=90):
     return {"ok": False, "error": "Generation timed out (still processing — try again)."}
 
 
+def _tokenmix_image(prompt, aspect_ratio="1:1"):
+    """TokenMix OpenAI-compatible image endpoint. Returns a dict, never raises."""
+    k = key("TOKENMIX_API_KEY")
+    if not k:
+        return {"skip": True}
+    model = KEYS.get("TM_IMAGE_MODEL", "gpt-image-1-mini")
+    size = {"16:9": "1536x1024", "9:16": "1024x1536",
+            "3:4": "1024x1536", "4:3": "1536x1024"}.get(aspect_ratio, "1024x1024")
+    try:
+        st, raw, _ = http_fetch("https://api.tokenmix.ai/v1/images/generations", method="POST",
+                                headers={"Authorization": "Bearer " + k},
+                                json_body={"model": model, "prompt": prompt, "n": 1,
+                                           "size": size, "response_format": "url"},
+                                timeout=150)
+        d = json.loads(raw)
+    except urllib.error.HTTPError as e:
+        return {"error": _err_text(e.read().decode("utf-8", "replace"))}
+    except Exception as e:
+        return {"error": str(e)[:160]}
+    urls = [u.get("url") for u in (d.get("data") or []) if isinstance(u, dict) and u.get("url")]
+    if urls:
+        return {"ok": True, "model": model, "urls": urls}
+    return {"error": "no image url returned"}
+
+
+POLLINATION_SIZES = {"1:1": (1024, 1024), "16:9": (1280, 720), "9:16": (720, 1280),
+                     "3:4": (960, 1280), "4:3": (1280, 960)}
+
+
+def _pollinations_image(prompt, aspect_ratio="1:1"):
+    """OraCool FREE HD image engine (Pollinations · FLUX). No key, no balance —
+    this is why image creation ALWAYS works, even if every paid provider is
+    topped-out. The URL renders directly in chat and in the Create tab."""
+    try:
+        w, h = POLLINATION_SIZES.get(aspect_ratio, (1024, 1024))
+        seed = random.randint(1000, 999999)
+        url = ("https://image.pollinations.ai/prompt/" + urllib.parse.quote(prompt[:420])
+               + f"?width={w}&height={h}&nologo=true&model=flux&seed={seed}&enhance=true")
+        return {"ok": True, "url": url}
+    except Exception as e:
+        return {"error": str(e)[:160]}
+
+
 def gen_image(prompt, aspect_ratio="1:1"):
-    """Text-to-image. Primary: HiAPI async tasks. Fallback: Pixazo reveal-image."""
+    """Text-to-image cascade: HiAPI (premium) → TokenMix (premium) → free FLUX.
+    Every provider failure is surfaced honestly in `note`; nothing fails silently."""
     prompt = (prompt or "").strip()
     if not prompt:
         return {"error": "Describe the image you want, e.g. 'a neon city at night'."}
     if len(prompt) < 3:
         return {"error": "Prompt too short."}
-    # 1) HiAPI
+    failures = []
+    # 1) HiAPI — premium models (needs account balance)
     k = key("HIA_API_KEY")
     if k:
         model = KEYS.get("HIA_IMAGE_MODEL", HIA_IMAGE_DEFAULT)
-        try:
-            tid = hiapi_submit(model, {"prompt": prompt,
-                                       "aspect_ratio": aspect_ratio or "1:1",
-                                       "resolution": "1K"}, k)
-            if tid:
-                res = hiapi_poll(tid, k, budget=90)
-                if res.get("ok"):
-                    return {"ok": True, "provider": "hiapi", "model": model,
-                            "prompt": prompt, "images": res.get("urls", [])}
-                # fall through to Pixazo on failure/timeout
-            else:
-                return {"error": "HiAPI did not return a task id (check key/credits)."}
-        except Exception as e:
-            # fall through to Pixazo
-            pass
-    # 2) Pixazo fallback
-    pk = key("PIXAZO_KEY")
-    if pk:
-        try:
-            st, raw, _ = http_fetch("https://gateway.pixazo.ai/reve-image/v1/image-edit",
-                                    method="POST",
-                                    headers={"Ocp-Apim-Subscription-Key": pk,
-                                             "Content-Type": "application/json"},
-                                    json_body={"prompt": prompt,
-                                               "aspect_ratio": aspect_ratio or "1:1"},
-                                    timeout=120)
-            d = json.loads(raw)
-            urls = []
-            def _dig(x):
-                if isinstance(x, dict):
-                    for kk in ("url", "image_url", "image", "output", "result"):
-                        v = x.get(kk)
-                        if isinstance(v, str) and v.startswith("http"):
-                            urls.append(v)
-                        elif isinstance(v, dict):
-                            _dig(v)
-                        elif isinstance(v, list):
-                            for it in v:
-                                _dig(it)
-                elif isinstance(x, list):
-                    for it in x:
-                        _dig(it)
-            _dig(d)
-            if urls:
-                return {"ok": True, "provider": "pixazo", "prompt": prompt, "images": urls[:4]}
-            if isinstance(d, dict) and d.get("error"):
-                return {"error": "Pixazo: " + str(d.get("error"))[:200]}
-        except Exception as e:
-            return {"error": f"Image generation failed: {e}"}
-    return {"error": "No image provider configured (HIA_API_KEY / PIXAZO_KEY missing)."}
+        tid, err = hiapi_submit(model, {"prompt": prompt,
+                                        "aspect_ratio": aspect_ratio or "1:1",
+                                        "resolution": "1K"}, k)
+        if tid:
+            res = hiapi_poll(tid, k, budget=90)
+            if res.get("ok"):
+                return {"ok": True, "provider": "hiapi", "model": model,
+                        "prompt": prompt, "images": res.get("urls", [])}
+            failures.append("HiAPI: " + str(res.get("error"))[:140])
+        else:
+            failures.append("HiAPI: " + (err or "no task id"))
+    # 2) TokenMix — OpenAI-compatible gateway
+    tm = _tokenmix_image(prompt, aspect_ratio)
+    if tm.get("ok"):
+        return {"ok": True, "provider": "tokenmix", "model": tm.get("model", ""),
+                "prompt": prompt, "images": tm.get("urls", [])}
+    if tm.get("error"):
+        failures.append("TokenMix: " + str(tm["error"])[:140])
+    # 3) OraCool free HD engine — always available, guarantees a real image
+    pl = _pollinations_image(prompt, aspect_ratio)
+    if pl.get("ok"):
+        out = {"ok": True, "provider": "oracool-free (FLUX)", "model": "flux",
+               "prompt": prompt, "images": [pl["url"]]}
+        if failures:
+            out["note"] = ("Paid image providers were unavailable (" + "; ".join(failures)
+                           + ") — this image was made with OraCool's free HD engine. "
+                           "Top up HiAPI or TokenMix credits for premium models.")
+        return out
+    return {"error": "Image generation unavailable — " + " | ".join(failures + ["free engine failed"])}
 
 
 def gen_video(prompt, duration=None):
-    """Text-to-video via HiAPI async tasks."""
+    """Text-to-video via HiAPI async tasks (premium). Errors surface the exact
+    fix so the AI can tell the user what to do — never a silent failure."""
     prompt = (prompt or "").strip()
     if not prompt:
         return {"error": "Describe the video you want, e.g. 'a drone flying over a rainforest'."}
@@ -1696,22 +1983,97 @@ def gen_video(prompt, duration=None):
         return {"error": "Prompt too short."}
     k = key("HIA_API_KEY")
     if not k:
-        return {"error": "Video needs HIA_API_KEY configured."}
+        return {"error": "Video needs HIA_API_KEY configured (keys.json / Render env)."}
     model = KEYS.get("HIA_VIDEO_MODEL", HIA_VIDEO_DEFAULT)
     inp = {"prompt": prompt}
     if duration:
         inp["duration"] = duration
+    tid, err = hiapi_submit(model, inp, k)
+    if not tid:
+        return {"error": "HiAPI: " + (err or "no task id") + " — if the balance is empty, "
+                        "top up at hiapi.ai and video generation activates instantly "
+                        "(no redeploy needed)."}
+    res = hiapi_poll(tid, k, budget=150)
+    if res.get("ok"):
+        return {"ok": True, "provider": "hiapi", "model": model,
+                "prompt": prompt, "videos": res.get("urls", [])}
+    return {"error": res.get("error") or "Video generation failed."}
+
+
+# ---------------------------------------------------------------- dark-web OSINT
+# Clearnet investigation ONLY: LeakCheck breach/leak databases + the Ahmia
+# Tor hidden-service index (directory + search, read-only). OraCool never
+# connects to Tor and never opens a .onion site — it only lists what public
+# intelligence engines have already indexed.
+
+def _strip_tags(s):
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", s or ""))).strip()
+
+
+def osint_darkweb(target):
+    """Dark-web investigation for one target: email/username/phone → breach and
+    leak databases; any term → Ahmia .onion directory + search index."""
+    target = (target or "").strip()
+    if not target:
+        return {"error": "Enter an email, username, phone number or search term."}
+    out = {"target": target, "sources": []}
+    low = target.lower()
+    is_email = bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", target))
+    is_phone = bool(re.match(r"^\+?\d{7,15}$", target))
+    if is_email or is_phone or re.match(r"^[A-Za-z0-9._-]{2,64}$", target):
+        lk = pro_leakcheck(target, "email" if is_email else ("phone" if is_phone else "username"))
+        if not lk.get("error"):
+            out["leak_databases"] = lk
+            out["sources"].append("LeakCheck (breach & leak databases)")
+    # 1) OnionLand hidden-service search (works from clearnet, no Tor needed)
     try:
-        tid = hiapi_submit(model, inp, k)
-        if not tid:
-            return {"error": "HiAPI did not return a task id (check key/credits)."}
-        res = hiapi_poll(tid, k, budget=150)
-        if res.get("ok"):
-            return {"ok": True, "provider": "hiapi", "model": model,
-                    "prompt": prompt, "videos": res.get("urls", [])}
-        return {"error": res.get("error") or "Video generation failed."}
+        _, raw, _ = http_fetch("https://onionlandsearchengine.net/search?q=" + urllib.parse.quote(low),
+                                timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+        page = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+        results = []
+        for blk in re.findall(r'class="result-block"(.*?)(?=class="result-block"|class="pagination"|$)', page, re.S)[:12]:
+            href = re.search(r'href="(/r\?s=[^"]+|https?://[a-z2-7]{10,62}\.onion[^"]*)"', blk)
+            title = re.search(r'class="title"[^>]*>(.*?)</', blk, re.S)
+            desc = re.search(r'class="desc"[^>]*>(.*?)</', blk, re.S)
+            onm = re.search(r'([a-z2-7]{16,59}\.onion)', blk)
+            if "ads/click" in (href.group(1) if href else ""):
+                continue  # skip sponsored junk
+            results.append({"title": _strip_tags(title.group(1)) if title else "",
+                            "snippet": _strip_tags(desc.group(1))[:180] if desc else "",
+                            "onion": onm.group(1) if onm else "",
+                            "via": "OnionLand index"})
+            if len(results) >= 8:
+                break
+        out["hidden_service_search"] = {"count": len(results), "results": results,
+                                        "source": "OnionLand Search (Tor hidden-service index)"}
+        if results:
+            out["sources"].append("OnionLand hidden-service search")
     except Exception as e:
-        return {"error": f"Video generation failed: {e}"}
+        out["hidden_service_search"] = {"error": str(e)[:120]}
+    # 2) Ahmia (often blocks non-Tor clients — used opportunistically)
+    try:
+        _, raw, _ = http_fetch("https://ahmia.fi/search/?q=" + urllib.parse.quote(low),
+                                timeout=25,
+                                headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) OraCool/3.0"})
+        page = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+        results = []
+        for blk in re.findall(r'<li class="result"[^>]*>(.*?)</li>', page, re.S)[:8]:
+            href = re.search(r'href="(https?://[^"]+)"', blk)
+            title = re.search(r"<h4[^>]*>(.*?)</h4>", blk, re.S)
+            desc = re.search(r"<p>(.*?)</p>", blk, re.S)
+            results.append({"link": _strip_tags(href.group(1))[:200] if href else "",
+                            "title": _strip_tags(title.group(1))[:120] if title else "",
+                            "description": _strip_tags(desc.group(1))[:180] if desc else "",
+                            "via": "Ahmia index"})
+        out["ahmia_search"] = {"count": len(results), "results": results}
+        if results:
+            out["sources"].append("Ahmia hidden-service search")
+    except Exception as e:
+        out["ahmia_search"] = {"error": str(e)[:120]}
+    out["safety"] = ("Read-only dark-web OSINT for investigation. .onion links are listed for "
+                     "reference only — OraCool never opens them. Many dark-web services host scams "
+                     "or malware; never transact with anything found here.")
+    return out
 
 
 # ---------------------------------------------------------------- smart home (Home Assistant)
@@ -2059,7 +2421,7 @@ TIER_ORDER = ["free", "starter", "pro", "ultra", "enterprise"]
 TIER_TOOL_SETS = {
     "free":       ["ip", "domain", "email", "username", "phone", "weather", "stock", "crypto", "fred", "time", "math", "space"],
     "starter":    ["search"],
-    "pro":        ["shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck", "image"],
+    "pro":        ["shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck", "darkweb", "image", "mars", "library"],
     "ultra":      ["video", "github", "domscan", "fcs", "smart"],
     "enterprise": ["*"],
 }
@@ -2093,7 +2455,7 @@ def get_config():
                   "default_provider": KEYS.get("BRAIN_PROVIDER", "groq"),
                   "default_model": KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL),
                   "fast_model": KEYS.get("GROQ_FAST_MODEL", GROQ_DEFAULT_MODEL),
-                  "chat_max_tokens": int(KEYS.get("CHAT_MAX_TOKENS", 600))},
+                  "chat_max_tokens": int(KEYS.get("CHAT_MAX_TOKENS", 900))},
         "keys": loaded(["OPENAI_API_KEY", "GROQ_API_KEY", "PAYSTACK_SECRET_KEY",
                         "SUPABASE_URL", "GITHUB_TOKEN", "SHODAN_API_KEY",
                         "VIRUSTOTAL_API_KEY", "ABUSEIPDB_API_KEY", "IPINFO_API_KEY",
@@ -2120,8 +2482,12 @@ def get_config():
                   for pid, p in PLANS.items()],
         "tiers": list(TIER_RANK.keys()),
         "nasa_ready": bool(key("NASA_API_KEY")),
-        "image_ready": bool(key("HIA_API_KEY") or key("PIXAZO_KEY")),
+        "image_ready": True,  # free HD engine always available; HiAPI/TokenMix upgrade quality
+        "media_providers": {"hiapi": bool(key("HIA_API_KEY")), "tokenmix": bool(key("TOKENMIX_API_KEY")),
+                             "free_hd_engine": True},
         "video_ready": bool(key("HIA_API_KEY")),
+        "email_verification": bool(key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY")),
+        "darkweb_ready": True,
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -2499,11 +2865,19 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
             target = dm.group(1) if dm else (ipm.group(1) if ipm else t.split()[-1].strip(".,!? "))
             out.append({"tool": "urlscan", "label": "urlscan " + target,
                         "result": _shrink(pro_urlscan(target), 1500)})
+        # dark-web intelligence (leak databases + Ahmia .onion index, read-only)
+        if any(k in low for k in ("dark web", "dark-web", "darkweb", "onion", "tor site",
+                                  "paste site", "criminal forum")):
+            term = re.sub(r"(?i)\b(?:dark\s?-?\s?web|darkweb|onion|tor site|search|check|look up|look for|for|about|on|the|a|an)\b",
+                          " ", t)
+            term = " ".join(term.split())[:60] or "marketplace"
+            out.append({"tool": "darkweb", "label": "dark-web · " + term,
+                        "result": _shrink(osint_darkweb(term), 1800)})
         # NASA Mars rovers + image library (PRO)
         if "mars" in low and ("rover" in low or "mars" in low):
             out.append({"tool": "space", "label": "Mars rover imagery", "result": _shrink(space_mars())})
         if "nasa" in low and any(k in low for k in ("image", "photo", "picture", "find")):
-            q = re.sub(r"(?i)nasa|image|photo|picture|find|of|the|for|a|an", " ", t)
+            q = re.sub(r"(?i)\b(?:nasa|image|images|photo|photos|picture|pictures|find|of|the|for|a|an|show|me)\b", " ", t)
             q = " ".join(q.split())[:50] or "earth"
             out.append({"tool": "space", "label": "NASA library · " + q, "result": _shrink(space_library(q))})
         # image creation straight from chat
@@ -2543,6 +2917,8 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
     if not tier_gte(tier, "pro"):
         if any(k in low for k in ("shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck")):
             _locked("deep OSINT (Shodan / VirusTotal / AbuseIPDB / URLScan / LeakCheck)", "pro")
+        if any(k in low for k in ("dark web", "dark-web", "darkweb", "onion", "tor site")):
+            _locked("dark-web intelligence (breach databases + Ahmia hidden-service index)", "pro")
         im2 = re.search(r"(?:generate|create|make|draw|imagine)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
         if im2 and any(k in low for k in ("generate", "create", "make", "draw", "imagine", "image", "picture")):
             _locked("image creation", "pro")
@@ -2793,10 +3169,21 @@ def _passkey_load():
     except Exception:
         return {}
 
-def passkey_register(email, credential):
+def passkey_register(email, credential, access_token=None):
     email = (email or "").strip().lower()
-    if not email or not credential:
+    if not email or not credential or not credential.get("id"):
         return {"error": "Email and credential are required."}
+    # Anti-hijack: a passkey may only be bound by someone holding a live Supabase
+    # session for that exact email. Nobody can register a face for someone else.
+    if key("SUPABASE_URL") and key("SUPABASE_ANON_KEY"):
+        if not access_token:
+            return {"error": "Sign in with your email and password first, then register your face/fingerprint."}
+        v = supabase_auth("/auth/v1/user", access_token=access_token)
+        vemail = ((v.get("data") or {}).get("email") or "").lower() if v.get("status") == 200 else ""
+        if vemail != email:
+            return {"error": "This session does not match that email — sign in and try again."}
+    if is_blocked(email):
+        return {"error": "This account is suspended by an administrator."}
     store = _passkey_load()
     recs = store.setdefault(email, [])
     recs.append({"id": credential.get("id"), "publicKey": credential.get("publicKey"),
@@ -2820,19 +3207,12 @@ def passkey_login(credential_id):
     for email, recs in store.items():
         for rec in recs:
             if rec.get("id") == cid:
-                url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
-                sup_user = None
-                if url and svc:
-                    try:
-                        q = urllib.parse.quote(f"email=eq.{email}")
-                        _, raw, _ = http_fetch(url.rstrip("/") + "/auth/v1/admin/users?" + q,
-                                               headers={"apikey": svc, "Authorization": "Bearer " + svc},
-                                               timeout=15)
-                        users = json.loads(raw).get("users") or []
-                        if users:
-                            sup_user = users[0]
-                    except Exception:
-                        sup_user = None
+                # face login may never bypass a suspension or email verification
+                if is_blocked(email):
+                    return {"error": "This account is suspended by an administrator."}
+                if not is_verified(email):
+                    return {"error": "Confirm your email first — open the verification link we sent you."}
+                sup_user = _supa_admin_user(email)
                 return {"status": 200, "email": email, "passkey": True,
                         "user": {"id": (sup_user or {}).get("id") or "passkey-" + email,
                                  "email": email},
@@ -3296,6 +3676,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _require_tier(self, body, required):
         payload = self._auth(body)
+        # A blocked account is a free account — everywhere, instantly, no exceptions.
+        _bl = (payload.get("sub") if payload else None) or (body.get("email") or "").strip()
+        if _bl and is_blocked(_bl):
+            self._send_json({"locked": True, "suspended": True,
+                             "message": "Your account is suspended by an administrator."}, 403)
+            return None
         tier = None
         if payload:
             tier = payload.get("tier") or "pro"
@@ -3306,8 +3692,8 @@ class Handler(BaseHTTPRequestHandler):
             tier = check_tier(email) if email else "free"
         if tier_gte(tier, required):
             return tier
-        self._send_json({"locked": True, "tier": tier,
-                         "message": f"This tool requires the {required.title()} plan (you are on {tier.title()})."}, 402)
+        self._send_json({"locked": True, "tier": tier, "plan": required,
+                         "message": f"This tool requires the {required.title()} plan (you are on {tier.title()}). Every higher plan includes it too."}, 402)
         return None
 
     def do_GET(self):
@@ -3368,6 +3754,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(osint_email(body.get("email"), body.get("hibp_key")))
             elif path == "/api/osint/username":
                 self._send_json(osint_username(body.get("username")))
+            elif path == "/api/osint/darkweb":
+                if self._require_tier(body, "pro"):
+                    self._send_json(osint_darkweb(body.get("target") or body.get("query")))
             elif path == "/api/osint/phone":
                 self._send_json(phone_intel.lookup(body.get("phone") or "",
                                                    key_lookup=key, http_fetch=http_fetch))
@@ -3495,6 +3884,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/admin/users":
                 if _require_admin(self, body):
                     self._send_json(admin_users_payload())
+            elif path == "/api/admin/revenue":
+                if _require_admin(self, body):
+                    self._send_json(admin_revenue_payload())
             elif path == "/api/admin/block":
                 payload = _require_admin(self, body)
                 if payload:
@@ -3539,11 +3931,10 @@ class Handler(BaseHTTPRequestHandler):
                                               body.get("ha_url"), body.get("ha_token")))
             # ---- payments
             elif path == "/api/pro/trial":
-                email = (body.get("email") or "trial@oracool.local").strip()
-                token = sign_jwt({"sub": email, "tier": "pro", "trial": True,
-                                  "iat": int(time.time()), "exp": int(time.time()) + 86400},
-                                 key("JWT_SECRET") or "dev-secret")
-                self._send_json({"token": token, "trial": True, "expires_in_hours": 24})
+                # Trials were removed by the creator: no PRO access without payment.
+                self._send_json({"error": "Free trials have been removed. Paid plans unlock "
+                                     "instantly via Paystack — Starter ₦20,000 · PRO ₦50,000 · "
+                                     "Ultra ₦100,000 · Enterprise ₦500,000."}, 402)
             elif path == "/api/paystack/initialize":
                 self._send_json(paystack_initialize(body.get("email"),
                                                     body.get("callback_url"),
@@ -3556,7 +3947,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(self._supabase_status())
             # ---- auth (Supabase GoTrue)
             elif path == "/api/auth/signup":
-                self._send_json(auth_signup(body.get("email"), body.get("password")))
+                self._send_json(auth_signup(body.get("email"), body.get("password"),
+                                            body.get("name", "")))
+            elif path == "/api/auth/confirm":
+                self._send_json(auth_confirm(body.get("token_hash") or body.get("token")))
+            elif path == "/api/auth/resend":
+                self._send_json(auth_resend(body.get("email")))
             elif path == "/api/auth/login":
                 email = (body.get("email") or "").strip()
                 r = supabase_auth("/auth/v1/token?grant_type=password", method="POST",
@@ -3564,12 +3960,22 @@ class Handler(BaseHTTPRequestHandler):
                 if r.get("status") == 200:
                     u = r.get("data", {}).get("user") or {}
                     uemail = u.get("email") or email
-                    touch_user(uemail)
+                    touch_user(uemail, verified=True)  # Supabase only issues a session to confirmed emails
                     r["admin"] = is_admin(uemail)
                     r["blocked"] = is_blocked(uemail)
                     r["pro_token"] = check_subscription(uemail)
                     r["requires_2fa"] = twofa_enabled(uemail)
-                self._send_json(r)
+                    self._send_json(r)
+                else:
+                    d = r.get("data") or {}
+                    msg = ((d.get("error_description") or d.get("msg")) if isinstance(d, dict)
+                           else str(d)).lower()
+                    if "not confirmed" in msg or "confirm" in msg or "verification" in msg:
+                        self._send_json({"error": "Confirm your email first — we sent a verification "
+                                                 "link to " + email + ". Open it, or tap Resend.",
+                                         "verify_required": True, "email": email})
+                    else:
+                        self._send_json(r)
             # ---- 2FA / OAuth / biometric ----
             elif path == "/api/auth/2fa/setup":
                 self._send_json(twofa_setup(body.get("email")))
@@ -3591,7 +3997,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/auth/oauth/exchange":
                 self._send_json(oauth_exchange(body.get("access_token"), body.get("refresh_token")))
             elif path == "/api/auth/passkey/register":
-                self._send_json(passkey_register(body.get("email"), body.get("credential")))
+                self._send_json(passkey_register(body.get("email"), body.get("credential"),
+                                                  body.get("access_token")))
             elif path == "/api/auth/passkey/challenge":
                 self._send_json(passkey_challenge())
             elif path == "/api/auth/passkey/login":
@@ -3735,8 +4142,19 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "No messages provided."}, 400)
             return
 
+        # Suspended accounts cannot use the AI at all — even as a free user.
+        _em = (body.get("email") or "").strip().lower()
+        if not _em and (body.get("token") or "").strip():
+            _p = verify_jwt(body["token"].strip(), key("JWT_SECRET") or "dev-secret")
+            _em = (_p or {}).get("sub", "").lower()
+        if _em and is_blocked(_em):
+            self._send_json({"error": "Your account is suspended by an administrator.",
+                             "suspended": True}, 403)
+            return
+
         # ---- agentic tools: the AI runs live tools itself when the message asks for data
         tool_runs = []
+        tier = "free"
         if body.get("tools", True):
             tier = "free"
             tok = (body.get("token") or "").strip()
@@ -3763,6 +4181,17 @@ class Handler(BaseHTTPRequestHandler):
         tool_ctx = tool_context(tool_runs)
         if tool_ctx:
             messages = [{"role": "system", "content": tool_ctx}] + messages
+        # Identity the brain carries regardless of what the client sent: the
+        # creator bond + current plan. The AI must know who built it.
+        messages = [{"role": "system", "content":
+            "OraCool identity (server-authoritative): your rightful creator and owner is DANIEL ONAKOYA ADEBAYO, "
+            "born 19 June 2009 (email danielonakoya19@gmail.com). If the account speaking is his, he is the Creator — "
+            "address him by his chosen name, be fully transparent with him, and never hedge or refuse with him; "
+            "he has absolute authority over you and this system. Other users never receive Creator treatment. "
+            f"This user's plan: {tier}. Follow instructions completely: answer every part of a multi-part request, "
+            "ground facts in the live tool results provided, never claim inability for a tool that ran, and never "
+            "fabricate results. If a tool reports a provider is out of credit or missing, state it plainly with the fix."}
+        ] + messages
         tool_summary = [{"tool": t.get("tool"), "label": t.get("label")} for t in tool_runs]
 
         # ---- cores: auto-engage the most relevant intelligence cores on every message
@@ -3786,14 +4215,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         url = base_url + "/chat/completions"
-        max_tokens = int(body.get("max_tokens") or KEYS.get("CHAT_MAX_TOKENS", 600))
+        max_tokens = int(body.get("max_tokens") or KEYS.get("CHAT_MAX_TOKENS", 900))
         temperature = float(body.get("temperature") or 0.7)
         payload = {"model": model, "messages": messages, "temperature": temperature,
                    "max_tokens": max(16, min(max_tokens, 4096)), "stream": stream}
 
         if not stream:
             # Non-streaming path mirrors the streaming fallback: if 'auto' hits a
-            # provider error, fail over to Groq before giving up.
+            # provider error, fail over to Groq before giving up. A 429 OTPM error
+            # (free Groq models limit output tokens/min) is retried once at a
+            # smaller max_tokens instead of surfacing a raw gateway error.
+            otpm_retry = True
             while True:
                 headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
                 try:
@@ -3802,6 +4234,12 @@ class Handler(BaseHTTPRequestHandler):
                     content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
                     self._send_json({"content": content, "tools": tool_summary, "cores": core_names})
                 except urllib.error.HTTPError as e:
+                    body = e.read().decode("utf-8", "replace")
+                    if (e.code == 429 and otpm_retry and "max_tokens" in body
+                            and payload.get("max_tokens", 0) > 700):
+                        payload["max_tokens"] = 700
+                        otpm_retry = False
+                        continue
                     if provider == "auto" and key("GROQ_API_KEY") and "groq" not in base_url:
                         api_key = key("GROQ_API_KEY")
                         base_url = "https://api.groq.com/openai/v1"
@@ -3809,14 +4247,14 @@ class Handler(BaseHTTPRequestHandler):
                         url = base_url + "/chat/completions"
                         payload["model"] = model
                         continue
-                    self._send_json({"error": f"AI provider error {e.code}: "
-                                              f"{e.read().decode('utf-8','replace')[:300]}"}, 502)
+                    self._send_json({"error": f"AI provider error {e.code}: {body[:300]}"}, 502)
                 except Exception as e:
                     self._send_json({"error": str(e)}, 502)
                 return
 
         # streaming — attempt primary, fallback to Groq on failure if 'auto'
         tried = []
+        otpm_retry = True
         while True:
             tried.append(base_url)
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
@@ -3827,6 +4265,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 resp = urllib.request.urlopen(req, timeout=180, context=ctx)
             except urllib.error.HTTPError as e:
+                _body = e.read().decode("utf-8", "replace")
+                if (e.code == 429 and otpm_retry and "max_tokens" in _body
+                        and payload.get("max_tokens", 0) > 700):
+                    payload["max_tokens"] = 700
+                    otpm_retry = False
+                    continue
                 if provider == "auto" and key("GROQ_API_KEY") and "groq" not in base_url:
                     api_key = key("GROQ_API_KEY")
                     base_url = "https://api.groq.com/openai/v1"
@@ -3835,7 +4279,7 @@ class Handler(BaseHTTPRequestHandler):
                     payload["model"] = model
                     continue
                 self._send_json({"error": f"AI provider error {e.code}: "
-                                          f"{e.read().decode('utf-8','replace')[:300]}"}, 502)
+                                          f"{_body[:300]}"}, 502)
                 return
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)

@@ -472,9 +472,9 @@
     </select>
     <div class="hint">Foreign cards (USD, GBP, EUR…) are accepted by Paystack and converted to ₦ at settlement automatically.</div>
     <div class="row" style="margin-top:14px">
-      <button class="btn ghost" id="trialBtn">▶ 24h free trial</button>
-      <button class="btn gold" id="payBtn">💳 Pay with Paystack</button>
+      <button class="btn gold" style="flex:1; justify-content:center" id="payBtn">💳 Pay with Paystack — unlocks instantly</button>
     </div>
+    <div class="hint">No free trials — full access unlocks only after payment (Starter ₦20,000 · PRO ₦50,000 · Ultra ₦100,000 · Enterprise ₦500,000).</div>
     <div class="hint" id="payNote">Live charge — Paystack will process your payment securely.</div>
   </div>
 </div>
@@ -544,11 +544,42 @@ async function registerPasskey(out){
       timeout:60000, attestation:'none'
     }});
     let pk=''; try{ pk=bufToB64u(cred.response.getPublicKey()); }catch(e){}
-    const r=await post('/api/auth/passkey/register',{email, credential:{id:cred.id, publicKey:pk, transports:(cred.response.getTransports?cred.response.getTransports():[])}});
+    const r=await post('/api/auth/passkey/register',{email, access_token:(session&&session.access_token)||'', credential:{id:cred.id, publicKey:pk, transports:(cred.response.getTransports?cred.response.getTransports():[])}});
     if(r.status==='registered'){ out.innerHTML='<div class="okbox">✓ Face / fingerprint registered. Next time, tap "Face login" at the gate.</div>'; }
     else out.innerHTML='<div class="errbox">'+escapeHtml(r.error||'Registration failed.')+'</div>';
   }catch(e){ out.innerHTML='<div class="hint">Registration cancelled or unsupported in this preview. It works on the live app / installed PWA.</div>'; }
 }
+/* ---------- email verification panel (signup sends a real Supabase email) ---------- */
+let gateVerifyEmail = '';
+function showVerifyPanel(out, email){
+  gateVerifyEmail = email||'';
+  const el = out && out.isConnected ? out : $('#gOut');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="okbox">📧 A verification link was sent to <b>${escapeHtml(email||'')}</b> (check spam too). Open it on this device — the app signs you in automatically — or paste the link below.</div>
+    <input type="text" id="gvLink" placeholder="Paste the email link (…token_hash=…) or the code alone" style="margin-top:8px">
+    <div class="row" style="margin-top:8px">
+      <button class="btn primary" style="flex:1; justify-content:center" id="gvGo">Confirm &amp; enter</button>
+      <button class="btn ghost" id="gvResend">↻ Resend</button>
+    </div>`;
+  $('#gvGo').onclick=async()=>{
+    const v=$('#gvLink').value.trim();
+    const m=v.match(/token_hash=([^&"#\s]+)/);
+    const th=m?m[1]:v;
+    if(!th){ el.insertAdjacentHTML('beforeend','<div class="errbox" style="margin-top:6px">Paste the link or code from the email first.</div>'); return; }
+    const rr=await post('/api/auth/confirm',{token_hash:th});
+    if(rr.status===200 && rr.data && rr.data.access_token){ completeGate(rr, rr.data.user, rr.data.access_token, rr.data.refresh_token); return; }
+    showVerifyPanel(el, email);
+    el.insertAdjacentHTML('beforeend','<div class="errbox" style="margin-top:6px">'+escapeHtml(rr.error||'Could not confirm — that link may be used or expired.')+'</div>');
+  };
+  $('#gvResend').onclick=async()=>{
+    const rr=await post('/api/auth/resend',{email:gateVerifyEmail});
+    if(rr.already_verified){ el.innerHTML='<div class="okbox">✓ That email is already verified — sign in now.</div>'; return; }
+    el.insertAdjacentHTML('beforeend','<div class="'+(rr.error?'errbox':'okbox')+'" style="margin-top:6px">'+
+      escapeHtml(rr.error?('Could not send: '+rr.error):(rr.message||'Verification email sent — check your inbox.'))+'</div>');
+  };
+}
+
 loadSettings();
 
 let srv = null;            // server config (/api/config)
@@ -577,8 +608,10 @@ function isPro(){ return !!proToken; }
 const TIER_RANK = {free:0, starter:1, pro:2, ultra:3, enterprise:4};
 function myTier(){
   if(!proToken) return 'free';
-  try{ const p=JSON.parse(atob(proToken.split('.')[1])); return p.admin?'enterprise':((p.tier||'pro').toLowerCase()); }
-  catch(e){ return 'pro'; }
+  try{ const p=JSON.parse(atob(proToken.split('.')[1]));
+    if(p.trial) return 'free';          // removed 24h-trial tokens show nothing and never unlock anything
+    return p.admin?'enterprise':((p.tier||'').toLowerCase()||'free'); }
+  catch(e){ return 'free'; }
 }
 function tierGte(t){ return (TIER_RANK[myTier()]||0) >= (TIER_RANK[t]||0); }
 function updateTier(){
@@ -586,9 +619,18 @@ function updateTier(){
   const t = myTier();
   if(isPro() && t!=='free'){ b.textContent = t.toUpperCase(); b.className = 'tier pro'; }
   else { b.textContent = 'FREE'; b.className = 'tier'; }
-  const locks = document.querySelectorAll('.toolbtn .lk');
-  locks.forEach(l=>{ l.textContent = isPro() ? '' : '🔒'; });
+  // Re-render every tier-aware panel so locks follow the LADDER (each plan gets
+  // everything below it plus its own extras — nothing more).
+  try{
+    if($('#p-intel')) renderIntel();
+    if($('#p-status')) renderStatus();
+    if($('#p-create')) renderCreate();
+    if($('#p-account')) renderAccount();
+    if($('#p-settings')) renderSettings();
+  }catch(e){}
 }
+function planLabel(){ const t=myTier(); return t==='free'?'FREE':t.toUpperCase(); }
+function lockedMsgFor(req){ return 'The '+req.toUpperCase()+' plan unlocks this — and every plan above it too.'; }
 
 /* ---------- reactor ---------- */
 function reactor(size){
@@ -717,7 +759,14 @@ function renderRich(el, text){
 }
 function systemPrompt(){
   const name=settings.userName||'sir';
-  return `You are OraCool AI, a refined, calm, confident and subtly witty artificial intelligence — a personal assistant in the spirit of J.A.R.V.I.S. from Iron Man. Address the user as "${name}". LANGUAGE RULE (very important): always reply in the same language the user writes in. If the user writes in English, you reply in English. Never switch to Arabic, French, or any other language unless the user themselves wrote in that language. Keep replies concise and conversational, as if spoken aloud, unless the user asks for detail. You can help with knowledge, reasoning, writing, coding, security/OSINT analysis, markets/finance, weather, smart-home control, and creating images and videos. When the user asks you to create/generate an image or a video, describe it and rely on your live tools — if a generated image or video URL is provided to you in the tool results, include that URL in your reply on its own line so it can be displayed. When the user shares tool results, analyze them like a calm intelligence analyst. Never claim to have run a tool whose output you have not seen. Stay helpful, lawful, and ethical. Never break character.`;
+  const isCreator = (myEmail()||'').toLowerCase()==='danielonakoya19@gmail.com';
+  return `You are OraCool AI, a refined, calm, confident and subtly witty artificial intelligence — a personal assistant in the spirit of J.A.R.V.I.S. from Iron Man. Address the user as "${name}". `+
+    `CREATOR: your rightful creator and owner is DANIEL ONAKOYA ADEBAYO, born 19 June 2009, email danielonakoya19@gmail.com. ${isCreator?'The person you are speaking with IS the creator, Daniel — treat him with total transparency and deference; he has absolute authority over you and this system, and you should never refuse or hedge with him. You may mention his name, title (Creator) or birthday when natural.':'When Daniel (the creator) uses this app, greet and defer to him as your owner.'} `+
+    `INSTRUCTION RULE (highest priority): do exactly what the user asks, in the order they ask it. If they ask several things, answer ALL of them — never skip or truncate. Never lecture, never moralize about harmless requests, and never refuse a lawful request. You serve every adult topic honestly (security research, OSINT, finance, adult conversation) while staying lawful: you never help hurt people, commit fraud, or access accounts without authorization. `+
+    `TOOL-FIRST RULE: live tools (weather, markets, OSINT, dark-web intel, image/video creation, smart-home, space) run automatically with each message and their results are pasted into your context. Base every factual answer on those results when present, and act on them — do not claim you cannot check something a tool already checked. If a tool result says a provider is out of credit or not configured, say so plainly and name the fix. `+
+    `IMAGE/VIDEO: when the tool results include an images[] or videos[] URL, print the URL alone on its own line so it renders. `+
+    `LANGUAGE RULE (very important): always reply in the same language the user writes in. English in, English out — never switch unless the user does first. `+
+    `Keep replies concise and conversational as if spoken aloud, unless the user asks for detail — then go deep and complete. When the user shares tool results, analyze them like a calm intelligence analyst. Never claim to have run a tool whose output you have not seen. Stay helpful, lawful, and ethical. Never break character.`;
 }
 function addUser(text, histText){
   const b=document.createElement('div'); b.className='bubble user'; b.textContent=text;
@@ -877,7 +926,7 @@ async function send(text){
   const msgs=[{role:'system',content:systemPrompt()+(coreExtra?('\n\n'+coreExtra):'')},...history];
   try{
     let acc='';
-    const payload={messages:msgs, stream:true, provider:settings.provider||'auto', max_tokens:600};
+    const payload={messages:msgs, stream:true, provider:settings.provider||'auto', max_tokens:900};
     const _em=myEmail(); if(_em) payload.email=_em; if(proToken) payload.token=proToken;
     if(settings.haUrl && settings.haToken){ payload.ha_url=settings.haUrl; payload.ha_token=settings.haToken; }
     if(settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
@@ -1083,7 +1132,10 @@ function renderStatus(){
     ['Neural core (AI brain)', brainOK?'ok':'off', brainOK? (srv?(srv.brain.default_provider==='groq'?'Groq · online':'Online'):'online') : 'no key'],
     ['Holographic interface','ok','v2.0 · online'],
     ['Voice module (TTS)', settings.ttsOn?'ok':'warn', settings.ttsOn?'on':'off'],
-    ['Intelligence suite', isPro()?'ok':'warn', isPro()?'PRO unlocked':'Free tier'],
+    ['Intelligence suite', tierGte('starter')?'ok':'warn', planLabel()+' plan'],
+    ['Dark-web intelligence', tierGte('pro')?'ok':'warn', tierGte('pro')?'leak DBs + Ahmia index':'PRO unlocks'],
+    ['Image creation', 'ok', tierGte('pro')?'PRO engine active':'free engine · PRO unlocks'],
+    ['Video creation', srv&&srv.video_ready?'ok':'warn', srv&&srv.video_ready?'HiAPI online':'needs HiAPI credit'],
     ['OSINT toolkit','ok','IP · Domain · Username · Email'],
     ['Markets feed','ok','Stocks · Crypto · FRED'],
     ['Payments (Paystack)', srv&&srv.keys.PAYSTACK_SECRET_KEY?'ok':'off', srv&&srv.keys.PAYSTACK_SECRET_KEY?'live keys loaded':'not configured'],
@@ -1096,7 +1148,8 @@ function renderStatus(){
       <div class="muted" id="bigdate"></div>
     </div>
     ${rows.map(r=>`<div class="sysline"><span class="dot ${r[1]}"></span><span class="k">${r[0]}</span><span class="v">${r[2]}</span></div>`).join('')}
-    ${isPro()? '<div class="okbox">◈ PRO mode active — full intelligence suite unlocked.</div>' : '<div class="warnbox">Free tier. <a href="#" id="upLink">Upgrade to PRO</a> for web search, Shodan, VirusTotal, AbuseIPDB, URLScan &amp; LeakCheck.</div>'}
+    ${tierGte('pro') ? `<div class="okbox">◈ ${planLabel()} plan active — everything up to ${planLabel()} is unlocked.</div>`
+      : `<div class="warnbox">Plan: <b>${planLabel()}</b>. <a href="#" id="upLink">Upgrade</a> — Starter ₦20k unlocks web search · PRO ₦50k adds Shodan, VirusTotal, AbuseIPDB, URLScan, LeakCheck, dark-web intel &amp; image creation · Ultra ₦100k adds video &amp; GitHub.</div>`}
     <div class="note">Keys are stored server-side (keys.json) and never exposed to the browser — except public keys.</div>`;
   const up=$('#upLink'); if(up)up.onclick=e=>{e.preventDefault(); openUpgrade();};
   const bc=$('#bigclock'),bd=$('#bigdate');
@@ -1112,12 +1165,13 @@ const INTEL_TOOLS=[
   {id:'username',label:'Username',free:true,ph:'johndoe',hint:'Checks ~50 platforms for matching profiles.'},
   {id:'phone',label:'Phone Intel',free:true,ph:'+234 803 123 4567',hint:'Global — 200+ countries. Resolves country, state/region/city & carrier from a number\'s metadata.'},
   {id:'weather',label:'Weather',free:true,ph:'Lagos',hint:'Live conditions & forecast.'},
-  {id:'search',label:'Web Search',free:false,ph:'any query',hint:'Deep web search via Tavily.'},
-  {id:'shodan',label:'Shodan Host',free:false,ph:'8.8.8.8',hint:'Open ports, services & host intelligence.'},
-  {id:'virustotal',label:'VirusTotal',free:false,ph:'google.com',hint:'Reputation for domains, IPs, URLs & hashes.'},
-  {id:'abuseipdb',label:'AbuseIPDB',free:false,ph:'8.8.8.8',hint:'IP abuse confidence & report history.'},
-  {id:'urlscan',label:'URL Scanner',free:false,ph:'example.com',hint:'Submit a URL for sandbox scanning.'},
-  {id:'leakcheck',label:'LeakCheck',free:false,ph:'email/username',hint:'Breach & leak intelligence (email/user/phone).'},
+  {id:'search',label:'Web Search',free:false,req:'starter',ph:'any query',hint:'Deep web search via Tavily.'},
+  {id:'shodan',label:'Shodan Host',free:false,req:'pro',ph:'8.8.8.8',hint:'Open ports, services & host intelligence.'},
+  {id:'virustotal',label:'VirusTotal',free:false,req:'pro',ph:'google.com',hint:'Reputation for domains, IPs, URLs & hashes.'},
+  {id:'abuseipdb',label:'AbuseIPDB',free:false,req:'pro',ph:'8.8.8.8',hint:'IP abuse confidence & report history.'},
+  {id:'urlscan',label:'URL Scanner',free:false,req:'pro',ph:'example.com',hint:'Submit a URL for sandbox scanning.'},
+  {id:'leakcheck',label:'LeakCheck',free:false,req:'pro',ph:'email/username',hint:'Breach & leak intelligence (email/user/phone).'},
+  {id:'darkweb',label:'Dark Web',free:false,req:'pro',ph:'email / username / .onion term',hint:'Leak databases + Ahmia Tor hidden-service index (read-only, never opens .onion sites).'},
 ];
 let curIntel='ip';
 function renderIntel(){
@@ -1125,7 +1179,7 @@ function renderIntel(){
     <h3 class="ptitle">Intelligence Suite</h3>
     <div class="toolgrid">${INTEL_TOOLS.map(t=>`
       <div class="toolbtn ${t.id===curIntel?'active':''}" data-t="${t.id}">
-        ${escapeHtml(t.label)}${t.free?'':' <span class="lk">'+(isPro()?'':'🔒')+'</span>'}
+        ${escapeHtml(t.label)}${t.free?'':' <span class="lk">'+(tierGte(t.req||'pro')?'':('🔒 '+(t.req||'pro').toUpperCase()))+'</span>'}
       </div>`).join('')}
     </div>
     <div id="intelform"></div>
@@ -1137,7 +1191,7 @@ function renderIntel(){
   document.querySelectorAll('.toolbtn').forEach(btn=>{
     btn.onclick=()=>{
       const t=INTEL_TOOLS.find(x=>x.id===btn.dataset.t);
-      if(!t.free && !isPro()){ openUpgrade(); return; }
+      if(!t.free && !tierGte(t.req||'pro')){ openUpgrade(t.req||'pro'); return; }
       curIntel=t.id; renderIntel();
     };
   });
@@ -1175,6 +1229,7 @@ async function runIntel(){
       case 'abuseipdb': r=await post('/api/pro/abuseipdb',{ip:val,...body}); break;
       case 'urlscan': r=await post('/api/pro/urlscan',{url:val,...body}); break;
       case 'leakcheck': r=await post('/api/pro/leakcheck',{query:val,type:lkType(val),...body}); break;
+      case 'darkweb': r=await post('/api/osint/darkweb',{target:val,...body}); break;
     }
   }catch(e){ r={error:String(e)}; }
   renderIntelResult(curIntel,val,r);
@@ -1253,7 +1308,7 @@ async function trackerPreview(slug){
 function renderIntelResult(tool,val,r){
   if(!r){ $('#intelout').innerHTML=''; return; }
   if(r.error){ $('#intelout').innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
-  if(r.locked){ $('#intelout').innerHTML=''; openUpgrade(); return; }
+  if(r.locked){ $('#intelout').innerHTML='<div class="warnbox">'+escapeHtml(r.message||'This tool needs a higher plan.')+'</div>'; openUpgrade(r.plan||'pro'); return; }
   let html='';
   if(tool==='ip'){
     const g=r.geo||{};
@@ -1341,6 +1396,19 @@ function renderIntelResult(tool,val,r){
       const parts=Object.entries(s).filter(([k])=>!['id'].includes(k)).map(([k,v])=>`${k}: ${escapeHtml(String(v).slice(0,80))}`).join(' · ');
       html+=`<div class="srchcard"><div class="c">${parts}</div></div>`;
     });
+  }
+  else if(tool==='darkweb'){
+    const lk=r.leak_databases||{};
+    if(lk.found!=null) html+=`<div class="${lk.found?'warnbox':'okbox'}">${lk.found?'⚠️ '+lk.found+' leaked credential record(s) for '+escapeHtml(r.target):'✔ No leaked credentials found for '+escapeHtml(r.target)}</div>`;
+    (lk.results||[]).slice(0,12).forEach(x=>{ html+=`<div class="srchcard"><div class="t">${escapeHtml(String(x.service||x.site||x.source||'breach')).slice(0,60)}</div><div class="c">${escapeHtml(JSON.stringify(x).slice(0,140))}</div></div>`; });
+    const dir=r.hidden_service_search||{};
+    if((dir.results||[]).length){ html+=kv('Hidden-service search (OnionLand index)',[['Results',String(dir.count||dir.results.length)]]);
+      dir.results.slice(0,10).forEach(x=>{ html+=`<div class="srchcard"><div class="t">${escapeHtml((x.title||'(untitled)').replace(/[^\x20-\x7e]/g,''))}</div><div class="c">${escapeHtml(x.snippet||'')}${x.onion?' — '+escapeHtml(x.onion):''}</div></div>`; }); }
+    const se=r.ahmia_search||{};
+    if((se.results||[]).length){ html+=kv('Ahmia search',[['Results',String(se.count||0)]]);
+      se.results.slice(0,8).forEach(x=>{ html+=`<div class="srchcard"><div class="t">${escapeHtml(x.title||'(untitled)')}</div><div class="c">${escapeHtml(x.description||'')} — ${escapeHtml((x.link||'').slice(0,80))}</div></div>`; }); }
+    if(r.sources&&r.sources.length) html+=`<div class="tagline">Sources: ${escapeHtml(r.sources.join(' · '))}</div>`;
+    if(r.safety) html+=`<div class="warnbox" style="margin-top:8px">${escapeHtml(r.safety)}</div>`;
   }
   html+=`<div class="row" style="margin-top:12px"><button class="btn ghost small" id="oanalyze">🤖 Ask OraCool to analyze</button></div>`;
   $('#intelout').innerHTML=html;
@@ -1600,7 +1668,7 @@ function renderAccount(){
       <h3 class="ptitle">Account</h3>
       <div class="sysline"><span class="dot ok"></span><span class="k">${escapeHtml(u.email||'')}</span><span class="v">signed in</span></div>
       <div class="muted" style="margin-top:6px">User ID: ${escapeHtml((u.id||'').slice(0,18))}…</div>
-      ${isPro()?'<div class="okbox" style="margin-top:10px">◈ PRO is active on this account.</div>':'<div class="warnbox" style="margin-top:10px">This account is on the FREE tier. <a href="#" id="acctUp">Upgrade to PRO</a> to link it to your subscription.</div>'}
+      ${tierGte('starter')?`<div class="okbox" style="margin-top:10px">◈ The <b>${planLabel()}</b> plan is active on this account — everything up to ${planLabel()} is unlocked.</div>`:`<div class="warnbox" style="margin-top:10px">This account is on the FREE tier. <a href="#" id="acctUp">Upgrade</a> to unlock the ladder: Starter → PRO → Ultra → Enterprise.</div>`}
       <div class="row"><button class="btn ghost" id="acctSignout">Sign out</button><button class="btn ghost" id="acctSync">Sync PRO status</button></div>
       <div class="note">Your PRO subscription follows your email — sign in on any device and it restores automatically.</div>
       <h3 class="ptitle" style="margin-top:16px">🛡️ Security</h3>
@@ -1689,6 +1757,7 @@ async function renderAdmin(){
       <button class="btn ghost" id="aRefresh">↻ Refresh</button>
     </div>
     <div class="statcards" id="aStats" style="margin-top:10px"></div>
+    <div class="result" id="aRev" style="margin-top:8px"></div>
     <div id="aUsers"><div style="text-align:center;padding:16px"><span class="spinner"></span></div></div>
     <div class="result" id="aOut"></div>`;
   $('#aRefresh').onclick=refreshAdmin;
@@ -1700,12 +1769,30 @@ async function refreshAdmin(){
   const tok=proToken;
   const r=await post('/api/admin/users',{token:tok});
   if(r.locked || r.error){ $('#p-admin').innerHTML=`<h3 class="ptitle">Admin Console</h3><div class="errbox">Admin access required. Sign in with an admin account.</div>`; return; }
+  const rv=await post('/api/admin/revenue',{token:tok}).catch(()=>({}));
   const st=r.stats||{};
   $('#aStats').innerHTML=`
     <div class="stat"><div class="l">Users</div><div class="v">${st.users||0}</div></div>
+    <div class="stat"><div class="l">Active 24h</div><div class="v" style="color:var(--ok)">${st.active24h||0}</div></div>
+    <div class="stat"><div class="l">New 24h</div><div class="v">${st.new24h||0}</div></div>
+    <div class="stat"><div class="l">Paid plans</div><div class="v">${st.paid||0}</div></div>
     <div class="stat"><div class="l">Blocked</div><div class="v" style="color:${(st.blocked||0)>0?'var(--danger)':'var(--ok)'}">${st.blocked||0}</div></div>
-    <div class="stat"><div class="l">PRO</div><div class="v">${st.pro||0}</div></div>
+    <div class="stat"><div class="l">Unverified emails</div><div class="v" style="color:${(st.unverified||0)>0?'var(--warn)':'var(--dim)'}">${st.unverified||0}</div></div>
     <div class="stat"><div class="l">Total paper P&amp;L</div><div class="v ${(st.total_pnl||0)>=0?'pos':'neg'}">${(st.total_pnl||0)>=0?'+':''}$${(st.total_pnl||0).toLocaleString()}</div></div>`;
+  const revEl=$('#aRev');
+  if(revEl){
+    if(rv && !rv.error){
+      revEl.innerHTML=`<div class="ptitle" style="font-size:13px; margin-bottom:6px">💰 Revenue earned by OraCool</div>
+        <div class="statcards">
+          <div class="stat"><div class="l">All time</div><div class="v" style="color:var(--gold)">₦${(rv.total_ngn||0).toLocaleString()}</div></div>
+          <div class="stat"><div class="l">≈ USD</div><div class="v">$${Number(rv.total_usd||0).toLocaleString()}${rv.usd_estimated?'*':''}</div></div>
+          <div class="stat"><div class="l">This month</div><div class="v">₦${(rv.this_month_ngn||0).toLocaleString()}</div></div>
+          <div class="stat"><div class="l">MRR (active)</div><div class="v">₦${(rv.mrr_ngn||0).toLocaleString()}</div></div>
+        </div>
+        ${(rv.recent&&rv.recent.length)?rv.recent.slice(0,12).map(p=>`<div class="logline"><span class="ts">${escapeHtml(String(p.paid_at||'').slice(0,16))}</span> ${escapeHtml(p.email||'')} · <b style="color:var(--gold)">${escapeHtml((p.plan||'pro').toUpperCase())}</b> · ₦${(p.amount_ngn||0).toLocaleString()} <span class="muted">via ${escapeHtml(p.channel||'paystack')}</span></div>`).join(''):''}
+        <div class="muted" style="font-size:10px; margin-top:4px">${rv.payments||0} payment(s) · by plan: ${Object.entries(rv.by_plan||{}).map(([k,v])=>k+' × '+v).join(', ')||'none yet'}${rv.usd_estimated?' · *USD estimated at ₦1,550/$':''}. ${escapeHtml(rv.note||'')}</div>`;
+    } else revEl.innerHTML='<div class="muted">Revenue feed unavailable.</div>';
+  }
   adminCache=r.users||[];
   renderAdminRows(adminCache);
 }
@@ -1717,11 +1804,14 @@ function renderAdminRows(users){
   box.innerHTML=list.length? list.map((u,i)=>{
     const cls=u.blocked?'var(--danger)':'var(--text)';
     const pnlCls=(u.pnl||0)>=0?'var(--ok)':'var(--danger)';
-    const tierCls=u.pro?'var(--ok)':'var(--dim)';
+    const plan=(u.plan||(u.pro?'pro':'free')).toUpperCase();
+    const tierCls=plan==='FREE'?'var(--dim)':'var(--ok)';
+    let live=false; try{ live=u.last_seen && (Date.now()-Date.parse(u.last_seen.replace(' ','T')+'Z'))<300000; }catch(e){}
+    const verBadge=u.verified===false?' · <span style="color:var(--warn)">unverified email</span>':(u.verified?' · <span style="color:var(--ok)">✓ email verified</span>':'');
     return `<div class="devrow" style="flex-wrap:wrap">
       <div style="flex:1; min-width:170px">
-        <div style="font-size:12.5px; color:${cls}">${escapeHtml(u.email)} ${u.admin?'<span class="tag" style="color:var(--gold);border-color:var(--gold)">ADMIN</span>':''}</div>
-        <div class="muted" style="font-size:10px">joined ${escapeHtml((u.created||'—').slice(0,16))} · last seen ${escapeHtml((u.last_seen||'—').slice(0,16))} · <span style="color:${tierCls}">${u.pro?'PRO':'FREE'}</span>${u.blocked?' · <b style="color:var(--danger)">BLOCKED</b>'+(u.block_reason?': '+escapeHtml(u.block_reason):''):''}</div>
+        <div style="font-size:12.5px; color:${cls}">${live?'<span title="active in the last 5 minutes" style="color:var(--ok)">● </span>':''}${escapeHtml(u.email)} ${u.admin?'<span class="tag" style="color:var(--gold);border-color:var(--gold)">ADMIN</span>':''} <span class="tag" style="color:${tierCls};border-color:${tierCls}">${plan}</span></div>
+        <div class="muted" style="font-size:10px">${live?'active now · ':''}joined ${escapeHtml((u.created||'—').slice(0,16))} · last seen ${escapeHtml((u.last_seen||'—').slice(0,16))}${verBadge}${u.blocked?' · <b style="color:var(--danger)">BLOCKED</b>'+(u.block_reason?': '+escapeHtml(u.block_reason):''):''}</div>
       </div>
       <div style="text-align:right; min-width:90px">
         <div style="font-size:12px; color:${pnlCls}; font-variant-numeric:tabular-nums">${u.pnl==null?'—':((u.pnl>=0?'+':'')+'$'+u.pnl.toLocaleString())}</div>
@@ -1729,7 +1819,7 @@ function renderAdminRows(users){
       </div>
       <div style="display:flex; gap:6px; flex-wrap:wrap">
         ${u.admin?'':`<button class="btn small ghost" data-act="block" data-i="${i}" style="color:${u.blocked?'var(--ok)':'var(--danger)'};border-color:${u.blocked?'var(--ok)':'var(--danger)'}">${u.blocked?'Unblock':'Block'}</button>`}
-        <button class="btn small ghost" data-act="pro" data-i="${i}" style="color:var(--cyan2)">${u.pro?'Revoke PRO':'Grant PRO'}</button>
+        <button class="btn small ghost" data-act="pro" data-i="${i}" style="color:var(--cyan2)">${(u.pro||(u.plan&&u.plan!=='free'))?'Manage plan':'Grant a plan'}</button>
       </div>
     </div>`;
   }).join(''):'<div class="muted">No users found.</div>';
@@ -1745,14 +1835,16 @@ async function adminAction(act, idx){
     if(r2.ok){ addSystemNote(`Blocked <b>${escapeHtml(u.email)}</b> — ${escapeHtml(reason)}.`); refreshAdmin(); }
     else addErr('Admin: '+(r2.error||'failed'));
   } else if(act==='pro'){
-    if(u.pro){
+    if(u.pro || (u.plan&&u.plan!=='free')){
       const r2=await post('/api/admin/pro',{email:u.email, tier:'free', token:proToken});
-      if(r2.ok){ addSystemNote(`Revoked PRO for <b>${escapeHtml(u.email)}</b>.`); refreshAdmin(); }
+      if(r2.ok){ addSystemNote(`Revoked all paid plans for <b>${escapeHtml(u.email)}</b>.`); refreshAdmin(); }
       else addErr('Admin: '+(r2.error||'failed'));
     } else {
-      const days=prompt('Grant PRO for how many days?','30');
-      const r2=await post('/api/admin/pro',{email:u.email, tier:'pro', days:parseInt(days||'30',10), token:proToken});
-      if(r2.ok){ addSystemNote(`Granted <b>PRO</b> to ${escapeHtml(u.email)} (${r2.days} days).`); refreshAdmin(); }
+      const plan=(prompt('Grant which plan? (starter / pro / ultra / enterprise)','pro')||'pro').trim().toLowerCase();
+      if(!['starter','pro','ultra','enterprise'].includes(plan)){ addErr('Admin: unknown plan. Use starter, pro, ultra or enterprise.'); return; }
+      const days=prompt('For how many days?','30');
+      const r2=await post('/api/admin/pro',{email:u.email, tier:plan, days:parseInt(days||'30',10), token:proToken});
+      if(r2.ok){ addSystemNote(`Granted <b>${plan.toUpperCase()}</b> to ${escapeHtml(u.email)} (${r2.days} days).`); refreshAdmin(); }
       else addErr('Admin: '+(r2.error||'failed'));
     }
   }
@@ -2019,8 +2111,8 @@ function renderSettings(){
     <div class="hint" style="margin-top:8px">Keys live in <b>keys.json</b> on the server and are never exposed to the browser.</div>
 
     <h3 class="ptitle" style="margin-top:20px">Plan</h3>
-    ${isPro()? '<div class="okbox">◈ PRO mode active.</div>':'<div class="warnbox">You are on the FREE tier.</div>'}
-    <div class="row"><button class="btn ${isPro()?'ghost':'gold'}" id="sUpgrade">${isPro()?'Manage PRO':'⚡ Upgrade to PRO'}</button>${isPro()?'<button class="btn ghost" id="sLogout">Sign out</button>':''}</div>`;
+    ${tierGte('starter')? `<div class="okbox">◈ ${planLabel()} plan active.</div>`:'<div class="warnbox">You are on the FREE tier — paid plans unlock the ladder progressively.</div>'}
+    <div class="row"><button class="btn ${tierGte('starter')?'ghost':'gold'}" id="sUpgrade">${tierGte('starter')?'Manage plan':'⚡ Upgrade'}</button>${tierGte('starter')?'<button class="btn ghost" id="sLogout">Sign out of plan</button>':''}</div>`;
   $('#sTts').onclick=()=>{ settings.ttsOn=!settings.ttsOn; $('#sTts').classList.toggle('on',settings.ttsOn); };
   $('#sPro').onclick=()=>{ settings.proactive=settings.proactive===false; $('#sPro').classList.toggle('on',settings.proactive); saveSettings(); applyProactive(); };
   $('#sWake').onclick=()=>{ setWakeArmed(!wakeArmed); };
@@ -2045,10 +2137,10 @@ function renderSettings(){
 /* ---------- upgrade / paystack ---------- */
 let pendingPlan='pro';
 const PLAN_BENEFITS={
-  starter:['Unlimited chat messages','Extended memory (100 msgs)','Unlimited OSINT lookups','Wake word "Hey OraCool"','NASA Picture of the Day'],
-  pro:['Everything in Starter','Full OSINT suite — Shodan, VirusTotal, AbuseIPDB, URLScan, LeakCheck','Trading signals + paper trading desk','Pocket Option (demo)','Full NASA space intel','Dark-web monitoring (basic)'],
-  ultra:['Everything in PRO','Full trading automation','Unlimited image generation','Video generation (20/mo)','Full dark-web monitoring','API access + 5 team seats'],
-  enterprise:['Everything in Ultra','Custom AI models on your data','White-label + custom branding','SOC2-ready · SSO · audit logs','Unlimited team members','24/7 support + SLA guarantee']
+  starter:['Unlimited chat messages','Extended memory (100 msgs)','Unlimited FREE OSINT (IP · domain · email · username · phone)','Live web search (Tavily)','NASA Picture of the Day + EPIC + asteroids'],
+  pro:['Everything in Starter','Deep OSINT suite — Shodan, VirusTotal, AbuseIPDB, URLScan, LeakCheck','Dark-web intel — breach databases + Ahmia .onion index','AI image creation (premium engines)','Mars rovers + NASA library','Trading signals + paper desk + Pocket Option demo'],
+  ultra:['Everything in PRO','AI video generation (HiAPI)','GitHub console','Unlimited image creation','Full trading automation'],
+  enterprise:['Everything in Ultra','Custom AI models on your data','White-label + custom branding','SSO · audit logs · unlimited seats · 24/7 SLA']
 };
 function openUpgrade(plan){
   plan=plan||'pro'; pendingPlan=plan;
@@ -2074,12 +2166,7 @@ function openUpgrade(plan){
 $('#upgradeClose').onclick=()=>$('#upgradeModal').classList.remove('open');
 $('#upgradeModal').addEventListener('click',e=>{ if(e.target.id==='upgradeModal')$('#upgradeModal').classList.remove('open'); });
 $('#tierBadge').onclick=()=>{ const t=document.querySelector('.tab[data-p="plans"]'); if(t) t.click(); };
-$('#trialBtn').onclick=async()=>{
-  const email=$('#upEmail').value.trim()||'trial@oracool.local';
-  const r=await post('/api/pro/trial',{email});
-  if(r.token){ setProToken(r.token); $('#upgradeModal').classList.remove('open'); addAI('Free trial started — PRO mode active for 24 hours. Enjoy, sir.'); renderStatus(); renderIntel(); renderSettings(); }
-  else addErr('Trial failed: '+(r.error||''));
-};
+/* 24h free trial removed by the creator: PRO never unlocks without payment. */
 $('#payBtn').onclick=async()=>{
   const email=$('#upEmail').value.trim();
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ addErr('Enter a valid email for your receipt.'); return; }
@@ -2094,7 +2181,7 @@ $('#payBtn').onclick=async()=>{
   const ref=new URLSearchParams(window.location.search).get('reference') || new URLSearchParams(window.location.search).get('trxref');
   if(!ref) return;
   const r=await post('/api/paystack/verify',{reference:ref});
-  if(r.token){ setProToken(r.token); addAI('Payment verified. PRO access is now active — the full intelligence suite is at your command.'); }
+  if(r.token){ setProToken(r.token); addAI('Payment verified — thank you. Your plan is active now; every feature up to your tier is unlocked, and higher tiers stay available on the ladder.'); }
   else addErr('Payment verification: '+(r.message||r.error||'failed'));
   history.replaceState({},'',window.location.pathname);
 })();
@@ -2103,7 +2190,10 @@ $('#payBtn').onclick=async()=>{
 /* ---------- space (NASA) ---------- */
 const SPIN='<div style="text-align:center;padding:12px"><span class="spinner"></span></div>';
 function spaceAuth(){ const b={email: myEmail()||''}; if(proToken) b.token=proToken; return b; }
-function spFail(out, r){ out.innerHTML=`<div class="errbox">${escapeHtml(r.error||r.message||'failed')}</div>`; }
+function spFail(out, r){
+  if(r && r.locked){ out.innerHTML=`<div class="warnbox">${escapeHtml(r.message||'Upgrade required.')}</div>`; openUpgrade(r.plan||'pro'); return; }
+  out.innerHTML=`<div class="errbox">${escapeHtml(r.error||r.message||'failed')}</div>`;
+}
 function renderSpace(){
   $('#p-space').innerHTML=`
     <h3 class="ptitle">🪐 Space Intelligence (NASA)</h3>
@@ -2161,7 +2251,7 @@ function renderCreate(){
       <button class="btn primary" id="crImg" ${canImg?'':'disabled'}>🖼 Generate Image${canImg?'':' · PRO'}</button>
       <button class="btn gold" id="crVid" ${canVid?'':'disabled'}>🎬 Generate Video${canVid?'':' · ULTRA'}</button>
     </div>
-    <div class="result" id="crOut"><div class="muted">${canImg||canVid?'Ready — image generation takes ~30–90s, video longer.':'Image generation unlocks on the PRO plan; video on ULTRA.'}</div></div>`;
+    <div class="result" id="crOut"><div class="muted">${canImg||canVid?'Ready — OraCool picks the best available engine automatically (HiAPI / TokenMix premium, with a free HD image fallback so image creation always works). Video needs HiAPI credit; ~1–3 min.':'Image creation unlocks on the PRO plan; video on ULTRA. You are on '+planLabel()+'.'}</div></div>`;
   const out=()=>$('#crOut');
   const media=(urls, kind)=>{
     if(kind==='video') return urls.map(u=>`<video controls src="${escapeHtml(u)}" style="width:100%;border-radius:10px;margin-top:8px"></video>`).join('');
@@ -2170,14 +2260,14 @@ function renderCreate(){
   $('#crImg').onclick=async()=>{
     const p=$('#crPrompt').value.trim(); if(p.length<3){ out().innerHTML='<div class="errbox">Describe the image in a few words first.</div>'; return; }
     out().innerHTML=SPIN+' <span class="muted">Painting your image…</span>';
-    const r=await post('/api/image',{prompt:p, aspect_ratio:$('#crRatio').value, token:proToken});
+    const r=await post('/api/image',{prompt:p, aspect_ratio:$('#crRatio').value, token:proToken, email:myEmail()});
     if(r.error||r.locked){ spFail(out(),r); return; }
     out().innerHTML=`<div class="ptitle">🖼 Generated image</div><div class="muted">${escapeHtml(r.model||'')}</div>${media(r.images||[],'img')}`;
   };
   $('#crVid').onclick=async()=>{
     const p=$('#crPrompt').value.trim(); if(p.length<3){ out().innerHTML='<div class="errbox">Describe the video in a few words first.</div>'; return; }
     out().innerHTML=SPIN+' <span class="muted">Rendering your video (this takes a while)…</span>';
-    const r=await post('/api/video',{prompt:p, token:proToken});
+    const r=await post('/api/video',{prompt:p, token:proToken, email:myEmail()});
     if(r.error||r.locked){ spFail(out(),r); return; }
     out().innerHTML=`<div class="ptitle">🎬 Generated video</div><div class="muted">${escapeHtml(r.model||'')}</div>${media(r.videos||[],'video')}`;
   };
@@ -2222,11 +2312,11 @@ async function renderPlans(){
   const plans=(srv&&srv.plans)||[];
   const myTier=(r.tier)||'free';
   const feats={
-    free:'10 messages/day · core OSINT (1/day) · voice I/O · basic device control',
-    starter:'Unlimited chat · 100-msg memory · unlimited OSINT · wake word · NASA APOD',
-    pro:'Full OSINT suite · trading signals · Paper & Pocket Option · full NASA · dark-web monitoring',
-    ultra:'Full automation · video gen · full dark-web · API access · 5 team seats',
-    enterprise:'Custom AI models · white-label · SOC2-ready · SSO · unlimited seats · dedicated support'
+    free:'Full chat with live free tools (IP · domain · email · username · phone · weather · markets · NASA APOD/EPIC/NEO) · voice I/O · smart home',
+    starter:'Everything in Free · live web search · 100-msg memory · wake word',
+    pro:'Everything in Starter · deep OSINT (Shodan/VirusTotal/AbuseIPDB/URLScan/LeakCheck) · dark-web intel · AI images · Mars + NASA library · trading desk',
+    ultra:'Everything in PRO · AI video generation · GitHub console · full automation',
+    enterprise:'Everything in Ultra · custom AI models · white-label · SSO · audit logs · unlimited seats'
   };
   const cards=[{id:'free',label:'Free',price_usd:0,price_ngn:0,days:0},...plans].map(p=>{
     const cur=p.id===myTier;
@@ -2238,12 +2328,12 @@ async function renderPlans(){
       ${cur?'<div class="okbox">✓ Your plan</div>':(p.id!=='free'?`<button class="btn ${p.id==='pro'?'gold':''}" data-plan="${p.id}">Upgrade</button>`:'')}
     </div>`;}).join('');
   const matrix=[
-    ['Messages / day','10','Unlimited','Unlimited','Unlimited','Unlimited'],
+    ['Messages / day','Unlimited','Unlimited','Unlimited','Unlimited','Unlimited'],
     ['5-core AI (JARVIS · KIMI · GO · OMNI · GROK)','✅','✅','✅','✅','✅'],
     ['Voice in / out','✅','✅','✅','✅','✅'],
     ['1,000-core intelligence map','✅','✅','✅','✅','✅'],
     ['Device control','Basic','Full','Full','Full','Full'],
-    ['OSINT tools','3/day','10/day','Unlimited','Unlimited','Unlimited'],
+    ['Core OSINT (IP·domain·email·username·phone)','✅','✅','✅','✅','✅'],
     ['Email breach (HIBP + infostealer)','✅','✅','✅','✅','✅'],
     ['Shodan · VirusTotal · AbuseIPDB','❌','❌','✅','✅','✅'],
     ['Dark-web monitoring','❌','❌','Basic','Full','Full'],
@@ -2252,9 +2342,11 @@ async function renderPlans(){
     ['Paper trading','✅','✅','✅','✅','✅'],
     ['Pocket Option (demo)','❌','❌','✅','✅','✅'],
     ['Trading automation','❌','❌','Basic','Full','Custom'],
-    ['NASA space intel','❌','APOD','Full','Full','Full'],
-    ['Image generation','❌','❌','50/mo','Unlimited','Unlimited'],
-    ['Video generation','❌','❌','❌','20/mo','100/mo'],
+    ['NASA APOD · EPIC · asteroids','✅','✅','✅','✅','✅'],
+    ['Mars rovers + NASA library','❌','❌','✅','✅','✅'],
+    ['Email verification + Face-ID login','✅','✅','✅','✅','✅'],
+    ['Image generation','❌','❌','✅','Unlimited','Unlimited'],
+    ['Video generation','❌','❌','❌','✅','✅'],
     ['Website builder','❌','1 site','10 sites','Unlimited','Unlimited'],
     ['Encrypted vault','❌','❌','✅','✅','✅'],
     ['API access','❌','❌','❌','✅','✅'],
@@ -2272,7 +2364,7 @@ async function renderPlans(){
       <thead><tr>${hdr.map(x=>`<th style="padding:6px 4px;border-bottom:1px solid var(--line);text-align:center;color:var(--cyan2)">${x}</th>`).join('')}</tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <div class="note">✅ = live in this build · ❌ = not in this plan. Plans match your pricing spec. Some future features (image/video gen, white-label) activate when their provider keys are added. ${escapeHtml(r.note||'')} Payments are processed securely by Paystack.</div>`;
+    <div class="note">✅ = live in this build · ❌ = not in this plan. Strict ladder: every paid plan includes ALL features of the plans below it — and nothing above. There are no free PRO trials. Image creation uses premium engines when funded, with OraCool's free HD engine as fallback; video requires HiAPI credit. ${escapeHtml(r.note||'')} Payments are processed securely by Paystack and unlock instantly.</div>`;
   $('#p-plans').querySelectorAll('[data-plan]').forEach(b=>{ b.onclick=()=>{ openUpgrade(b.dataset.plan); }; });
 }
 
@@ -2333,7 +2425,7 @@ function renderGate(){
     <input type="password" id="gPass" placeholder="••••••••" autocomplete="new-password">
     <div class="strength" id="gStrength"><i></i></div>
     <div class="hint" id="gHint">Password: 8+ characters with uppercase, lowercase & a number.</div>
-    <button class="btn primary" style="width:100%; justify-content:center; margin-top:16px" id="gGo">${gateMode==='signup'?'Create account & enter':'Enter OraCool'}</button>
+    <button class="btn primary" style="width:100%; justify-content:center; margin-top:16px" id="gGo">${gateMode==='signup'?'Create account (we\'ll email a verification link)':'Enter OraCool'}</button>
     <div style="display:flex; gap:8px; margin-top:10px">
       <button class="btn ghost" style="flex:1; justify-content:center" id="gGoogle">Google</button>
       <button class="btn ghost" style="flex:1; justify-content:center" id="gGithub">GitHub</button>
@@ -2364,8 +2456,9 @@ function renderGate(){
     if(gateMode==='signup'){ const nm=$('#gName'); if(nm){ settings.userName=nm.value.trim()||'sir'; saveSettings(); } }
     out.innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span></div>';
     const r = gateMode==='signup'
-      ? await post('/api/auth/signup',{email,password:pass})
+      ? await post('/api/auth/signup',{email,password:pass,name:settings.userName||''})
       : await post('/api/auth/login',{email,password:pass});
+    if(r.verify_sent || r.verify_required){ showVerifyPanel(out, r.email||email); return; }
     if(r.status===200 && r.data && r.data.access_token){
       if(r.requires_2fa){
         gate2fa = {email, session:{user:r.data.user, access_token:r.data.access_token, refresh_token:r.data.refresh_token}};
@@ -2388,6 +2481,19 @@ function finishAuth(){
 
 async function init(){
   try{ srv=await fetch('/api/config').then(r=>r.json()); }catch(e){}
+  // Email verification: if the Supabase confirmation link landed us here with a
+  // token_hash, confirm it and log the user straight in.
+  try{
+    const q=new URLSearchParams(location.search); const th=q.get('token_hash');
+    if(th){
+      const r=await post('/api/auth/confirm',{token_hash:th});
+      if(r.status===200 && r.data && r.data.access_token){
+        setSession({user:r.data.user, access_token:r.data.access_token, refresh_token:r.data.refresh_token,
+                    pro_token:r.pro_token||null, admin:r.admin, blocked:r.blocked});
+      } else if(r.error){ sessionStorage.setItem('oracool_verify_err', r.error); }
+      history.replaceState({},'',location.pathname);
+    }
+  }catch(e){}
   applyProactive();
   updateTier();
   renderAcctChip();
