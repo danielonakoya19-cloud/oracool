@@ -2434,11 +2434,21 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
     if ph and any(k in low for k in ("phone", "number", "trace", "carrier", "who called", "caller")):
         out.append({"tool": "phone", "label": "phone " + ph.group(0),
                     "result": _shrink(phone_intel.lookup(ph.group(0), key_lookup=key, http_fetch=http_fetch))})
-    # space
+    # username OSINT (free) — @handle or "username X"
+    if not em:
+        um = re.search(r"@([a-z0-9_\.]{2,30})", low)
+        if not um:
+            um = re.search(r"(?:username|handle|profile)\s+(?:of|for)?\s*([a-z0-9_\.]{2,30})", low)
+        if um and any(k in low for k in ("username", "handle", "profile", "@", "lookup", "who is")):
+            out.append({"tool": "username", "label": "username " + um.group(1),
+                        "result": _shrink(osint_username(um.group(1)))})
+    # space (free)
     if any(k in low for k in ("picture of the day", "apod", "space picture", "nasa picture", "picture today")):
         out.append({"tool": "space", "label": "NASA picture of the day", "result": _shrink(space_apod())})
     if any(k in low for k in ("asteroid", "neo", "near earth")):
         out.append({"tool": "space", "label": "near-earth objects", "result": _shrink(space_neo())})
+    if any(k in low for k in ("epic", "dscovr", "picture of earth", "earth photo")):
+        out.append({"tool": "space", "label": "NASA Earth (DSCOVR EPIC)", "result": _shrink(space_epic())})
     # current time
     if re.search(r"\bwhat time|current time|time now|the time\b", low):
         out.append({"tool": "time", "label": "current time", "ok": True,
@@ -2485,6 +2495,17 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
             q = em.group(0) if em else ph.group(0)
             out.append({"tool": "leakcheck", "label": "leakcheck",
                         "result": _shrink(pro_leakcheck(q, "email" if em else "phone"), 1500)})
+        if "urlscan" in low:
+            target = dm.group(1) if dm else (ipm.group(1) if ipm else t.split()[-1].strip(".,!? "))
+            out.append({"tool": "urlscan", "label": "urlscan " + target,
+                        "result": _shrink(pro_urlscan(target), 1500)})
+        # NASA Mars rovers + image library (PRO)
+        if "mars" in low and ("rover" in low or "mars" in low):
+            out.append({"tool": "space", "label": "Mars rover imagery", "result": _shrink(space_mars())})
+        if "nasa" in low and any(k in low for k in ("image", "photo", "picture", "find")):
+            q = re.sub(r"(?i)nasa|image|photo|picture|find|of|the|for|a|an", " ", t)
+            q = " ".join(q.split())[:50] or "earth"
+            out.append({"tool": "space", "label": "NASA library · " + q, "result": _shrink(space_library(q))})
         # image creation straight from chat
         im = re.search(r"(?:generate|create|make|draw|imagine|show me)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
         if im and any(k in low for k in ("generate", "create", "make", "draw", "imagine")):
@@ -2494,7 +2515,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
                 out.append({"tool": "image", "label": "image · " + prompt[:40],
                             "result": _shrink(r, 1200)})
 
-    # Ultra-tier tools (video creation)
+    # Ultra-tier tools (video creation + GitHub console)
     if tier_gte(tier, "ultra"):
         vm = re.search(r"(?:generate|create|make)\s+(?:a\s+)?(?:video|clip|animation|film)\s*(?:of|about|for)?\s*(.{6,200})", low)
         if vm and any(k in low for k in ("video", "clip", "animation", "film")):
@@ -2503,6 +2524,14 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
                 r = gen_video(prompt)
                 out.append({"tool": "video", "label": "video · " + prompt[:40],
                             "result": _shrink(r, 1200)})
+        if "github" in low:
+            q = re.sub(r"(?i)github|search|repos?|for|find|on", " ", t)
+            q = " ".join(q.split())[:50] or "oracool"
+            try:
+                out.append({"tool": "github", "label": "github · " + q,
+                            "result": _shrink(github("/search/repositories?q=" + urllib.parse.quote(q) + "&per_page=5"), 1500)})
+            except Exception:
+                pass
 
     # Locked-feature notices: the AI explains what plan unlocks it (honest, no fake results)
     def _locked(feature, plan):
@@ -2517,8 +2546,11 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
         im2 = re.search(r"(?:generate|create|make|draw|imagine)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
         if im2 and any(k in low for k in ("generate", "create", "make", "draw", "imagine", "image", "picture")):
             _locked("image creation", "pro")
-    if not tier_gte(tier, "ultra") and any(k in low for k in ("video", "clip", "animation", "film")):
-        _locked("video creation", "ultra")
+    if not tier_gte(tier, "ultra"):
+        if any(k in low for k in ("video", "clip", "animation", "film")):
+            _locked("video creation", "ultra")
+        if "github" in low and any(k in low for k in ("search", "repo", "find", "github")):
+            _locked("GitHub console", "ultra")
     return out[:4]
 
 
@@ -3352,11 +3384,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/space/apod":
                 self._send_json(space_apod(body.get("date"), body.get("count", 1)))
             elif path == "/api/space/epic":
-                if self._require_tier(body, "starter"):
-                    self._send_json(space_epic())
+                self._send_json(space_epic())
             elif path == "/api/space/neo":
-                if self._require_tier(body, "starter"):
-                    self._send_json(space_neo())
+                self._send_json(space_neo())
             elif path == "/api/space/mars":
                 if self._require_tier(body, "pro"):
                     self._send_json(space_mars(body.get("rover", "curiosity")))
