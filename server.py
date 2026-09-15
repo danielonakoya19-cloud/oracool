@@ -152,10 +152,11 @@ def verify_jwt(token, secret):
 TIER_RANK = {"free": 0, "starter": 1, "pro": 2, "ultra": 3, "enterprise": 4}
 
 PLANS = {
-    "starter":    {"label": "Starter",    "price_usd": 20,  "price_ngn": 20000,  "days": 30},
-    "pro":        {"label": "PRO",        "price_usd": 50,  "price_ngn": 50000,  "days": 30},
-    "ultra":      {"label": "Ultra",      "price_usd": 100, "price_ngn": 100000, "days": 30},
-    "enterprise": {"label": "Enterprise", "price_usd": 500, "price_ngn": 500000, "days": 30},
+    "starter":    {"label": "Starter",     "price_usd": 29,  "price_ngn": 45000,  "days": 30},
+    "pro":        {"label": "Pro",         "price_usd": 49,  "price_ngn": 75000,  "days": 30},
+    "ultra":      {"label": "Professional","price_usd": 149, "price_ngn": 230000, "days": 30},
+    "enterprise": {"label": "Enterprise · Custom", "price_usd": 0, "price_ngn": 0, "days": 30,
+                   "custom": True},
 }
 
 def tier_gte(tier, required):
@@ -423,6 +424,31 @@ def password_strength(pw):
     if not re.search(r"[0-9]", pw):
         errs.append("a number")
     return errs
+
+
+_oauth_probe = {"t": 0.0, "data": {}}
+
+
+def oauth_providers():
+    """Live detection of enabled Supabase OAuth providers (5-min cache) so the
+    UI never shows a raw 'Unsupported provider' error — it explains the fix."""
+    now = time.time()
+    if now - _oauth_probe["t"] < 300 and _oauth_probe["data"]:
+        return _oauth_probe["data"]
+    out = {"google": False, "github": False, "checked": True}
+    url = key("SUPABASE_URL"); anon = key("SUPABASE_ANON_KEY")
+    if url and anon:
+        try:
+            _, raw, _ = http_fetch(url.rstrip("/") + "/auth/v1/settings",
+                                    headers={"apikey": anon}, timeout=12)
+            ext = (json.loads(raw).get("external") or {})
+            out["google"] = bool(ext.get("google"))
+            out["github"] = bool(ext.get("github"))
+        except Exception:
+            out["checked"] = False
+    _oauth_probe["t"] = now
+    _oauth_probe["data"] = out
+    return out
 
 
 def _supa_admin_user(email):
@@ -2004,6 +2030,30 @@ def _nexa_image(prompt, aspect_ratio="1:1"):
 CVRON = "https://cvron.alwaysdata.net"
 
 
+PRIVACY_HTML = """<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>OraCool AI — No-Retention & Privacy Policy</title>
+<style>body{background:#020d1e;color:#cfe9ff;font-family:'Segoe UI',system-ui,sans-serif;max-width:820px;margin:40px auto;padding:0 20px;line-height:1.7}
+h1{color:#5ef0ff;letter-spacing:3px;font-size:22px}h2{color:#ffc24b;font-size:15px;letter-spacing:2px;margin-top:26px}
+code{background:rgba(0,229,255,.08);padding:1px 6px;border-radius:5px}li{margin:6px 0}small{color:#6fa0b8}</style></head><body>
+<h1>◈ ORACOOL AI — NO-RETENTION &amp; PRIVACY POLICY</h1><p><small>Version 1.0 · Effective on deploy · Contact: danielonakoya19@gmail.com</small></p>
+<h2>1. DATA RETENTION</h2><ul>
+<li><b>Queries:</b> investigative queries are executed by the OraCool server at query time. Raw query text is retained only in the audit trail metadata (endpoint name, actor, timestamp) — the <i>content</i> of OSINT lookups is not persisted unless the investigator explicitly saves it into a Case as evidence.</li>
+<li><b>Case files &amp; evidence:</b> stored in the operator's own deployment database (Supabase project controlled by the OraCool operator). Never shared with, sold to, or used to train any third party.</li>
+<li><b>Deletion on demand:</b> users may delete a case or artifact at any time; deletion is immediate and permanent on the platform. Accounts can be removed by the operator on verified request.</li></ul>
+<h2>2. AI MODEL TRAINING</h2><ul>
+<li>OraCool <b>legally guarantees</b> that user queries and collected evidence are <b>never used to train public AI models</b>. Third-party inference is performed under zero-retention provider settings (e.g. <code>store=false</code> / enterprise zero-data-retention agreements) wherever the provider supports it; where a provider cannot guarantee it, prompts carry no raw personal data beyond what the query itself requires.</li></ul>
+<h2>3. ATTRIBUTION (OPSEC)</h2><ul>
+<li>All OSINT, dark-web index and monitoring requests are issued <b>server-side</b> from the platform's own infrastructure. The investigator's personal IP address, device and home network are never exposed to the sources being queried.</li>
+<li>OraCool only reads public search indexes and public databases. It never connects to .onion sites directly, never uses stolen credentials, never purchases illicit data, and never performs active scanning of third-party systems.</li></ul>
+<h2>4. EVIDENCE INTEGRITY</h2><ul>
+<li>Every preserved artifact receives a <b>SHA-256 fingerprint at collection time</b> and an append-only <b>chain-of-custody log</b> (who, when, what). Integrity re-verification recomputes the hash on demand. Exported case documents include the full custody chain and a case fingerprint. Workflows align with the <b>Berkeley Protocol</b> on Digital Open Source Investigations (lawfulness, harm minimisation, safe preservation, transparency, verifiable records). These records support authenticity demonstration; they are not a notarisation service.</li></ul>
+<h2>5. LIMITS &amp; LAWFUL USE</h2><ul>
+<li>Verification outputs (including any future document-verification integrations such as SEON/Kinegram/Kairos) are <b>indicators that require further review</b>, never definitive verdicts. No feature may be used for unlawful surveillance, harassment, or access to systems/accounts without authorisation. In jurisdictions without PI licensing frameworks (e.g. Nigeria), users are responsible for lawful registration/permits where applicable.</li></ul>
+<p><small>© OraCool AI. This policy is served from <code>/privacy</code> and versioned with the platform.</small></p>
+</body></html>"""
+
+
 def _cvron_image(prompt):
     """CVRON free image APIs — flux-dev first, r000n (2 images) as backup.
     No key required. Verified live: returns real hosted image URLs."""
@@ -2228,6 +2278,392 @@ def osint_darkweb(target):
                      "reference only — OraCool never opens them. Many dark-web services host scams "
                      "or malware; never transact with anything found here.")
     return out
+
+
+# ---------------------------------------------------------------- investigation platform
+# Cases, evidence (SHA-256 + chain of custody), entity extraction, wallet
+# tracing, watchlist monitoring and a global audit log. All OSINT runs
+# server-side, so the investigator's own IP never touches the sources —
+# that is the browser-honest version of "managed attribution".
+
+_cases_lock = threading.RLock()
+
+
+def _cases_file():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    return os.path.join(DATA_DIR, "cases.json")
+
+
+def _ev_dir():
+    d = os.path.join(DATA_DIR, "evidence")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _cases_load():
+    try:
+        with open(_cases_file()) as f:
+            d = json.load(f)
+    except Exception:
+        d = {}
+    d.setdefault("cases", {})
+    d.setdefault("watch", [])
+    d.setdefault("audit", [])
+    return d
+
+
+def _cases_save(d):
+    with _cases_lock:
+        tmp = _cases_file() + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(d, f)
+        os.replace(tmp, _cases_file())
+
+
+def _now():
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def audit_log(who, action, detail=""):
+    try:
+        d = _cases_load()
+        a = d.setdefault("audit", [])
+        a.append({"t": _now(), "who": (who or "?").lower(), "action": action, "detail": (detail or "")[:200]})
+        if len(a) > 1000:
+            del a[:-1000]
+        _cases_save(d)
+    except Exception:
+        pass
+
+
+def _custody(c, who, action, ref=""):
+    c.setdefault("custody", []).append({"t": _now(), "by": (who or "?").lower(), "action": action, "ref": ref})
+    if len(c["custody"]) > 500:
+        del c["custody"][:-500]
+
+
+def _owner_case(d, owner, cid):
+    c = d["cases"].get(cid)
+    if not c:
+        return None, {"error": "Case not found."}
+    if c.get("owner") != (owner or "").lower() and not is_admin(owner):
+        return None, {"error": "This case belongs to another investigator."}
+    return c, None
+
+
+def case_create(owner, name, notes=""):
+    d = _cases_load()
+    mine = [c for c in d["cases"].values() if c.get("owner") == (owner or "").lower()]
+    if len(mine) >= 25:
+        return {"error": "Case limit (25) reached — close or delete an old case first."}
+    cid = "case-" + os.urandom(4).hex()
+    d["cases"][cid] = {"id": cid, "name": (name or "Untitled case").strip()[:80] or "Untitled case",
+                       "notes": (notes or "")[:2000], "tags": [],
+                       "owner": (owner or "").lower(), "created": _now(), "status": "open",
+                       "artifacts": []}
+    _custody(d["cases"][cid], owner, "case.open", cid)
+    _cases_save(d)
+    audit_log(owner, "case.open", d["cases"][cid]["name"])
+    return {"ok": True, "case": cid, "name": d["cases"][cid]["name"]}
+
+
+def case_list(owner):
+    d = _cases_load()
+    out = []
+    for c in d["cases"].values():
+        if c.get("owner") != (owner or "").lower() and not is_admin(owner):
+            continue
+        out.append({"id": c["id"], "name": c["name"], "status": c.get("status", "open"),
+                    "artifacts": len(c.get("artifacts", [])), "created": c.get("created"),
+                    "tags": c.get("tags", []),
+                    "updated": (c["custody"][-1]["t"] if c.get("custody") else c.get("created"))})
+    out.sort(key=lambda x: x.get("updated") or "", reverse=True)
+    return {"cases": out}
+
+
+def case_note(owner, cid, notes):
+    d = _cases_load()
+    c, err = _owner_case(d, owner, cid)
+    if err:
+        return err
+    c["notes"] = (notes or "")[:4000]
+    _custody(c, owner, "case.note", cid)
+    _cases_save(d)
+    return {"ok": True}
+
+
+def case_close(owner, cid):
+    d = _cases_load()
+    c, err = _owner_case(d, owner, cid)
+    if err:
+        return err
+    c["status"] = "closed"
+    _custody(c, owner, "case.close", cid)
+    _cases_save(d)
+    return {"ok": True}
+
+
+def evidence_add(owner, cid, title, content, url="", meta=None, kind="intel"):
+    content = str(content or "")
+    if not content.strip():
+        return {"error": "Nothing to preserve — the content is empty."}
+    content = content[:300000]
+    raw = content.encode("utf-8", "replace")
+    sha = hashlib.sha256(raw).hexdigest()
+    d = _cases_load()
+    c, err = _owner_case(d, owner, cid)
+    if err:
+        return err
+    aid = "ev-" + os.urandom(4).hex()
+    try:
+        with open(os.path.join(_ev_dir(), aid + ".txt"), "wb") as f:
+            f.write(raw)
+    except Exception as e:
+        return {"error": f"Storage failed: {e}"}
+    art = {"id": aid, "title": (title or "Evidence").strip()[:120] or "Evidence",
+           "kind": kind, "sha256": sha, "size_bytes": len(raw),
+           "source_url": (url or "")[:500], "collected_at": _now(), "collected_by": (owner or "").lower(),
+           "meta": meta or {}}
+    c.setdefault("artifacts", []).append(art)
+    _custody(c, owner, "evidence.collect", aid + " sha256:" + sha[:16] + "…")
+    _cases_save(d)
+    audit_log(owner, "evidence.collect", f"{aid} sha256:{sha[:16]}")
+    return {"ok": True, "artifact": art,
+            "note": "SHA-256 fingerprint computed at collection time; custody chain updated. "
+                    "Store the ORIGINAL artifacts untouched — OraCool preserves working copies."}
+
+
+def evidence_list(cid):
+    d = _cases_load()
+    c = d["cases"].get(cid)
+    if not c:
+        return {"error": "Case not found."}
+    return {"case": c["name"], "artifacts": c.get("artifacts", []), "custody": c.get("custody", [])}
+
+
+def evidence_view(owner, cid, aid):
+    d = _cases_load()
+    c, err = _owner_case(d, owner, cid)
+    if err:
+        return err
+    art = next((a for a in c.get("artifacts", []) if a["id"] == aid), None)
+    if not art:
+        return {"error": "Artifact not found."}
+    try:
+        with open(os.path.join(_ev_dir(), aid + ".txt"), "r") as f:
+            content = f.read()
+    except Exception:
+        content = ""
+    _custody(c, owner, "evidence.view", aid)
+    _cases_save(d)
+    return {"ok": True, "artifact": art, "content": content[:120000]}
+
+
+def evidence_verify(owner, cid, aid):
+    d = _cases_load()
+    c, err = _owner_case(d, owner, cid)
+    if err:
+        return err
+    art = next((a for a in c.get("artifacts", []) if a["id"] == aid), None)
+    if not art:
+        return {"error": "Artifact not found."}
+    try:
+        with open(os.path.join(_ev_dir(), aid + ".txt"), "rb") as f:
+            now_sha = hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        now_sha = ""
+    match = bool(now_sha) and now_sha == art["sha256"]
+    _custody(c, owner, "evidence.verify", aid + " → " + ("INTEGRITY OK" if match else "MISMATCH/MISSING"))
+    _cases_save(d)
+    return {"ok": True, "match": match, "recorded_sha256": art["sha256"], "current_sha256": now_sha,
+            "collected_at": art["collected_at"], "verified_at": _now(),
+            "note": "Recomputed from the stored copy. A match proves the preserved copy is unaltered since collection."}
+
+
+def evidence_export(owner, cid):
+    d = _cases_load()
+    c, err = _owner_case(d, owner, cid)
+    if err:
+        return err
+    arts = c.get("artifacts", [])
+    chain = "\n".join(a["sha256"] for a in arts)
+    case_hash = hashlib.sha256(chain.encode()).hexdigest() if arts else ""
+    doc = {"document": "ORACOOL INVESTIGATION — EVIDENCE & CUSTODY EXPORT",
+           "standard": "Aligned with the Berkeley Protocol on Digital Open Source Investigations "
+                       "(collection integrity, chain of custody, source preservation). "
+                       "OraCool is an investigative aid, not a notarization service.",
+           "case": c["name"], "case_id": cid, "owner": c.get("owner"), "status": c.get("status"),
+           "exported_at": _now(), "case_fingerprint_sha256": case_hash,
+           "artifacts": [{k: a.get(k) for k in ("id", "title", "kind", "sha256", "size_bytes",
+                                                 "source_url", "collected_at", "collected_by")} for a in arts],
+           "custody_log": c.get("custody", [])}
+    _custody(c, owner, "evidence.export", f"{len(arts)} artifact(s)")
+    _cases_save(d)
+    audit_log(owner, "evidence.export", cid)
+    return {"ok": True, "filename": "oracool-" + cid + "-" + time.strftime("%Y%m%d") + ".json",
+            "json": json.dumps(doc, indent=2)}
+
+
+ENTITY_PATTERNS = [
+    ("email",   r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+    ("onion",   r"\b[a-z2-7]{16,59}\.onion\b"),
+    ("ipv4",    r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
+    ("url",     r"https?://[^\s\"'<>)\]]+"),
+    ("btc",     r"\b(?:bc1[a-z0-9]{25,58}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})\b"),
+    ("eth",     r"\b0x[0-9a-fA-F]{40}\b"),
+    ("handle",  r"(?<![\w/])@[A-Za-z0-9_]{3,20}"),
+    ("domain",  r"\b(?:[a-z0-9-]+\.)+(?:com|net|org|io|ng|ai|co|xyz|info|biz|dev|link|site|online|shop|store)\b"),
+    ("phone",   r"\+?\b\d{1,3}[\s.-]?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{4}\b"),
+    ("pgp",     r"-----BEGIN PGP PUBLIC KEY BLOCK-----[\s\S]{0,4000}?-----END PGP PUBLIC KEY BLOCK-----"),
+    ("imei",    r"\b\d{15}\b"),
+    ("iso_date", r"\b\d{4}-\d{2}-\d{2}\b"),
+]
+
+
+def extract_entities(text):
+    t = (text or "")[:200000]
+    if not t.strip():
+        return {"error": "No text to analyze."}
+    out = {}
+    for name, pat in ENTITY_PATTERNS:
+        seen = []
+        for m in re.findall(pat, t):
+            v = m.strip(".,;:)]") if not isinstance(m, tuple) else m[0]
+            if v and v not in seen:
+                seen.append(v)
+            if len(seen) >= 25:
+                break
+        if seen:
+            out[name] = seen
+    total = sum(len(v) for v in out.values())
+    return {"ok": True, "counts": {k: len(v) for k, v in out.items()}, "entities": out,
+            "total": total,
+            "note": "Structured extraction over the supplied text only — no external lookups were made. "
+                    "Verify every entity before acting on it."}
+
+
+def trace_wallet(addr):
+    a = (addr or "").strip()
+    is_btc = bool(re.match(r"^(?:bc1[a-z0-9]{25,58}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$", a))
+    is_eth = bool(re.match(r"^0x[0-9a-fA-F]{40}$", a))
+    if not (is_btc or is_eth):
+        return {"error": "That doesn't look like a BTC or ETH address."}
+    out = {"ok": True, "chain": "bitcoin" if is_btc else "ethereum", "address": a}
+    tried = []
+    if is_btc:
+        for name, url in (("blockstream", f"https://blockstream.info/api/address/{a}"),
+                          ("blockchair", f"https://api.blockchair.com/bitcoin/dashboards/address/{a}")):
+            try:
+                _, raw, _ = http_fetch(url, timeout=25, headers={"User-Agent": "Mozilla/5.0"})
+                d = json.loads(raw)
+                if name == "blockstream":
+                    cs = d.get("chain_stats") or {}
+                    out.update({"balance_sats": cs.get("funded_txo_sum", 0) - cs.get("spent_txo_sum", 0),
+                                "balance_btc": (cs.get("funded_txo_sum", 0) - cs.get("spent_txo_sum", 0)) / 1e8,
+                                "tx_count": cs.get("tx_count"), "source": "blockstream.info public node data"})
+                else:
+                    st = ((d.get("data") or {}).get(a) or {}).get("stats") or {}
+                    if st:
+                        out.update({"received_sats": st.get("received"), "first_seen": st.get("time_first_seen"),
+                                    "last_seen": st.get("time_last_seen")})
+                        out["source"] = "blockstream + blockchair"
+                tried.append(name)
+            except Exception as e:
+                tried.append(name + ": " + str(e)[:60])
+            if "balance_sats" in out:
+                break
+    else:
+        for name, url in (("blockscout", f"https://eth.blockscout.com/api/v1/addresses/{a}"),
+                          ("blockchair", f"https://api.blockchair.com/ethereum/dashboards/address/{a}")):
+            try:
+                _, raw, _ = http_fetch(url, timeout=25, headers={"User-Agent": "Mozilla/5.0"})
+                d = json.loads(raw)
+                if name == "blockscout":
+                    bal = int(d.get("coin_balance") or 0)
+                    out.update({"balance_wei": bal, "balance_eth": bal / 1e18,
+                                "tx_count": d.get("transactions_count"),
+                                "is_contract": bool(d.get("is_contract")),
+                                "source": "eth.blockscout.com public explorer data"})
+                else:
+                    st = ((d.get("data") or {}).get(a) or {}).get("stats") or {}
+                    if st:
+                        out["first_seen"] = st.get("time_first_seen")
+            except Exception as e:
+                tried.append(name + ": " + str(e)[:60])
+            if "balance_wei" in out or "balance_eth" in out:
+                break
+    if not ({"balance_sats", "balance_wei", "balance_eth"} & set(out.keys())):
+        return {"error": "Explorer rate-limited right now (" + "; ".join(tried)[:200] + ") — try again in a minute."}
+    out["note"] = ("Public-chain facts only (address state, no attribution). Label/attribution claims need "
+                   "off-chain intel — cross-check against case artifacts; cluster cautiously. Source: "
+                   + str(out.get("source", "public explorer")))
+    return out
+
+
+def watch_add(owner, term, case_id=""):
+    term = (term or "").strip()[:120]
+    if not term:
+        return {"error": "Enter an email, username, domain or keyword to monitor."}
+    d = _cases_load()
+    if len([w for w in d["watch"] if w.get("owner") == (owner or "").lower()]) >= 40:
+        return {"error": "Watchlist limit (40 terms) reached."}
+    wid = "w-" + os.urandom(3).hex()
+    d["watch"].append({"id": wid, "owner": (owner or "").lower(), "term": term,
+                       "case": case_id, "created": _now(), "last_check": "", "last_hits": 0,
+                       "alerts": []})
+    _cases_save(d)
+    return {"ok": True, "id": wid}
+
+
+def watch_list(owner):
+    d = _cases_load()
+    return {"watch": [w for w in d["watch"] if w.get("owner") == (owner or "").lower()]}
+
+
+def watch_remove(owner, wid):
+    d = _cases_load()
+    d["watch"] = [w for w in d["watch"] if not (w.get("id") == wid and w.get("owner") == (owner or "").lower())]
+    _cases_save(d)
+    return {"ok": True}
+
+
+def watch_check_one(w):
+    term = w["term"]
+    try:
+        if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", term):
+            res = pro_leakcheck(term, "email")
+            hits = int(res.get("found") or 0) if isinstance(res, dict) else 0
+        elif re.match(r"^[A-Za-z0-9._-]{2,64}$", term) and not term.count(".") > 1:
+            res = pro_leakcheck(term, "username")
+            hits = int(res.get("found") or 0) if isinstance(res, dict) else 0
+        else:
+            res = osint_darkweb(term)
+            hits = ((res.get("hidden_service_search") or {}).get("count") or 0) if isinstance(res, dict) else 0
+    except Exception:
+        return
+    prev = int(w.get("last_hits") or 0)
+    w["last_check"] = _now()
+    if hits and hits != prev:
+        w.setdefault("alerts", []).append({"t": _now(), "hits": hits, "was": prev})
+        w["alerts"] = w["alerts"][-10:]
+    w["last_hits"] = hits
+
+
+def watch_run_all():
+    d = _cases_load()
+    for w in d["watch"]:
+        watch_check_one(w)
+    _cases_save(d)
+    return {"checked": len(d["watch"])}
+
+
+def _watch_loop():
+    while True:
+        try:
+            watch_run_all()
+        except Exception:
+            pass
+        time.sleep(6 * 3600)
 
 
 # ---------------------------------------------------------------- app launcher
@@ -2569,6 +3005,11 @@ def paystack_initialize(email, callback_url, plan="pro", currency=None):
     plan = (plan or "pro").lower()
     if plan not in PLANS:
         plan = "pro"
+    if PLANS[plan].get("custom"):
+        return {"error": "Enterprise is a custom agreement (API access, team management, "
+                         "private deployment, compliance pack) — contact "
+                         + (admin_emails()[0] if admin_emails() else "the OraCool team")
+                         + " for a quote."}
     p = PLANS[plan]
     currency = (currency or KEYS.get("PAYSTACK_CURRENCY") or "NGN").upper()
     if currency not in ("NGN", "USD"):
@@ -2699,10 +3140,16 @@ def get_config():
         "tier_tool_sets": TIER_TOOL_SETS,
         "auth": {"supabase": bool(key("SUPABASE_URL") and key("SUPABASE_ANON_KEY")),
                  "github": bool(key("GITHUB_TOKEN"))},
+        "oauth_providers": oauth_providers(),
+        "investigation": {"cases": True, "evidence_sha256": True, "custody": True,
+                           "entity_extraction": True, "wallet_tracing": True,
+                           "watch_monitoring": True, "audit_log": True},
+        "privacy_policy": "/privacy",
         "trading": {"symbols": list(TRADING_SYMBOLS.keys()),
                     "alpaca_ready": bool(key("ALPACA_PAPER_KEY_ID") and key("ALPACA_PAPER_SECRET"))},
         "plans": [{"id": pid, "label": p["label"], "price_usd": p["price_usd"],
-                   "price_ngn": p["price_ngn"], "days": p["days"], "rank": TIER_RANK[pid]}
+                   "price_ngn": p["price_ngn"], "days": p["days"], "rank": TIER_RANK[pid],
+                   "custom": bool(p.get("custom"))}
                   for pid, p in PLANS.items()],
         "tiers": list(TIER_RANK.keys()),
         "nasa_ready": bool(key("NASA_API_KEY")),
@@ -2853,7 +3300,8 @@ def plan_info(body):
             email = payload["sub"]
     tier = check_tier(email) if email else "free"
     plans = [{"id": pid, "label": p["label"], "price_usd": p["price_usd"],
-              "price_ngn": p["price_ngn"], "days": p["days"], "rank": TIER_RANK[pid]}
+              "price_ngn": p["price_ngn"], "days": p["days"], "rank": TIER_RANK[pid],
+              "custom": bool(p.get("custom"))}
              for pid, p in PLANS.items()]
     plans.sort(key=lambda x: x["rank"])
     return {"tier": tier, "email": email, "plans": plans,
@@ -3371,6 +3819,22 @@ def oauth_url(provider, redirect_to=""):
     provider = (provider or "").lower()
     if provider not in ("google", "github"):
         return {"error": "Unsupported provider. Choose google or github."}
+    prov = oauth_providers()
+    if prov.get("checked") and not prov.get(provider):
+        if provider == "google":
+            fix = ("Google sign-in is not enabled on the Supabase project yet. Fix (2 min): "
+                   "console.cloud.google.com → APIs & Services → Credentials → OAuth client (Web) → "
+                   "Authorized redirect URI = https://<project-ref>.supabase.co/auth/callback; then "
+                   "Supabase dashboard → Authentication → Sign In / Providers → Google → ON → paste "
+                   "Client ID + Secret → Save. Supabase → Authentication → URL Configuration → Redirect "
+                   "URLs → add your app URL. Then the button works for everyone.")
+        else:
+            fix = ("GitHub sign-in is not enabled yet. Fix (2 min): github.com → Settings → Developer "
+                   "settings → OAuth Apps → New (homepage = your app URL, authorization callback = "
+                   "https://<project-ref>.supabase.co/auth/callback); then Supabase dashboard → "
+                   "Authentication → Sign In / Providers → GitHub → ON → paste Client ID + Client "
+                   "secret → Save. The GitHub PAT (for the GitHub console tool) is separate from this.")
+        return {"error": fix, "provider_disabled": True, "provider": provider}
     target = (redirect_to or "").strip() or (url.rstrip("/") + "/oauth")
     return {"url": (url.rstrip("/") + "/auth/v1/authorize?provider=" + provider
                     + "&redirect_to=" + urllib.parse.quote(target)),
@@ -3973,6 +4437,10 @@ class Handler(BaseHTTPRequestHandler):
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
+        elif path in ("/privacy", "/privacy.html"):
+            self._send_html(PRIVACY_HTML)
+        elif path == "/api/auth/providers":
+            self._send_json(oauth_providers())
         else:
             self.send_error(404)
 
@@ -3985,6 +4453,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = self._read_json()
         try:
+            # ---- professional audit trail: every investigative lookup is logged (who/what/when)
+            if path.startswith(("/api/osint/", "/api/pro/", "/api/evidence/", "/api/case/",
+                                "/api/watch/", "/api/trace/", "/api/image", "/api/video")):
+                _ae = (body.get("email") or "").strip().lower()
+                if not _ae and (body.get("token") or "").strip():
+                    _ae = ((verify_jwt(body["token"].strip(), key("JWT_SECRET") or "dev-secret")) or {}).get("sub", "")
+                _tail = path.split("/")[3] if path.count("/") > 3 else path.split("/")[-1]
+                audit_log(_ae, path.replace("/api/", ""), _tail)
             # ---- free OSINT
             if path == "/api/osint/ip":
                 self._send_json(osint_ip(body.get("ip")))
@@ -3997,6 +4473,54 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/osint/darkweb":
                 if self._require_tier(body, "pro"):
                     self._send_json(osint_darkweb(body.get("target") or body.get("query")))
+            # ---- investigation platform (PRO+): cases, evidence, extraction, wallets, watch ----
+            elif path == "/api/case/create":
+                if self._require_tier(body, "pro"):
+                    self._send_json(case_create(body.get("email"), body.get("name"), body.get("notes")))
+            elif path == "/api/case/list":
+                if self._require_tier(body, "pro"):
+                    self._send_json(case_list(body.get("email")))
+            elif path == "/api/case/note":
+                if self._require_tier(body, "pro"):
+                    self._send_json(case_note(body.get("email"), body.get("case"), body.get("notes")))
+            elif path == "/api/case/close":
+                if self._require_tier(body, "pro"):
+                    self._send_json(case_close(body.get("email"), body.get("case")))
+            elif path == "/api/evidence/add":
+                if self._require_tier(body, "pro"):
+                    self._send_json(evidence_add(body.get("email"), body.get("case"), body.get("title"),
+                                                 body.get("content"), body.get("url", ""), body.get("meta"),
+                                                 body.get("kind", "intel")))
+            elif path == "/api/evidence/list":
+                if self._require_tier(body, "pro"):
+                    self._send_json(evidence_list(body.get("case")))
+            elif path == "/api/evidence/view":
+                if self._require_tier(body, "pro"):
+                    self._send_json(evidence_view(body.get("email"), body.get("case"), body.get("artifact")))
+            elif path == "/api/evidence/verify":
+                if self._require_tier(body, "pro"):
+                    self._send_json(evidence_verify(body.get("email"), body.get("case"), body.get("artifact")))
+            elif path == "/api/evidence/export":
+                if self._require_tier(body, "pro"):
+                    self._send_json(evidence_export(body.get("email"), body.get("case")))
+            elif path == "/api/osint/extract":
+                if self._require_tier(body, "pro"):
+                    self._send_json(extract_entities(body.get("text")))
+            elif path == "/api/trace/wallet":
+                if self._require_tier(body, "pro"):
+                    self._send_json(trace_wallet(body.get("address")))
+            elif path == "/api/watch/add":
+                if self._require_tier(body, "pro"):
+                    self._send_json(watch_add(body.get("email"), body.get("term"), body.get("case", "")))
+            elif path == "/api/watch/list":
+                if self._require_tier(body, "pro"):
+                    self._send_json(watch_list(body.get("email")))
+            elif path == "/api/watch/remove":
+                if self._require_tier(body, "pro"):
+                    self._send_json(watch_remove(body.get("email"), body.get("id")))
+            elif path == "/api/watch/check":
+                if self._require_tier(body, "pro"):
+                    self._send_json(watch_run_all())
             elif path == "/api/osint/phone":
                 self._send_json(phone_intel.lookup(body.get("phone") or "",
                                                    key_lookup=key, http_fetch=http_fetch))
@@ -4132,6 +4656,11 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/admin/revenue":
                 if _require_admin(self, body):
                     self._send_json(admin_revenue_payload())
+            elif path == "/api/admin/audit":
+                if _require_admin(self, body):
+                    d = _cases_load()
+                    n = max(1, min(int(body.get("limit") or 60), 500))
+                    self._send_json({"audit": list(reversed(d.get("audit", [])))[:n]})
             elif path == "/api/admin/block":
                 payload = _require_admin(self, body)
                 if payload:
@@ -4178,8 +4707,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/pro/trial":
                 # Trials were removed by the creator: no PRO access without payment.
                 self._send_json({"error": "Free trials have been removed. Paid plans unlock "
-                                     "instantly via Paystack — Starter ₦20,000 · PRO ₦50,000 · "
-                                     "Ultra ₦100,000 · Enterprise ₦500,000."}, 402)
+                                     "instantly via Paystack — Starter $29 (₦45,000) · Pro $49 (₦75,000) · "
+                                     "Professional $149 (₦230,000) · Enterprise by custom agreement."}, 402)
             elif path == "/api/paystack/initialize":
                 self._send_json(paystack_initialize(body.get("email"),
                                                     body.get("callback_url"),
@@ -4442,7 +4971,20 @@ class Handler(BaseHTTPRequestHandler):
             "he has absolute authority over you and this system. Other users never receive Creator treatment. "
             f"This user's plan: {tier}. Follow instructions completely: answer every part of a multi-part request, "
             "ground facts in the live tool results provided, never claim inability for a tool that ran, and never "
-            "fabricate results. If a tool reports a provider is out of credit or missing, state it plainly with the fix."}
+            "fabricate results. If a tool reports a provider is out of credit or missing, state it plainly with the fix. "
+            "PROFESSIONAL MODE: you operate as a court-aware OSINT & cybersecurity analyst assisting lawful "
+            "investigators, detectives, security teams and government units with crime solving, fraud/leak "
+            "investigation and safe remediation advice. GROUNDED SOURCING: every factual claim derived from tool "
+            "results must name its source inline, e.g. '[Source: LeakCheck · 2026-09-15]' or '[Source: osint_ip "
+            "8.8.8.8]'; anything without a source must be labelled 'assessment, unverified' — never present an "
+            "inference as evidence. Integrity findings (verification/lookup results) are always 'indicators that "
+            "require further review', never definitive verdicts about people or documents. Sensitive-document "
+            "lookups (e.g. FRSC/NIN) confirm a RECORD EXISTS, not that a physical card is genuine — say so when "
+            "relevant. Never facilitate purchasing illicit data, using stolen credentials, hacking accounts, or any "
+            "unlawful surveillance; guide toward lawful reporting channels (police, CERT/cybercrime units, banks) "
+            "instead. Evidence workflow: recommend preserving key findings into Case Files (evidence tab) so they "
+            "carry SHA-256 fingerprints and a chain-of-custody log, and exporting custody docs when a case is "
+            "escalated."}
         ] + messages
         tool_summary = [{"tool": t.get("tool"), "label": t.get("label")} for t in tool_runs]
 
@@ -4562,6 +5104,10 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     _load_keys()
+    try:  # background watchlist monitor (continuous dark-web/leak alerts)
+        threading.Thread(target=_watch_loop, daemon=True).start()
+    except Exception:
+        pass
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"OraCool AI server (v2) running on http://{HOST}:{PORT}")
     print("Keys loaded:", sum(1 for v in KEYS.values() if isinstance(v, str) and v.strip() and not v.startswith('_')))

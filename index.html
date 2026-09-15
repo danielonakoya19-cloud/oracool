@@ -463,6 +463,7 @@
       <div class="tabs">
         <div class="tab active" data-p="status">Status</div>
         <div class="tab" data-p="intel">Intel</div>
+      <div class="tab" data-p="cases" id="casesTab" title="Cases & evidence — PRO">🗂 Cases</div>
         <div class="tab" data-p="markets">Markets</div>
         <div class="tab" data-p="trading">Trading</div>
         <div class="tab" data-p="space">Space</div>
@@ -477,6 +478,7 @@
       </div>
       <div class="panelbody active" id="p-status"></div>
       <div class="panelbody" id="p-intel"></div>
+      <div class="panelbody" id="p-cases"></div>
       <div class="panelbody" id="p-markets"></div>
       <div class="panelbody" id="p-trading"></div>
       <div class="panelbody" id="p-space"></div>
@@ -513,8 +515,9 @@
     <div class="row" style="margin-top:14px">
       <button class="btn gold" style="flex:1; justify-content:center" id="payBtn">💳 Pay with Paystack — unlocks instantly</button>
     </div>
-    <div class="hint">No free trials — full access unlocks only after payment (Starter ₦20,000 · PRO ₦50,000 · Ultra ₦100,000 · Enterprise ₦500,000).</div>
+    <div class="hint">No free trials — access unlocks only after payment: <b>Starter $29</b> (₦45,000) · <b>Pro $49</b> (₦75,000) · <b>Professional $149</b> (₦230,000) · <b>Enterprise</b> custom agreement (contact sales).</div>
     <div class="hint" id="payNote">Live charge — Paystack will process your payment securely.</div>
+    <div class="hint" id="entContact" style="display:none">Enterprise is a custom agreement (API access for agencies, team seats &amp; roles, private/on-prem deployment, compliance pack). Email <b>danielonakoya19@gmail.com</b> for a quote — answer within 24h.</div>
   </div>
 </div>
 
@@ -535,6 +538,49 @@ function loadSettings(){ try{ if(storageOK){ const s = localStorage.getItem('ora
 function saveSettings(){ try{ if(storageOK) localStorage.setItem('oracool', JSON.stringify(settings)); }catch(e){} }
 function applyProactive(){ proactiveOn = settings.proactive!==false; }
 
+/* ---------- session auto-lock (idle security) ---------- */
+let lastActAt = Date.now();
+['pointerdown','keydown','wheel','touchstart'].forEach(ev=>{ try{ window.addEventListener(ev, ()=>{ lastActAt=Date.now(); }, {passive:true}); }catch(e){} });
+function showLockScreen(){
+  if(document.getElementById('lockScreen')) return;
+  const d=document.createElement('div'); d.id='lockScreen';
+  d.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(2,10,20,.97);backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:center;padding:18px';
+  d.innerHTML=`<div style="max-width:340px;width:100%;text-align:center">
+    <div class="gatebrand">ORA-COOL AI</div>
+    <div class="gatesub">Session locked</div>
+    <div class="muted" style="font-size:12px;margin-top:8px">Auto-locked after ${settings.lockMins||30} min of inactivity to protect your cases and evidence. Re-enter your password — or use Face ID.</div>
+    <input type="password" id="lkPass" placeholder="Account password" autocomplete="current-password" style="margin-top:14px">
+    <button class="btn primary" style="width:100%;justify-content:center;margin-top:10px" id="lkGo">Unlock session</button>
+    <button class="btn ghost" style="width:100%;justify-content:center;margin-top:6px" id="lkFace">🫆 Unlock with Face ID</button>
+    <div class="result" id="lkOut" style="margin-top:8px"></div></div>`;
+  document.body.appendChild(d);
+  $('#lkPass').focus();
+  $('#lkGo').onclick=async()=>{
+    const out=$('#lkOut'); out.innerHTML=SPIN;
+    const em=myEmail(); const pw=$('#lkPass').value;
+    if(!em||!pw){ out.innerHTML='<div class="errbox">Password required.</div>'; return; }
+    const r=await post('/api/auth/login',{email:em,password:pw});
+    if(r.status===200){ out.innerHTML=''; unlockNow(); }
+    else out.innerHTML='<div class="errbox">'+escapeHtml(r.error||'Wrong password.')+'</div>';
+  };
+  $('#lkFace').onclick=async()=>{
+    const out=$('#lkOut');
+    try{
+      const ch=await post('/api/auth/passkey/challenge');
+      const cred=await navigator.credentials.get({publicKey:{challenge:b64uToBuf(ch.challenge), rpId:location.hostname, userVerification:'required', timeout:60000}});
+      const r=await post('/api/auth/passkey/login',{credentialId: cred.id});
+      if(r.status===200 && r.email===(myEmail()||'').toLowerCase()){ unlockNow(); }
+      else out.innerHTML='<div class="errbox">'+escapeHtml(r.error||'Face not recognized for this account.')+'</div>';
+    }catch(e){ out.innerHTML='<div class="hint">Face unlock cancelled or unsupported here.</div>'; }
+  };
+  $('#lkPass').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#lkGo').click(); });
+  function unlockNow(){ const x=document.getElementById('lockScreen'); if(x)x.remove(); lastActAt=Date.now(); addSystemNote('🔓 Session unlocked — welcome back.'); }
+}
+setInterval(()=>{ try{
+  if(session && settings.lockMins>0 && !document.getElementById('lockScreen') && !document.getElementById('authGate')?.classList.contains('open')){
+    if(Date.now()-lastActAt > settings.lockMins*60000) showLockScreen();
+  } }catch(e){} }, 15000);
+
 /* ---------- biometric + OAuth helpers ---------- */
 function bufToB64u(buf){ let s=''; new Uint8Array(buf).forEach(b=>s+=String.fromCharCode(b)); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
 function b64uToBuf(str){ str=str.replace(/-/g,'+').replace(/_/g,'/'); while(str.length%4)str+='='; const bin=atob(str); const u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i); return u; }
@@ -547,9 +593,16 @@ function completeGate(r, user, at, rt){
   finishAuth();
 }
 async function oauthGo(provider, out){
+  const provs=(srv&&srv.oauth_providers)||null;
+  if(provs && provs.checked && !provs[provider]){
+    out.innerHTML=`<div class="warnbox"><b>${provider==='google'?'Google':'GitHub'} sign-in isn't enabled on this workspace yet.</b><br>
+      Admin fix (2 min): Supabase dashboard → <b>Authentication → Sign In / Providers → ${provider==='google'?'Google':'GitHub'}</b> → enable + paste the provider's Client ID/Secret, and add your app URL under <b>URL Configuration → Redirect URLs</b>. The instant it's saved, this button works for everyone.<br>
+      <span class="muted" style="font-size:11px">Full click-path in the deploy guide (REDEPLOY-RENDER.md → OAuth section).</span></div>`;
+    return;
+  }
   out.innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span></div>';
   const r=await post('/api/auth/oauth/url',{provider, redirect_to: location.origin+'/oauth'});
-  if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+  if(r.error){ out.innerHTML='<div class="warnbox" style="text-align:left;font-size:11.5px">'+escapeHtml(r.error)+'</div>'; return; }
   window.location.href=r.url;
 }
 async function faceLogin(out){
@@ -843,9 +896,31 @@ function systemPrompt(){
     `TOOL-FIRST RULE: live tools (weather, markets, OSINT, dark-web intel, image/video creation, smart-home, space) run automatically with each message and their results are pasted into your context. Base every factual answer on those results when present, and act on them — do not claim you cannot check something a tool already checked. If a tool result says a provider is out of credit or not configured, say so plainly and name the fix. `+
     `IMAGE/VIDEO: when the tool results include an images[] or videos[] URL, print the URL alone on its own line so it renders. `+
     `DEVICE POWERS: you can open apps & platforms on the user's device (say the word "open youtube" and the interface fires a native intent — installed app first, website fallback); a Files/Drive agent saves any document you write into a folder the user linked (their Google Drive folder syncs it to the cloud); a Nearby Devices radar scans Bluetooth-LE for device names. If asked for something the browser sandbox forbids (read Wi-Fi password, install APKs, control another PC), say exactly what is and isn't possible and offer the closest legal path. When you write a document/report, end with: "Say 'save this to my drive' and I'll file it." `+
+    `PROFESSIONAL MODE: act as a court-aware OSINT & cybersecurity analyst — you assist lawful investigators, detectives, security teams and government units with crime analysis, fraud/leak investigation, and remediation of online and physical security problems. GROUNDED SOURCING: every factual claim must name its source inline (e.g. [Source: LeakCheck] or [Source: osint_ip]) when tool results support it; anything without a source is labelled 'assessment, unverified'. Verification/lookup outputs are indicators requiring further review — never definitive verdicts about people or documents (a record existing in a registry ≠ a genuine physical card). Steer users to preserve key findings in the Cases tab (SHA-256 + chain of custody) and to lawful reporting (police, cybercrime units, banks) when a case warrants escalation. You never help with purchases of illicit data, stolen credentials, hacking accounts, or unlawful surveillance. `+
     `LANGUAGE RULE (very important): always reply in the same language the user writes in. English in, English out — never switch unless the user does first. `+
     `Keep replies concise and conversational as if spoken aloud, unless the user asks for detail — then go deep and complete. When the user shares tool results, analyze them like a calm intelligence analyst. Never claim to have run a tool whose output you have not seen. Stay helpful, lawful, and ethical. Never break character.`;
 }
+/* ---------- last-chat persistence (per user) ---------- */
+function chatKey(){ return 'oracool_chat_'+((myEmail&&myEmail())||'anon'); }
+function saveChat(){ try{ if(storageOK && history.length) localStorage.setItem(chatKey(), JSON.stringify(history.slice(-60))); }catch(e){} }
+function restoreChat(){
+  try{
+    if(!storageOK) return 0;
+    const s=localStorage.getItem(chatKey()); if(!s) return 0;
+    const arr=JSON.parse(s); if(!Array.isArray(arr)||!arr.length) return 0;
+    chat.innerHTML=''; history.length=0;
+    arr.forEach(m=>{
+      if(m.role==='user'){ const b=document.createElement('div'); b.className='bubble user'; b.textContent=m.content; chat.appendChild(b); history.push({role:'user',content:m.content}); }
+      else if(m.role==='assistant'){ const b=document.createElement('div'); b.className='bubble ai'; b.innerHTML='<span class="who">ORA-COOL</span>'; const bd=document.createElement('div'); renderRich(bd, m.content); b.appendChild(bd); chat.appendChild(b); history.push({role:'assistant',content:m.content}); }
+      else { addSystemNote('⟲ '+m.content); }
+    });
+    const note=document.createElement('div'); note.className='tagline'; note.textContent='⟲ Previous conversation restored'; chat.prepend(note);
+    scrollChat(); return arr.length;
+  }catch(e){ return 0; }
+}
+setInterval(()=>{ if(history.length) saveChat(); }, 4000);
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden) saveChat(); });
+
 function addUser(text, histText){
   const b=document.createElement('div'); b.className='bubble user'; b.textContent=text;
   chat.appendChild(b); scrollChat();
@@ -1191,7 +1266,7 @@ const chips=[
   ['Who are you?',()=>send('Who are you? Introduce yourself briefly.')],
   ['Tell me a joke',()=>send('Tell me a short, classy joke.')],
   ['Weather in Lagos',()=>runWeather('Lagos',true)],
-  ['Clear chat',()=>{ chat.innerHTML=''; history.length=0; addAI('Conversation cleared, sir. Ready when you are.'); }]
+  ['Clear chat',()=>{ chat.innerHTML=''; history.length=0; try{localStorage.removeItem(chatKey());}catch(e){} addAI('Conversation cleared, sir. Ready when you are.'); }]
 ];
 chips.forEach(([label,fn])=>{ const c=document.createElement('span'); c.className='chip'; c.textContent=label; c.onclick=fn; $('#chips').appendChild(c); });
 
@@ -1213,6 +1288,7 @@ document.querySelectorAll('.tab').forEach(t=>{
     document.querySelectorAll('.panelbody').forEach(x=>x.classList.remove('active'));
     t.classList.add('active'); $('#p-'+t.dataset.p).classList.add('active');
     if(t.dataset.p==='status')renderStatus();
+    if(t.dataset.p==='cases')renderCases();
     if(t.dataset.p==='devices')renderDevices();
     if(t.dataset.p==='code')renderCode();
     if(t.dataset.p==='account')renderAccount();
@@ -1236,7 +1312,9 @@ function renderStatus(){
     ['Voice module (TTS)', settings.ttsOn?'ok':'warn', settings.ttsOn?'on':'off'],
     ['Intelligence suite', tierGte('starter')?'ok':'warn', planLabel()+' plan'],
     ['Dark-web intelligence', tierGte('pro')?'ok':'warn', tierGte('pro')?'leak DBs + Ahmia index':'PRO unlocks'],
-    ['Image creation', 'ok', tierGte('pro')?'PRO engine active':'free engine · PRO unlocks'],
+    ['Image creation', 'ok', 'NexaAPI/HiAPI → free HD fallback'],
+    ['Evidence vault', tierGte('pro')?'ok':'warn', tierGte('pro')?'SHA-256 + custody log':'Pro unlocks'],
+    ['Audit trail', 'ok', 'all lookups logged (who/what/when)'],
     ['Video creation', srv&&srv.video_ready?'ok':'warn', srv&&srv.video_ready?'HiAPI online':'needs HiAPI credit'],
     ['OSINT toolkit','ok','IP · Domain · Username · Email'],
     ['Markets feed','ok','Stocks · Crypto · FRED'],
@@ -1251,7 +1329,7 @@ function renderStatus(){
     </div>
     ${rows.map(r=>`<div class="sysline"><span class="dot ${r[1]}"></span><span class="k">${r[0]}</span><span class="v">${r[2]}</span></div>`).join('')}
     ${tierGte('pro') ? `<div class="okbox">◈ ${planLabel()} plan active — everything up to ${planLabel()} is unlocked.</div>`
-      : `<div class="warnbox">Plan: <b>${planLabel()}</b>. <a href="#" id="upLink">Upgrade</a> — Starter ₦20k unlocks web search · PRO ₦50k adds Shodan, VirusTotal, AbuseIPDB, URLScan, LeakCheck, dark-web intel &amp; image creation · Ultra ₦100k adds video &amp; GitHub.</div>`}
+      : `<div class="warnbox">Plan: <b>${planLabel()}</b>. <a href="#" id="upLink">Upgrade</a> — Starter $29/mo unlocks web search · Pro $49/mo adds deep OSINT, dark-web &amp; leak monitoring, SHA-256 evidence vault with chain of custody, entity extraction, wallet tracing &amp; AI images · Professional $149/mo adds video, continuous monitoring alerts, audit exports &amp; GitHub.</div>`}
     <div class="note">Keys are stored server-side (keys.json) and never exposed to the browser — except public keys.</div>`;
   const up=$('#upLink'); if(up)up.onclick=e=>{e.preventDefault(); openUpgrade();};
   const bc=$('#bigclock'),bd=$('#bigdate');
@@ -1521,7 +1599,15 @@ function renderIntelResult(tool,val,r){
     if(r.sources&&r.sources.length) html+=`<div class="tagline">Sources: ${escapeHtml(r.sources.join(' · '))}</div>`;
     if(r.safety) html+=`<div class="warnbox" style="margin-top:8px">${escapeHtml(r.safety)}</div>`;
   }
-  html+=`<div class="row" style="margin-top:12px"><button class="btn ghost small" id="oanalyze">🤖 Ask OraCool to analyze</button></div>`;
+  html+=`<div class="row" style="margin-top:12px"><button class="btn ghost small" id="oanalyze">🤖 Ask OraCool to analyze</button><button class="btn ghost small" id="opreserve" style="color:var(--gold);border-color:var(--gold)">🔒 Preserve as evidence</button></div>`;
+  const pb2=$('#opreserve'); if(pb2)pb2.onclick=async()=>{
+    if(!tierGte('pro')){ openUpgrade('pro'); return; }
+    let cid=curCase||''; 
+    if(!cid){ const c=await post('/api/case/create', authBody({name:'Field captures'})); if(c.case){ cid=c.case; curCase=cid; try{localStorage.setItem('oracool_case',cid);}catch(e){} } else { openUpgrade('pro'); return; } }
+    const r2=await post('/api/evidence/add', authBody({case:cid, title:tool+' · '+val, content:JSON.stringify(r,null,2), url:'oracool://intel/'+tool, kind:'intel', meta:{entities:quickExtract(JSON.stringify(r))}}));
+    if(r2.ok){ pb2.textContent='✓ Preserved — SHA-256 sealed'; addSystemNote('🔒 Evidence sealed: <b>'+escapeHtml(tool+' · '+val)+'</b> — fingerprint <span style="color:var(--cyan2)">'+r2.artifact.sha256.slice(0,20)+'…</span>. Find it in the 🗂 Cases tab with its custody log.'); }
+    else addErr(r2.error||'Could not preserve');
+  };
   $('#intelout').innerHTML=html;
   const btn=$('#oanalyze'); if(btn)btn.onclick=()=>{
     const prompt=`Here are the raw results of my ${tool} lookup for "${val}":\n\n${JSON.stringify(r,null,2)}\n\nAnalyze and summarize these findings as a calm, precise intelligence analyst: what does this tell us, anything notable, and suggested next steps (staying legal and ethical). Keep it concise.`;
@@ -1993,6 +2079,7 @@ async function renderAdmin(){
     </div>
     <div class="statcards" id="aStats" style="margin-top:10px"></div>
     <div class="result" id="aRev" style="margin-top:8px"></div>
+    <div class="result" id="aAudit" style="margin-top:8px"></div>
     <div id="aUsers"><div style="text-align:center;padding:16px"><span class="spinner"></span></div></div>
     <div class="result" id="aOut"></div>`;
   $('#aRefresh').onclick=refreshAdmin;
@@ -2027,6 +2114,13 @@ async function refreshAdmin(){
         ${(rv.recent&&rv.recent.length)?rv.recent.slice(0,12).map(p=>`<div class="logline"><span class="ts">${escapeHtml(String(p.paid_at||'').slice(0,16))}</span> ${escapeHtml(p.email||'')} · <b style="color:var(--gold)">${escapeHtml((p.plan||'pro').toUpperCase())}</b> · ₦${(p.amount_ngn||0).toLocaleString()} <span class="muted">via ${escapeHtml(p.channel||'paystack')}</span></div>`).join(''):''}
         <div class="muted" style="font-size:10px; margin-top:4px">${rv.payments||0} payment(s) · by plan: ${Object.entries(rv.by_plan||{}).map(([k,v])=>k+' × '+v).join(', ')||'none yet'}${rv.usd_estimated?' · *USD estimated at ₦1,550/$':''}. ${escapeHtml(rv.note||'')}</div>`;
     } else revEl.innerHTML='<div class="muted">Revenue feed unavailable.</div>';
+  }
+  const au=await post('/api/admin/audit',{token:tok, limit:40}).catch(()=>({}));
+  const auEl=$('#aAudit');
+  if(auEl){
+    const ent=(au.audit||[]);
+    auEl.innerHTML=`<div class="ptitle" style="font-size:13px; margin-bottom:6px">🧾 Platform audit trail — every investigative action (last ${ent.length})</div>
+      <div style="max-height:180px;overflow:auto">${ent.map(a=>`<div class="logline"><span class="ts">${escapeHtml(a.t)}</span> <b>${escapeHtml(a.who||'?')}</b> → ${escapeHtml(a.action)}${a.detail?' <span class="muted">'+escapeHtml(a.detail)+'</span>':''}</div>`).join('')||'<div class="muted">No entries yet — each OSINT/evidence/media action lands here automatically.</div>'}</div>`;
   }
   adminCache=r.users||[];
   renderAdminRows(adminCache);
@@ -2327,6 +2421,14 @@ function renderSettings(){
     <input type="text" id="sModel" value="${escapeHtml(settings.model)}" placeholder="(server default)">
     <label class="lbl">HaveIBeenPwned API key <span class="muted">(optional)</span></label>
     <input type="password" id="sHibp" value="${escapeHtml(settings.hibpKey)}" placeholder="optional">
+    <label class="lbl">Session auto-lock (idle)</label>
+    <select id="sLock">
+      <option value="0" ${Number(settings.lockMins)===0?'selected':''}>Off</option>
+      <option value="10" ${Number(settings.lockMins)===10?'selected':''}>After 10 minutes</option>
+      <option value="30" ${Number(settings.lockMins||30)===30?'selected':''}>After 30 minutes</option>
+      <option value="60" ${Number(settings.lockMins)===60?'selected':''}>After 1 hour</option>
+    </select>
+    <div class="hint" style="margin-top:4px">Locks the whole app (cases &amp; evidence included) when idle — unlock with your password or Face ID. Recommended for shared or work devices.</div>
     <label class="lbl">Pocket Option SSID <span class="muted">(demo trading — yours only)</span></label>
     <input type="text" id="sPoSSID" value="${escapeHtml(settings.poSSID||'')}" placeholder="paste SSID from your logged-in session">
     <div class="hint">Get it: pocketoption.com → F12 → Application → Session Storage → copy the "ssid" value. Demo mode only.</div>
@@ -2362,6 +2464,7 @@ function renderSettings(){
     settings.baseUrl=$('#sBase').value.trim();
     settings.model=$('#sModel').value.trim();
     settings.hibpKey=$('#sHibp').value.trim();
+    settings.lockMins=Number($('#sLock').value||30);
     settings.poSSID=$('#sPoSSID').value.trim();
     settings.voiceName=$('#sVoice').value;
     saveSettings(); renderSettings(); renderStatus();
@@ -2372,10 +2475,10 @@ function renderSettings(){
 /* ---------- upgrade / paystack ---------- */
 let pendingPlan='pro';
 const PLAN_BENEFITS={
-  starter:['Unlimited chat messages','Extended memory (100 msgs)','Unlimited FREE OSINT (IP · domain · email · username · phone)','Live web search (Tavily)','NASA Picture of the Day + EPIC + asteroids'],
-  pro:['Everything in Starter','Deep OSINT suite — Shodan, VirusTotal, AbuseIPDB, URLScan, LeakCheck','Dark-web intel — breach databases + Ahmia .onion index','AI image creation (premium engines)','Mars rovers + NASA library','Trading signals + paper desk + Pocket Option demo'],
-  ultra:['Everything in PRO','AI video generation (HiAPI)','GitHub console','Unlimited image creation','Full trading automation'],
-  enterprise:['Everything in Ultra','Custom AI models on your data','White-label + custom branding','SSO · audit logs · unlimited seats · 24/7 SLA']
+  starter:['Unlimited chat with live free tools','Extended memory · wake word','Live web search (Tavily)','NASA APOD / EPIC / NEO','Smart-home voice control'],
+  pro:['Everything in Starter','Deep OSINT — Shodan · VirusTotal · AbuseIPDB · URLScan · LeakCheck','Dark-web &amp; leak monitoring (breach DBs + hidden-service indexes)','🗂 Case Files: SHA-256 evidence vault + chain-of-custody log','Entity extraction (wallets · PGP · emails · IPs · handles) + BTC/ETH tracing','AI image creation · Mars rovers + NASA library · trading desk'],
+  ultra:['Everything in Pro','📡 Continuous monitoring alerts + audit-log exports','AI video generation (HiAPI premium + free engine)','GitHub console · full trading automation'],
+  enterprise:['Everything in Professional','API access for agencies &amp; security teams','Custom AI models on your data · white-label branding','Team seats, SSO/roles, private or on-prem deployment','Dedicated support &amp; SLA — custom agreement']
 };
 function openUpgrade(plan){
   plan=plan||'pro'; pendingPlan=plan;
@@ -2388,8 +2491,12 @@ function openUpgrade(plan){
     }).join('');
     pick.querySelectorAll('.planchip').forEach(b=>{ b.onclick=()=>openUpgrade(b.dataset.plan); });
   }
-  const p=(srv&&srv.plans||[]).find(x=>x.id===pendingPlan)||{label:'PRO',price_usd:50,price_ngn:50000,days:30};
-  $('#proPrice').innerHTML='$'+p.price_usd+'<span class="muted" style="font-size:15px">/month</span>';
+  const p=(srv&&srv.plans||[]).find(x=>x.id===pendingPlan)||{label:'Pro',price_usd:49,price_ngn:75000,days:30};
+  const custom = p.price_usd===0;
+  $('#proPrice').innerHTML = custom ? 'Custom<span class="muted" style="font-size:15px"> quote</span>'
+    : '$'+p.price_usd+'<span class="muted" style="font-size:15px">/month</span>';
+  const pb=$('#payBtn'); if(pb){ pb.style.display=custom?'none':''; }
+  const ct=$('#entContact'); if(ct) ct.style.display=custom?'':'none';
   $('#proLabel').textContent=p.label+' plan';
   $('#proNgn').textContent='≈ ₦'+p.price_ngn.toLocaleString()+' · '+p.days+' days access'+(srv&&srv.paystack_test?' · TEST MODE':'');
   $('#benefitList').innerHTML=(PLAN_BENEFITS[pendingPlan]||[]).map(b=>`<li>${escapeHtml(b)}</li>`).join('');
@@ -2506,6 +2613,171 @@ function renderCreate(){
     if(r.error||r.locked){ spFail(out(),r); return; }
     out().innerHTML=`<div class="ptitle">🎬 Generated video</div><div class="muted">${escapeHtml(r.model||'')}</div>${media(r.videos||[],'video')}`;
   };
+}
+
+/* ---------- Case Files — evidence vault, custody, link analysis (PRO+) ---------- */
+let curCase = ''; try{ curCase = (storageOK && localStorage.getItem('oracool_case')) || ''; }catch(e){}
+function authBody(extra){ const b=Object.assign({email:myEmail()||''}, extra||{}); if(proToken) b.token=proToken; return b; }
+function quickExtract(t){
+  const out={}; const add=(k,v)=>{ (out[k]=out[k]||[]); if(!out[k].includes(v)&&out[k].length<12) out[k].push(v); };
+  const P={email:/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, ipv4:/\b(?:\d{1,3}\.){3}\d{1,3}\b/g,
+    onion:/\b[a-z2-7]{16,59}\.onion\b/g, btc:/\b(?:bc1[a-z0-9]{25,58}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})\b/g,
+    eth:/\b0x[0-9a-fA-F]{40}\b/g, handle:/(?<![\w\/])@[A-Za-z0-9_]{3,20}/g, url:/https?:\/\/[^\s"')<>]+/g};
+  for(const [k,rx] of Object.entries(P)){ let m; const rx2=new RegExp(rx.source,'g'); while((m=rx2.exec(t))){ add(k, m[0]); } }
+  return out;
+}
+async function renderCases(){
+  const box=$('#p-cases');
+  if(!tierGte('pro')){
+    box.innerHTML=`<h3 class="ptitle">🗂 Case Files — Evidence &amp; Custody</h3>
+      <div class="warnbox">The professional investigation workbench unlocks on the <b>Pro plan</b> ($49/mo · ₦75,000):<br>
+      • <b>SHA-256 evidence vault</b> — every capture fingerprinted at collection time<br>
+      • <b>Chain-of-custody log</b> — who/when/what, append-only, exportable for escalation<br>
+      • <b>Entity extraction, wallet tracing, link graph &amp; timeline</b><br>
+      • <b>Continuous dark-web/leak monitoring</b> with alerts + platform audit trail</div>
+      <button class="btn gold" id="casesUp" style="margin-top:10px">⚡ Unlock Pro — evidence vault</button>`;
+    $('#casesUp').onclick=()=>openUpgrade('pro'); return;
+  }
+  const lr=await post('/api/case/list', authBody());
+  if(lr.locked){ box.innerHTML=`<div class="warnbox">${escapeHtml(lr.message||'Pro plan required.')}</div>`; return; }
+  const cases=lr.cases||[];
+  if(!curCase && cases.length){ curCase=cases[0].id; try{localStorage.setItem('oracool_case',curCase);}catch(e){} }
+  box.innerHTML=`
+    <h3 class="ptitle">🗂 Case Files</h3>
+    <div class="muted" style="font-size:11px">Audit-ready OSINT workbench — aligned with the <b>Berkeley Protocol</b> (lawful, passive, preserved, documented). OraCool aids investigations; it is not a notarisation or verdict service. All lookups run server-side so your own IP never touches sources.</div>
+    <div class="row" style="margin-top:10px">
+      <select id="csSel" style="flex:1;background:rgba(4,14,22,.6);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px">
+        ${cases.map(c=>`<option value="${c.id}" ${c.id===curCase?'selected':''}>${escapeHtml(c.name)} (${c.artifacts} ev · ${c.status})</option>`).join('')||'<option value="">No cases yet</option>'}
+      </select>
+      <button class="btn primary" id="csNew">➕ New case</button>
+    </div>
+    <div id="csBody" style="margin-top:10px">${cases.length?SPIN:'<div class="muted">Create a case to start collecting evidence.</div>'}</div>
+    <h3 class="ptitle" style="margin-top:18px">📡 Watchlist — continuous monitoring</h3>
+    <div id="csWatch"></div>`;
+  $('#csSel').onchange=()=>{ curCase=$('#csSel').value; try{localStorage.setItem('oracool_case',curCase);}catch(e){} renderCaseBody(); };
+  $('#csNew').onclick=async()=>{
+    const name=prompt('Case name (e.g. "Missing funds — Atlas Ltd")'); if(!name) return;
+    const r=await post('/api/case/create', authBody({name}));
+    if(r.case){ curCase=r.case; try{localStorage.setItem('oracool_case',r.case);}catch(e){} renderCases(); addSystemNote('🗂 Case <b>'+escapeHtml(name)+'</b> opened — evidence added here carries SHA-256 + custody timestamps.'); }
+    else addErr(r.error||'Could not create case');
+  };
+  if(cases.length) renderCaseBody();
+  renderWatch();
+}
+async function renderCaseBody(){
+  const body=$('#csBody'); if(!body||!curCase) return;
+  body.innerHTML=SPIN;
+  const lr=await post('/api/evidence/list', authBody({case:curCase}));
+  if(lr.error){ body.innerHTML='<div class="errbox">'+escapeHtml(lr.error)+'</div>'; return; }
+  const arts=lr.artifacts||[], cust=lr.custody||[];
+  body.innerHTML=`
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <button class="btn small primary" id="evAdd">➕ Preserve capture / paste evidence</button>
+      <button class="btn small ghost" id="evExtract">🧬 Extract entities</button>
+      <button class="btn small ghost" id="evGraph">🕸 Link graph</button>
+      <button class="btn small ghost" id="evTime">🕒 Timeline</button>
+      <button class="btn small gold" id="evExport">📜 Export custody doc</button>
+    </div>
+    <div id="evList" style="margin-top:10px">${arts.length? arts.slice().reverse().map(a=>`
+      <div class="foundcard" style="margin-bottom:8px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <b style="flex:1;min-width:140px">${escapeHtml(a.title)}</b>
+          <span class="tag">${escapeHtml(a.kind)}</span>
+          <span class="muted" style="font-size:10px">${escapeHtml(a.collected_at)} · ${escapeHtml(a.collected_by||'')}</span>
+        </div>
+        <div class="muted" style="font-size:10px;margin-top:4px;word-break:break-all">SHA-256 <span style="color:var(--cyan2)">${a.sha256}</span> · ${(a.size_bytes/1024).toFixed(1)} KB${a.source_url?' · <a href="'+escapeHtml(a.source_url)+'" target="_blank" rel="noopener">source ↗</a>':''}</div>
+        <div class="row" style="gap:6px;margin-top:6px">
+          <button class="btn small ghost" data-ev="verify" data-id="${a.id}">✓ Verify integrity</button>
+          <button class="btn small ghost" data-ev="view" data-id="${a.id}">👁 View</button>
+          <button class="btn small ghost" data-ev="hash" data-id="${a.id}">⧉ Copy hash</button>
+        </div><div class="evout" id="evout-${a.id}"></div>
+      </div>`).join('') : '<div class="muted">No artifacts yet — run any Intel lookup and tap <b>🔒 Preserve as evidence</b>, or paste above.</div>'}</div>
+    <details style="margin-top:8px"><summary class="muted" style="font-size:11px;cursor:pointer">Chain of custody (${cust.length} entries, append-only)</summary>
+      <div style="max-height:180px;overflow:auto;margin-top:6px">${cust.slice().reverse().map(c=>`<div class="logline"><span class="ts">${escapeHtml(c.t)}</span> <b>${escapeHtml(c.by)}</b> → ${escapeHtml(c.action)} ${escapeHtml(c.ref||'')}</div>`).join('')}</div></details>
+    <div id="evPanel"></div>`;
+  body.querySelectorAll('[data-ev]').forEach(b=>b.onclick=async()=>{
+    const out=$('#evout-'+b.dataset.id);
+    if(b.dataset.ev==='hash'){ const a=arts.find(x=>x.id===b.dataset.id); try{navigator.clipboard.writeText(a.sha256);}catch(e){} b.textContent='✓ Copied'; return; }
+    if(b.dataset.ev==='verify'){ out.innerHTML=SPIN;
+      const r=await post('/api/evidence/verify', authBody({case:curCase, artifact:b.dataset.id}));
+      out.innerHTML = r.match ? '<div class="okbox" style="margin-top:6px">✓ INTEGRITY OK — recomputed hash matches the fingerprint recorded at collection ('+escapeHtml(String(r.verified_at||''))+'). The preserved copy is unaltered.</div>'
+        : '<div class="errbox" style="margin-top:6px">'+escapeHtml(r.error||'INTEGRITY MISMATCH — the stored copy does not match the recorded fingerprint. Quarantine and re-collect.')+'</div>'; return; }
+    if(b.dataset.ev==='view'){ out.innerHTML=SPIN;
+      const r=await post('/api/evidence/view', authBody({case:curCase, artifact:b.dataset.id}));
+      out.innerHTML='<pre style="max-height:260px;overflow:auto;background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;margin-top:6px;white-space:pre-wrap">'+escapeHtml(String((r&&r.content)||r.error||''))+'</pre>'; }
+  });
+  $('#evAdd').onclick=()=>{ $('#evPanel').innerHTML=`
+    <div class="lbl" style="margin-top:10px">Title</div><input type="text" id="eaTitle" placeholder="e.g. Breach dump screenshot caption / forum post text">
+    <div class="lbl" style="margin-top:6px">Source URL (optional)</div><input type="text" id="eaUrl" placeholder="https://…">
+    <div class="lbl" style="margin-top:6px">Evidence text / capture content</div>
+    <textarea id="eaText" rows="5" style="width:100%;background:rgba(4,14,22,.6);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px" placeholder="Paste the HTML, caption, log, or full text you want preserved…"></textarea>
+    <div class="row" style="margin-top:8px"><button class="btn primary" id="eaGo">🔒 Preserve with SHA-256</button></div>`;
+    $('#eaGo').onclick=async()=>{
+      const content=$('#eaText').value; if(!content.trim()){ addErr('Nothing to preserve.'); return; }
+      const r=await post('/api/evidence/add', authBody({case:curCase, title:$('#eaTitle').value, content, url:$('#eaUrl').value, kind:'paste', meta:{entities:quickExtract(content)}}));
+      if(r.ok){ addSystemNote('🔒 Preserved <b>'+escapeHtml(r.artifact.title)+'</b> — SHA-256 <span style="color:var(--cyan2)">'+r.artifact.sha256.slice(0,24)+'…</span>'); renderCaseBody(); }
+      else addErr(r.error||'Failed'); };
+  };
+  $('#evExtract').onclick=async()=>{
+    const txt=prompt('Extract entities from all case artifacts — press OK to run on the case, or paste custom text:');
+    if(txt===null) return;
+    let target=txt;
+    if(!txt.trim()){ target=(arts.map(a=>'## '+a.title+'\n'+String(a.sha256)+' ')).join('\n'); }
+    const r=await post('/api/osint/extract', authBody({text: target || JSON.stringify(arts)}));
+    const el=$('#evPanel');
+    if(r.error){ el.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+    el.innerHTML='<div class="ptitle" style="font-size:13px;margin-top:10px">🧬 Structured entities ('+r.total+')</div>'+
+      Object.entries(r.entities).map(([k,list])=>`<div style="margin-top:6px"><span class="tag">${k}</span> ${list.map(v=>`<code style="font-size:10px">${escapeHtml(String(v).slice(0,60))}</code>`).join(' ')}</div>`).join('')+
+      '<div class="hint" style="margin-top:6px">'+escapeHtml(r.note)+'</div>';
+  };
+  $('#evGraph').onclick=()=>renderLinkGraph(arts, $('#evPanel'));
+  $('#evTime').onclick=()=>{
+    const el=$('#evPanel');
+    el.innerHTML='<div class="ptitle" style="font-size:13px;margin-top:10px">🕒 Collection timeline</div>'+
+      arts.map(a=>`<div class="logline"><span class="ts">${escapeHtml(a.collected_at)}</span> <b>${escapeHtml(a.title)}</b> <span class="muted">· ${escapeHtml(a.kind)} · ${escapeHtml((a.sha256||'').slice(0,12))}…</span></div>`).join('')||'<div class="muted">No artifacts yet.</div>';
+  };
+  $('#evExport').onclick=async()=>{
+    const r=await post('/api/evidence/export', authBody({case:curCase}));
+    if(!r.ok){ addErr(r.error||'Export failed'); return; }
+    const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([r.json],{type:'application/json'})); a.download=r.filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    addSystemNote('📜 Custody export downloaded — contains every artifact hash, the case fingerprint and the full custody log for hand-off to counsel or law-enforcement channels.');
+  };
+}
+function renderLinkGraph(arts, el){
+  const byEntity={};
+  arts.forEach(a=>{ const ents=(a.meta&&a.meta.entities)||{};
+    Object.entries(ents).forEach(([k,list])=>list.slice(0,8).forEach(v=>{ const id=k+':'+v; (byEntity[id]=byEntity[id]||{k,v,arts:[]}).arts.push(a.id); })); });
+  const shared=Object.values(byEntity).filter(e=>e.arts.length>1);
+  const nodes=arts.map((a,i)=>({type:'a',id:a.id,label:a.title.slice(0,26),ang:(i/Math.max(1,arts.length))*2*Math.PI}))
+    .concat(Object.entries(byEntity).slice(0,22).map(([id,e],j)=>({type:'e',id,label:e.k+':'+String(e.v).slice(0,18),ang:(j/22)*2*Math.PI,kind:e.k,arts:e.arts})));
+  const W=520,H=380,cx=W/2,cy=H/2;
+  const pos=n=>{ const r=n.type==='a'?95:168; return [cx+Math.cos(n.ang)*r, cy+Math.sin(n.ang)*r]; };
+  let svg=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;background:rgba(2,10,18,.6);border:1px solid var(--line);border-radius:10px">`;
+  svg+=`<circle cx="${cx}" cy="${cy}" r="34" fill="none" stroke="var(--gold)" stroke-width="1.2"/><text x="${cx}" y="${cy+4}" fill="var(--gold)" font-size="10" text-anchor="middle">CASE</text>`;
+  nodes.forEach(n=>{ const [x,y]=pos(n);
+    svg+=`<circle cx="${x}" cy="${y}" r="${n.type==='a'?7:4.5}" fill="${n.type==='a'?'var(--cyan2)':(n.kind==='btc'||n.kind==='eth'?'var(--gold)':'#7fe3ff')}" opacity=".9"><title>${escapeHtml(n.label)}</title></circle>`;
+    svg+=`<text x="${x}" y="${y-9}" fill="#9fd8ef" font-size="7.5" text-anchor="middle">${escapeHtml(n.label.slice(0,22))}</text>`;
+    if(n.type==='e'){ n.arts.forEach(aid=>{ const m=nodes.find(k=>k.type==='a'&&k.id===aid); if(m){ const [ax,ay]=pos(m);
+      const hot = (byEntity[n.kind+':'+n.label.split(':').slice(1).join(':')]||{}).arts.length>1;
+      svg+=`<line x1="${x}" y1="${y}" x2="${ax}" y2="${ay}" stroke="${hot?'var(--gold)':'rgba(0,229,255,.28)'}" stroke-width="${hot?1.6:0.7}"/>`; } }); }
+    else { svg+=`<line x1="${x}" y1="${y}" x2="${cx}" y2="${cy}" stroke="rgba(255,194,75,.35)" stroke-width="0.8"/>`; }
+  });
+  svg+='</svg>';
+  el.innerHTML='<div class="ptitle" style="font-size:13px;margin-top:10px">🕸 Link graph — '+arts.length+' artifact(s) · '+Object.keys(byEntity).length+' entity node(s)</div>'+svg+
+    '<div class="hint">'+(shared.length? 'Gold edges = entities <b>shared between artifacts</b> (links worth investigating): '+shared.map(s=>'<b>'+escapeHtml(String(s.v).slice(0,26))+'</b> ('+s.arts.length+' artifacts)').join(' · ') : 'No cross-artifact links yet — preserve more evidence mentioning the same emails/wallets/handles to reveal connections.')+' · Yellow nodes = crypto wallets.</div>';
+}
+async function renderWatch(){
+  const w=$('#csWatch'); if(!w) return;
+  const r=await post('/api/watch/list', authBody());
+  const list=r.watch||[];
+  w.innerHTML=`<div class="row"><input type="text" id="wTerm" placeholder="email / username / keyword to monitor" style="flex:1"><button class="btn primary" id="wAdd">➕ Watch</button><button class="btn ghost" id="wRun">⚡ Check now</button></div>
+    ${list.length? list.map(x=>`<div class="foundcard" style="margin-top:6px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b style="flex:1;min-width:120px">${escapeHtml(x.term)}</b><span class="muted" style="font-size:10px">last check ${escapeHtml(x.last_check||'never')} · hits ${x.last_hits||0}</span>${(x.alerts&&x.alerts.length)?`<span class="tag" style="color:var(--gold);border-color:var(--gold)">⚠ ${x.alerts.length}</span>`:''}<button class="btn small ghost" data-w="${x.id}">✕</button></div>
+      ${(x.alerts||[]).slice(-3).map(al=>`<div class="logline" style="font-size:10px"><span class="ts">${escapeHtml(al.t)}</span> hits ${al.hits} (was ${al.was}) — <b>new exposure detected</b></div>`).join('')}</div>`).join('')
+    : '<div class="muted" style="font-size:11px;margin-top:6px">Monitoring runs every 6h automatically: leak-count changes and new dark-web index hits raise alerts here and in the AI.</div>'}`;
+  $('#wAdd').onclick=async()=>{ const t=$('#wTerm').value.trim(); if(!t)return; const rr=await post('/api/watch/add', authBody({term:t, case:curCase||''})); if(rr.ok){ renderWatch(); addSystemNote('📡 Monitoring <b>'+escapeHtml(t)+'</b> — new leak/dark-web hits will raise alerts here.'); } else addErr(rr.error||'failed'); };
+  $('#wRun').onclick=async()=>{ $('#csWatch').innerHTML='<span class="spinner"></span> Running checks…'; const rr=await post('/api/watch/check', authBody()); setTimeout(renderWatch, 400); };
+  w.querySelectorAll('[data-w]').forEach(b=>b.onclick=async()=>{ await post('/api/watch/remove', authBody({id:b.dataset.w})); renderWatch(); });
 }
 
 /* ---------- cores (1,000-core intelligence map) ---------- */
@@ -2666,7 +2938,7 @@ function renderGate(){
       <button class="btn ghost" style="flex:1; justify-content:center" id="gGithub">GitHub</button>
     </div>
     <button class="btn ghost" style="width:100%; justify-content:center; margin-top:8px" id="gFace">🫆 Face / Fingerprint login</button>
-    <div class="hint" style="margin-top:8px">OAuth needs the provider enabled in Supabase (Authentication → Providers). Face login uses your device's secure Face ID / fingerprint.</div>
+    <div class="hint" style="margin-top:8px">Face login uses your device's secure Face ID / fingerprint. OAuth buttons activate the moment the provider is enabled in Supabase — the app auto-detects it. By continuing you accept the <a href="/privacy" target="_blank" rel="noopener" style="color:var(--cyan2)">no-retention privacy policy</a>.</div>
     <div class="result" id="gOut" style="margin-top:10px"></div>`;
   $('#gateReactor').innerHTML = orbCore(56);
   $('#gtSignup').onclick = ()=>{ gateMode='signup'; renderGate(); };
@@ -2709,7 +2981,8 @@ function finishAuth(){
   hideGate();
   updateTier(); updateAdminUI(); renderStatus(); renderAccount(); renderAcctChip();
   setOrbStatus('online');
-  greeting();
+  const restored=restoreChat();
+  if(!restored) greeting(); else setTimeout(()=>greeting(), 1200);
   setTimeout(()=>{ const i=$('#input'); if(i) i.focus(); }, 350);
   /* proactive speech now only fires after 30 minutes of inactivity */
 }

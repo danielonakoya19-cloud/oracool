@@ -60,11 +60,46 @@ Everything is already built and pushed to GitHub — you only click and paste.
 
 ---
 
-## STEP 4 — Verify everything
+## STEP 3.7 — Google / GitHub sign-in (the two-minute enable)
+
+The "Unsupported provider" error means the providers are simply **OFF** in Supabase —
+the app now auto-detects this and says so instead of breaking. Enable them:
+
+**Google**
+1. console.cloud.google.com → **APIs & Services** → enable *Google Identity API* →
+   **Credentials** → **Create Credentials → OAuth client ID → Web application**
+2. Authorized redirect URI: `https://eyiawcqkdtoyvlssbfmg.supabase.co/auth/callback`
+3. Copy **Client ID** + **Client secret**
+4. Supabase dashboard → **Authentication → Sign In / Providers → Google → Enable** →
+   paste both → Save
+5. Supabase → **Authentication → URL Configuration → Redirect URLs** → add your app URL
+   (`https://<your-render-url>/**`)
+
+**GitHub**
+1. github.com → Settings → **Developer settings → OAuth Apps → New OAuth App**
+   - Homepage URL = your app URL · Authorization callback URL =
+     `https://eyiawcqkdtoyvlssbfmg.supabase.co/auth/callback`
+2. Generate a **Client secret**, copy both
+3. Supabase → Authentication → Sign In / Providers → **GitHub → Enable** → paste → Save
+
+(OraCool checks `/auth/v1/settings` every 5 min — the buttons light up automatically.)
+
+## STEP 4 — Verify everything (includes the email-CODE check)
+
+**Confirm the verification CODE really arrives:**
+1. Sign up with a throwaway Gmail (not an admin email).
+2. The email from Supabase must contain the numeric code. If it only shows a link,
+   add this line inside the **Confirm signup** template body
+   (Supabase → Authentication → Email Templates → Confirm signup → edit HTML):
+   `Your OraCool activation code is: <b style="font-size:24px">{{ .Token }}</b>`
+3. In the app's verify panel, enter the code → account activates instantly
+   (endpoint `/api/auth/code/verify`). The link-paste box remains as backup.
+4. Admin accounts (`ADMIN_EMAILS`) skip verification by design — never lock yourselves out.
 
 1. Open **`https://oracool-ai.onrender.com/api/health`** → should say `online`
 2. Open **`https://oracool-ai.onrender.com/api/config`** → `"keys"` should be all `true`;
-   `image_ready`, `video_ready`, `nasa_ready` = `true`
+   `image_ready`, `video_ready`, `nasa_ready`, `oauth_providers` all reported
+3. Open **`/privacy`** → the no-retention policy page must render (link is in the signup gate)
 3. Open the app → **Sign up** with `danielonakoya19@gmail.com` + your own password
    → badge shows **ENTERPRISE**, Admin tab appears with the user base
 4. In chat type: **"create an image of a golden eagle at sunrise"**
@@ -83,6 +118,10 @@ All good? Done. 🎉
 | who owns example.com | domain WHOIS/DNS |
 | is this IP on Shodan 8.8.8.8 | Shodan (PRO+) |
 | check username @someone | username OSINT across ~50 platforms |
+| open instagram / open settings | app launcher — intent on Android, scheme on iOS, web fallback |
+| trace wallet bc1q… | BTC/ETH on-chain state (blockstream/blockscout/blockchair) |
+| extract entities from this text | emails · IPs · wallets · PGP · handles · .onion |
+| save this to my drive | Files/Drive agent — writes into the linked Drive folder |
 | trace +234 803 123 4567 | phone intel |
 | search the web for… | Tavily search (STARTER+) |
 | virusTotal google.com | VirusTotal (PRO+) |
