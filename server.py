@@ -2666,6 +2666,51 @@ def _watch_loop():
         time.sleep(6 * 3600)
 
 
+DOC_PROVIDERS = {"seon": "SEON_API_KEY", "kinegram": "KINEGRAM_KEY", "kairos": "KAIROS_KEY"}
+
+
+def doc_verification_state():
+    configured = [n for n, k in DOC_PROVIDERS.items() if key(k)]
+    return {"configured": bool(configured), "providers": configured}
+
+
+def verify_document(dtype, data):
+    """Document-verification FRAMEWORK — OraCool is the intelligence hub, never the
+    forensics engine (a 200-country/MRZ reference database is a multi-year, multi-
+    million-dollar build; integrate SEON / Kinegram / Kairos instead). Real checks
+    run through a contracted provider's API; results are ALWAYS framed as
+    'indicators requiring further review', never as verdicts."""
+    dtype = (dtype or "id").strip().lower()[:40]
+    data = (data or "").strip()[:200]
+    out = {"document": dtype,
+           "lawful_use": "Passive checks against registries/APIs you are licensed to use only; "
+                         "never use stolen credentials or unofficial databases.",
+           "disclaimer": "RESULTS ARE INDICATORS THAT REQUIRE FURTHER REVIEW — never a definitive "
+                         "verdict on a person or document. A registry record (FRSC/NIN) proves a "
+                         "RECORD EXISTS, not that the physical card is genuine: a real record can "
+                         "sit behind a counterfeit card. False positives carry legal consequences — "
+                         "escalate through official channels (NERECON for NIN, FRSC for driving "
+                         "licences, NIS for passports).",
+           "provider": None, "result": "not_configured"}
+    if data:
+        out["subject_ref"] = data
+    cfg = doc_verification_state()
+    if cfg["configured"]:
+        out["provider"] = cfg["providers"][0]
+        out["result"] = "provider_key_present"
+        out["note"] = ("Provider key configured (" + out["provider"] + "). Finish the provider's "
+                       "documented endpoint mapping for your contract, and results flow through "
+                       "this response shape — each check can then be preserved into a Case with a "
+                       "SHA-256 fingerprint automatically.")
+    else:
+        out["note"] = ("No verification provider configured. To activate real checks, contract with "
+                       "SEON, Kinegram or Kairos and set its key (SEON_API_KEY / KINEGRAM_KEY / "
+                       "KAIROS_KEY) in keys.json or the Render environment. Until then OraCool "
+                       "reports framework status only and never fabricates an authenticity verdict — "
+                       "that is the legally responsible behaviour.")
+    return out
+
+
 # ---------------------------------------------------------------- app launcher
 # A browser cannot install software, but on Android it can fire an intent:// that
 # opens the INSTALLED app (or the Play Store if it isn't), on iOS a URL scheme,
@@ -3145,6 +3190,7 @@ def get_config():
                            "entity_extraction": True, "wallet_tracing": True,
                            "watch_monitoring": True, "audit_log": True},
         "privacy_policy": "/privacy",
+        "document_verification": doc_verification_state(),
         "trading": {"symbols": list(TRADING_SYMBOLS.keys()),
                     "alpaca_ready": bool(key("ALPACA_PAPER_KEY_ID") and key("ALPACA_PAPER_SECRET"))},
         "plans": [{"id": pid, "label": p["label"], "price_usd": p["price_usd"],
@@ -3549,6 +3595,14 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
             target = dm.group(1) if dm else (ipm.group(1) if ipm else t.split()[-1].strip(".,!? "))
             out.append({"tool": "urlscan", "label": "urlscan " + target,
                         "result": _shrink(pro_urlscan(target), 1500)})
+        # document-verification framework (provider-gated; never a verdict)
+        if re.search(r"verif\w*\s+(?:this\s+|that\s+|the\s+|my\s+)?(?:passport|driver'?s?\s+licen[cs]e|licence|nin\b|id\s*card)", low) \
+           or "check passport authenticity" in low or "is this card genuine" in low:
+            dt = ("passport" if "passport" in low else "nin" if "nin" in low
+                  else "driver Licence" if ("driver" in low or "licence" in low or "license" in low)
+                  else "id card")
+            out.append({"tool": "docverify", "label": "document verification · " + dt,
+                        "result": _shrink(verify_document(dt, ""), 1400)})
         # dark-web intelligence (leak databases + Ahmia .onion index, read-only)
         if any(k in low for k in ("dark web", "dark-web", "darkweb", "onion", "tor site",
                                   "paste site", "criminal forum")):
@@ -4509,6 +4563,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/trace/wallet":
                 if self._require_tier(body, "pro"):
                     self._send_json(trace_wallet(body.get("address")))
+            elif path == "/api/doc/verify":
+                if self._require_tier(body, "pro"):
+                    self._send_json(verify_document(body.get("type"), body.get("value")))
             elif path == "/api/watch/add":
                 if self._require_tier(body, "pro"):
                     self._send_json(watch_add(body.get("email"), body.get("term"), body.get("case", "")))

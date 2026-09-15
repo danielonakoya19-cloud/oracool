@@ -2653,7 +2653,9 @@ async function renderCases(){
     </div>
     <div id="csBody" style="margin-top:10px">${cases.length?SPIN:'<div class="muted">Create a case to start collecting evidence.</div>'}</div>
     <h3 class="ptitle" style="margin-top:18px">📡 Watchlist — continuous monitoring</h3>
-    <div id="csWatch"></div>`;
+    <div id="csWatch"></div>
+    <h3 class="ptitle" style="margin-top:18px">🪪 Document verification <span id="dvState" style="font-size:10px;font-weight:400"></span></h3>
+    <div id="csDoc"></div>`;
   $('#csSel').onchange=()=>{ curCase=$('#csSel').value; try{localStorage.setItem('oracool_case',curCase);}catch(e){} renderCaseBody(); };
   $('#csNew').onclick=async()=>{
     const name=prompt('Case name (e.g. "Missing funds — Atlas Ltd")'); if(!name) return;
@@ -2663,6 +2665,30 @@ async function renderCases(){
   };
   if(cases.length) renderCaseBody();
   renderWatch();
+  renderDocVerify();
+}
+function renderDocVerify(){
+  const el=$('#csDoc'); if(!el) return;
+  const dv=(srv&&srv.document_verification)||{configured:false,providers:[]};
+  const st=$('#dvState'); if(st) st.innerHTML = dv.configured? '· <span style="color:var(--ok)">'+escapeHtml(dv.providers.join(','))+' connected</span>' : '· <span style="color:var(--warn)">framework ready — no provider contracted</span>';
+  el.innerHTML=`
+    <div class="muted" style="font-size:11px">OraCool is the intelligence hub, not the forensics engine: genuine passport/licence/NIN checks run through a contracted provider (SEON · Kinegram · Kairos). Results are always <b>indicators requiring further review</b> — a registry record proves the record exists, never that the physical card is genuine. Consult counsel before using outputs in any proceeding.</div>
+    <div class="row" style="margin-top:8px">
+      <select id="dvType" style="background:rgba(4,14,22,.6);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px"><option value="passport">Passport</option><option value="drivers-licence">Driver's licence</option><option value="nin">NIN slip</option><option value="frsc-card">FRSC card</option><option value="id-card">Other ID</option></select>
+      <input type="text" id="dvVal" placeholder="document ref / hash of scan (never full personal numbers in chat)" style="flex:1">
+      <button class="btn primary" id="dvGo">Run framework check</button>
+    </div>
+    <div id="dvOut" style="margin-top:8px"></div>`;
+  $('#dvGo').onclick=async()=>{
+    const out=$('#dvOut'); out.innerHTML=SPIN;
+    const r=await post('/api/doc/verify', authBody({type:$('#dvType').value, value:$('#dvVal').value}));
+    if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+    out.innerHTML=`<div class="foundcard">
+      <div><b>${escapeHtml(r.document)}</b> · status: <span class="tag" style="color:${r.result==='provider_key_present'?'var(--ok)':'var(--warn)'}">${escapeHtml(r.result)}</span> ${r.provider?'· '+escapeHtml(r.provider):''}</div>
+      <div class="muted" style="margin-top:6px">${escapeHtml(r.note||'')}</div>
+      <div class="warnbox" style="margin-top:8px">${escapeHtml(r.disclaimer)}</div>
+      <div class="hint" style="margin-top:6px">${escapeHtml(r.lawful_use)}</div></div>`;
+  };
 }
 async function renderCaseBody(){
   const body=$('#csBody'); if(!body||!curCase) return;
@@ -2677,6 +2703,7 @@ async function renderCaseBody(){
       <button class="btn small ghost" id="evGraph">🕸 Link graph</button>
       <button class="btn small ghost" id="evTime">🕒 Timeline</button>
       <button class="btn small gold" id="evExport">📜 Export custody doc</button>
+      <button class="btn small ghost" id="evPrint" style="color:var(--gold)">🖨 Court-ready PDF</button>
     </div>
     <div id="evList" style="margin-top:10px">${arts.length? arts.slice().reverse().map(a=>`
       <div class="foundcard" style="margin-bottom:8px">
@@ -2742,6 +2769,32 @@ async function renderCaseBody(){
     const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([r.json],{type:'application/json'})); a.download=r.filename;
     document.body.appendChild(a); a.click(); a.remove();
     addSystemNote('📜 Custody export downloaded — contains every artifact hash, the case fingerprint and the full custody log for hand-off to counsel or law-enforcement channels.');
+  };
+  $('#evPrint').onclick=async()=>{
+    const r=await post('/api/evidence/export', authBody({case:curCase}));
+    if(!r.ok){ addErr(r.error||'Export failed'); return; }
+    let d; try{ d=JSON.parse(r.json); }catch(e){ addErr('Export parse failed'); return; }
+    const esc=escapeHtml;
+    const w=window.open('','_blank','width=920,height=720');
+    if(!w){ addErr('Allow pop-ups to open the print view.'); return; }
+    w.document.write('<!doctype html><html><head><meta charset=utf-8><title>'+esc(d.case)+' — OraCool custody report</title>'
+      +'<style>body{font-family:Georgia,\'Times New Roman\',serif;max-width:840px;margin:28px auto;color:#111;line-height:1.55;padding:0 14px}'
+      +'h1{font-size:19px;border-bottom:3px solid #111;padding-bottom:6px}h2{font-size:14px;margin-top:22px}'
+      +'table{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:6px}td,th{border:1px solid #999;padding:5px;text-align:left;vertical-align:top}'
+      +'.mono{font-family:Consolas,monospace;font-size:10px;word-break:break-all}footer{margin-top:26px;font-size:10.5px;color:#444;border-top:1px solid #999;padding-top:8px}'
+      +'@media print{button{display:none}}</style></head><body>'
+      +'<h1>EVIDENCE &amp; CHAIN-OF-CUSTODY REPORT</h1>'
+      +'<p><b>Case:</b> '+esc(d.case)+' &nbsp;·&nbsp; <b>Case ID:</b> <span class=mono>'+esc(d.case_id)+'</span><br>'
+      +'<b>Owner:</b> '+esc(d.owner||'')+' &nbsp;·&nbsp; <b>Status:</b> '+esc(d.status||'open')+' &nbsp;·&nbsp; <b>Generated:</b> '+esc(d.exported_at)+' UTC<br>'
+      +'<b>Case fingerprint (SHA-256 over artifact hashes):</b><br><span class=mono>'+esc(d.case_fingerprint_sha256||'—')+'</span></p>'
+      +'<h2>Artifacts ('+d.artifacts.length+')</h2><table><tr><th>#</th><th>Title</th><th>Kind</th><th>Collected (UTC)</th><th>By</th><th>Source</th><th>SHA-256 fingerprint</th></tr>'
+      +d.artifacts.map((a,i)=>'<tr><td>'+(i+1)+'</td><td>'+esc(a.title)+'</td><td>'+esc(a.kind)+'</td><td>'+esc(a.collected_at)+'</td><td>'+esc(a.collected_by)+'</td><td>'+esc(a.source_url||'—')+'</td><td class=mono>'+esc(a.sha256)+'</td></tr>').join('')
+      +'</table><h2>Chain of custody — append-only ('+d.custody_log.length+' entries)</h2><table><tr><th>Time (UTC)</th><th>Actor</th><th>Action</th><th>Reference</th></tr>'
+      +d.custody_log.map(c=>'<tr><td>'+esc(c.t)+'</td><td>'+esc(c.by)+'</td><td>'+esc(c.action)+'</td><td class=mono>'+esc(c.ref||'')+'</td></tr>').join('')
+      +'</table><p style="font-size:11px;color:#333"><b>Standard:</b> '+esc(d.standard||'')+'</p>'
+      +'<footer>Generated by OraCool AI · '+esc(d.exported_at)+' · Integrity re-verification available in-app (evidence/verify). This report demonstrates collection integrity; it is not a notarisation. Verify each artifact\'s hash independently when presenting.</footer>'
+      +'<div style="text-align:center;margin:18px"><button onclick="window.print()" style="font-size:14px;padding:8px 22px;cursor:pointer">🖨 Print / Save as PDF</button></div></body></html>');
+    w.document.close(); try{ w.focus(); }catch(e){}
   };
 }
 function renderLinkGraph(arts, el){

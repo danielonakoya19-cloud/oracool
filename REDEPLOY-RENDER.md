@@ -18,6 +18,9 @@ Everything is already built and pushed to GitHub — you only click and paste.
    - **Start Command:** `python3 server.py`
    - **Plan:** Free
 5. Click **Create Web Service** (don't worry about env vars yet — paste them next)
+   - **For professional use** (paid clients, court docs): upgrade the instance to Render's
+     **Starter ($7/mo)** once revenue starts — no sleep, stable URL, credibility. The free
+     tier is fine for beta testing.
 
 ---
 
