@@ -75,6 +75,7 @@ def _load_keys():
                  "ALPACA_PAPER_KEY_ID", "ALPACA_PAPER_SECRET",
                  "HIA_API_KEY", "HIA_IMAGE_MODEL", "HIA_VIDEO_MODEL",
                  "PIXAZO_KEY", "SHORTAPI_KEY", "TOKENMIX_API_KEY",
+                 "NEXAAPI_KEY", "NEXAAPI_IMAGE_MODEL", "TRACKER_DOMAIN",
                  "FCS_API_KEY", "FCS_PUBLIC_API_KEY", "DOMSCAN_API_KEY",
                  "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
                  "HA_URL", "HA_TOKEN",
@@ -528,9 +529,9 @@ def auth_signup(email, password, name=""):
         return {"status": 200, "data": data, "admin": False,
                 "blocked": is_blocked(email), "pro_token": check_subscription(email)}
     touch_user(email, verified=False)
-    return {"verify_sent": True, "email": email,
-            "message": "A verification link was emailed to " + email
-                       + ". Open it to finish creating your account."}
+    return {"verify_sent": True, "mode": "code", "email": email,
+            "message": "We emailed a verification code to " + email
+                       + ". Enter the code to activate your account."}
 
 
 def auth_confirm(token_hash):
@@ -554,29 +555,74 @@ def auth_confirm(token_hash):
             "blocked": is_blocked(email), "pro_token": check_subscription(email)}
 
 
-def auth_resend(email):
-    """Re-send the verification email (Supabase native mailer)."""
+def auth_send_code(email):
+    """Send (or re-send) the verification email containing the numeric code.
+    Supabase's own mailer delivers it; generate_link both sends and lets us
+    confirm delivery. The code itself is NEVER returned to the browser."""
     email = (email or "").strip().lower()
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         return {"error": "Enter a valid email address."}
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return {"error": "Supabase is not configured on the server."}
     u = _supa_admin_user(email)
     if u is None:
         return {"error": "No account found with that email — create one first."}
     if u.get("email_confirmed_at"):
         touch_user(email, verified=True)
         return {"already_verified": True, "message": "That email is already verified — just sign in."}
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/auth/v1/admin/generate_link", method="POST",
+                               headers={"apikey": svc, "Authorization": "Bearer " + svc,
+                                        "Content-Type": "application/json"},
+                               json_body={"type": "signup", "email": email}, timeout=25)
+        d = json.loads(raw)
+        if d.get("confirmation_sent_at") or d.get("hashed_token"):
+            return {"sent": True,
+                    "message": "A verification code was emailed to " + email
+                               + ". Enter the numeric code from the email below."}
+    except Exception:
+        pass
+    # fallback path: native resend
     r = supabase_auth("/auth/v1/resend", method="POST", json_body={"email": email, "type": "signup"})
     if r.get("status") == 200:
         return {"sent": True, "message": "Verification email re-sent to " + email + "."}
     d = r.get("data") or {}
     msg = (d.get("msg") or d.get("error_description")) if isinstance(d, dict) else str(d)
-    ml = str(msg).lower()
-    if "rate" in ml or "limit" in ml or "invalid" in ml:
-        return {"error": "Supabase's built-in mailer is rate-limited (few emails/hour on the free plan). "
-                         "Your first verification email may already be in " + email + " (check spam too) — or wait an hour and tap Resend again.",
-                "rate_limited": True}
     return {"error": "Supabase could not send the email: " + str(msg)[:160],
             "hint": "Check Supabase → Authentication → Providers → Email (enabled + within hourly limits)."}
+
+
+def auth_verify_code(email, code):
+    """Verify the numeric code the user received; on success confirm the account
+    and log them in with a real session."""
+    email = (email or "").strip().lower()
+    code = re.sub(r"\D", "", str(code or ""))
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return {"error": "Enter the email you signed up with."}
+    if not re.match(r"^\d{4,10}$", code):
+        return {"error": "Enter the numeric code from the email (digits only)."}
+    r = supabase_auth("/auth/v1/verify", method="POST",
+                      json_body={"type": "signup", "token": code, "email": email})
+    data = r.get("data") or {}
+    if r.get("status") == 200 and isinstance(data, dict) and data.get("access_token"):
+        touch_user(email, verified=True)
+        return {"status": 200, "data": data, "admin": is_admin(email),
+                "blocked": is_blocked(email), "pro_token": check_subscription(email)}
+    # email already confirmed via link earlier?
+    u = _supa_admin_user(email)
+    if u and u.get("email_confirmed_at"):
+        touch_user(email, verified=True)
+        return {"already_verified": True,
+                "message": "Your email is already verified — sign in with your password."}
+    d = r.get("data") or {}
+    msg = (d.get("msg") or d.get("error_description")) if isinstance(d, dict) else str(d)
+    return {"error": "That code is not valid (expired?). Tap 'Send a new code' to try again."
+            + (" — " + str(msg)[:120] if msg else "")}
+
+
+def auth_resend(email):
+    return auth_send_code(email)
 
 
 def check_tier(email):
@@ -1929,16 +1975,106 @@ def _pollinations_image(prompt, aspect_ratio="1:1"):
         return {"error": str(e)[:160]}
 
 
+def _nexa_image(prompt, aspect_ratio="1:1"):
+    """NexaAPI (api.nexawapi.com) — OpenAI-compatible gateway, the creator's primary
+    media key. Needs account balance; failures surface as readable errors."""
+    k = key("NEXAAPI_KEY")
+    if not k:
+        return {"skip": True}
+    model = KEYS.get("NEXAAPI_IMAGE_MODEL", "gpt-image-2")
+    size = {"16:9": "1536x1024", "9:16": "1024x1536",
+            "3:4": "1024x1536", "4:3": "1536x1024"}.get(aspect_ratio, "1024x1024")
+    try:
+        st, raw, _ = http_fetch("https://api.nexawapi.com/v1/images/generations", method="POST",
+                                headers={"Authorization": "Bearer " + k},
+                                json_body={"model": model, "prompt": prompt, "n": 1,
+                                           "size": size, "response_format": "url"},
+                                timeout=280)
+        d = json.loads(raw)
+    except urllib.error.HTTPError as e:
+        return {"error": _err_text(e.read().decode("utf-8", "replace"))}
+    except Exception as e:
+        return {"error": str(e)[:160]}
+    urls = [u.get("url") for u in (d.get("data") or []) if isinstance(u, dict) and u.get("url")]
+    if urls:
+        return {"ok": True, "model": model, "urls": urls}
+    return {"error": "no image url returned"}
+
+
+CVRON = "https://cvron.alwaysdata.net"
+
+
+def _cvron_image(prompt):
+    """CVRON free image APIs — flux-dev first, r000n (2 images) as backup.
+    No key required. Verified live: returns real hosted image URLs."""
+    q = urllib.parse.quote(prompt[:300])
+    last = "cvron: no response"
+    for ep, key_field in (("flux-dev.php", "image_url"), ("r000n-image.php", None)):
+        try:
+            _, raw, _ = http_fetch(f"{CVRON}/cvronai/{ep}?prompt={q}", timeout=150,
+                                   headers={"User-Agent": "Mozilla/5.0"})
+            d = json.loads(raw)
+        except Exception as e:
+            last = "cvron " + ep + ": " + str(e)[:100]
+            continue
+        if d.get("success"):
+            if key_field and d.get(key_field):
+                return {"ok": True, "urls": [d[key_field]]}
+            if d.get("images"):
+                return {"ok": True, "urls": d["images"][:2]}
+        else:
+            last = "cvron " + ep + ": " + str(d.get("error") or "failed")[:100]
+    return {"error": last}
+
+
+def _cvron_video(prompt, attempts=2):
+    """CVRON free video: generate an image, then animate it with WAN-22
+    (image-to-video). Real .mp4 output. First attempt often fails when their
+    upstream is busy — retry with a fresh frame."""
+    img = None
+    last_err = ""
+    for _ in range(attempts):
+        im = _cvron_image(prompt)
+        if im.get("ok"):
+            img = im["urls"][0]
+            break
+        last_err = im.get("error", "")
+    if not img:
+        return {"error": "video frame image failed: " + last_err[:120]}
+    q = urllib.parse.quote(prompt[:240])
+    for i in range(attempts + 1):
+        try:
+            _, raw, _ = http_fetch(f"{CVRON}/cvronai/wan22.php?prompt={q}&image="
+                                   + urllib.parse.quote(img, safe=""), timeout=170,
+                                   headers={"User-Agent": "Mozilla/5.0"})
+            d = json.loads(raw)
+            if d.get("success") and d.get("videoUrl"):
+                return {"ok": True, "urls": [d["videoUrl"]]}
+            last_err = str(d.get("error") or "cvron video: no url")[:120]
+        except Exception as e:
+            last_err = str(e)[:120]
+        time.sleep(2)
+    return {"error": "cvron wan22: " + last_err}
+
+
 def gen_image(prompt, aspect_ratio="1:1"):
-    """Text-to-image cascade: HiAPI (premium) → TokenMix (premium) → free FLUX.
-    Every provider failure is surfaced honestly in `note`; nothing fails silently."""
+    """Text-to-image cascade: NexaAPI (creator's primary) → HiAPI → TokenMix →
+    Pollinations FLUX → CVRON flux. Free tiers make image creation ALWAYS work;
+    every provider failure is surfaced honestly in `note`."""
     prompt = (prompt or "").strip()
     if not prompt:
         return {"error": "Describe the image you want, e.g. 'a neon city at night'."}
     if len(prompt) < 3:
         return {"error": "Prompt too short."}
     failures = []
-    # 1) HiAPI — premium models (needs account balance)
+    # 1) NexaAPI (sk- key; needs balance)
+    nx = _nexa_image(prompt, aspect_ratio)
+    if nx.get("ok"):
+        return {"ok": True, "provider": "nexaapi", "model": nx.get("model", ""),
+                "prompt": prompt, "images": nx.get("urls", [])}
+    if nx.get("error"):
+        failures.append("NexaAPI: " + str(nx["error"])[:140])
+    # 2) HiAPI — premium models (needs account balance)
     k = key("HIA_API_KEY")
     if k:
         model = KEYS.get("HIA_IMAGE_MODEL", HIA_IMAGE_DEFAULT)
@@ -1953,51 +2089,69 @@ def gen_image(prompt, aspect_ratio="1:1"):
             failures.append("HiAPI: " + str(res.get("error"))[:140])
         else:
             failures.append("HiAPI: " + (err or "no task id"))
-    # 2) TokenMix — OpenAI-compatible gateway
+    # 3) TokenMix — OpenAI-compatible gateway
     tm = _tokenmix_image(prompt, aspect_ratio)
     if tm.get("ok"):
         return {"ok": True, "provider": "tokenmix", "model": tm.get("model", ""),
                 "prompt": prompt, "images": tm.get("urls", [])}
     if tm.get("error"):
         failures.append("TokenMix: " + str(tm["error"])[:140])
-    # 3) OraCool free HD engine — always available, guarantees a real image
+    # 4) Pollinations free HD FLUX — always available
     pl = _pollinations_image(prompt, aspect_ratio)
     if pl.get("ok"):
         out = {"ok": True, "provider": "oracool-free (FLUX)", "model": "flux",
                "prompt": prompt, "images": [pl["url"]]}
         if failures:
             out["note"] = ("Paid image providers were unavailable (" + "; ".join(failures)
-                           + ") — this image was made with OraCool's free HD engine. "
-                           "Top up HiAPI or TokenMix credits for premium models.")
+                           + ") — this image used a free HD engine. "
+                           "Top up NexaAPI/HiAPI/TokenMix for premium quality.")
         return out
-    return {"error": "Image generation unavailable — " + " | ".join(failures + ["free engine failed"])}
+    # 5) CVRON free flux
+    cv = _cvron_image(prompt)
+    if cv.get("ok"):
+        return {"ok": True, "provider": "cvron-free", "model": "flux-dev",
+                "prompt": prompt, "images": cv["urls"],
+                "note": "Served by CVRON's free flux API." + ((" Paid providers: " + "; ".join(failures)) if failures else "")}
+    return {"error": "Image generation unavailable — " + " | ".join(failures + ["free engines failed"])}
 
 
 def gen_video(prompt, duration=None):
-    """Text-to-video via HiAPI async tasks (premium). Errors surface the exact
-    fix so the AI can tell the user what to do — never a silent failure."""
+    """Text-to-video cascade: HiAPI (premium) → CVRON free (flux frame + WAN-22
+    animation). Errors are surfaced honestly with the exact fix."""
     prompt = (prompt or "").strip()
     if not prompt:
         return {"error": "Describe the video you want, e.g. 'a drone flying over a rainforest'."}
     if len(prompt) < 3:
         return {"error": "Prompt too short."}
+    failures = []
     k = key("HIA_API_KEY")
-    if not k:
-        return {"error": "Video needs HIA_API_KEY configured (keys.json / Render env)."}
-    model = KEYS.get("HIA_VIDEO_MODEL", HIA_VIDEO_DEFAULT)
-    inp = {"prompt": prompt}
-    if duration:
-        inp["duration"] = duration
-    tid, err = hiapi_submit(model, inp, k)
-    if not tid:
-        return {"error": "HiAPI: " + (err or "no task id") + " — if the balance is empty, "
-                        "top up at hiapi.ai and video generation activates instantly "
-                        "(no redeploy needed)."}
-    res = hiapi_poll(tid, k, budget=150)
-    if res.get("ok"):
-        return {"ok": True, "provider": "hiapi", "model": model,
-                "prompt": prompt, "videos": res.get("urls", [])}
-    return {"error": res.get("error") or "Video generation failed."}
+    if k:
+        model = KEYS.get("HIA_VIDEO_MODEL", HIA_VIDEO_DEFAULT)
+        inp = {"prompt": prompt}
+        if duration:
+            inp["duration"] = duration
+        tid, err = hiapi_submit(model, inp, k)
+        if tid:
+            res = hiapi_poll(tid, k, budget=150)
+            if res.get("ok"):
+                return {"ok": True, "provider": "hiapi", "model": model,
+                        "prompt": prompt, "videos": res.get("urls", [])}
+            failures.append("HiAPI: " + str(res.get("error"))[:140])
+        else:
+            failures.append("HiAPI: " + (err or "no task id"))
+    else:
+        failures.append("HiAPI: key not configured")
+    cv = _cvron_video(prompt)
+    if cv.get("ok"):
+        out = {"ok": True, "provider": "cvron-free (WAN-22)", "model": "wan22-img2video",
+               "prompt": prompt, "videos": cv["urls"]}
+        if failures:
+            out["note"] = ("Premium video providers were unavailable (" + "; ".join(failures)
+                           + ") — this clip was animated by CVRON's free WAN-22 API. "
+                           "Top up HiAPI for longer HD video.")
+        return out
+    return {"error": "Video generation unavailable — " + " | ".join(failures + [cv.get("error", "cvron failed")])
+            + ". If the balance is empty, top up at hiapi.ai or nexawapi.com and premium video activates instantly."}
 
 
 # ---------------------------------------------------------------- dark-web OSINT
@@ -2074,6 +2228,76 @@ def osint_darkweb(target):
                      "reference only — OraCool never opens them. Many dark-web services host scams "
                      "or malware; never transact with anything found here.")
     return out
+
+
+# ---------------------------------------------------------------- app launcher
+# A browser cannot install software, but on Android it can fire an intent:// that
+# opens the INSTALLED app (or the Play Store if it isn't), on iOS a URL scheme,
+# and everywhere else the official site. This is exactly what "open X" does.
+
+APP_LINKS = {
+    "whatsapp":      {"name": "WhatsApp",      "url": "https://wa.me/",              "android": "intent://#Intent;package=com.whatsapp;scheme=whatsapp;end", "ios": "whatsapp://", "play": "com.whatsapp"},
+    "instagram":     {"name": "Instagram",     "url": "https://instagram.com",       "android": "intent://#Intent;package=com.instagram.android;scheme=instagram;end", "ios": "instagram://", "play": "com.instagram.android"},
+    "youtube":       {"name": "YouTube",       "url": "https://youtube.com",         "android": "intent://#Intent;package=com.google.android.youtube;scheme=https;end", "ios": "vnd.youtube:", "play": "com.google.android.youtube"},
+    "yt":            {"name": "YouTube",       "url": "https://youtube.com",         "android": "intent://#Intent;package=com.google.android.youtube;scheme=https;end", "ios": "vnd.youtube:", "play": "com.google.android.youtube"},
+    "tiktok":        {"name": "TikTok",        "url": "https://tiktok.com",          "android": "intent://#Intent;package=com.zhiliaoapp.musically;scheme=tiktok;end", "ios": "tiktok://", "play": "com.zhiliaoapp.musically"},
+    "facebook":      {"name": "Facebook",      "url": "https://facebook.com",        "android": "intent://#Intent;package=com.facebook.katana;scheme=fbapi;end", "ios": "fb://", "play": "com.facebook.katana"},
+    "x":             {"name": "X",             "url": "https://x.com",               "android": "intent://#Intent;package=com.twitter.android;scheme=twitter;end", "ios": "twitter://", "play": "com.twitter.android"},
+    "twitter":       {"name": "X",             "url": "https://x.com",               "android": "intent://#Intent;package=com.twitter.android;scheme=twitter;end", "ios": "twitter://", "play": "com.twitter.android"},
+    "telegram":      {"name": "Telegram",      "url": "https://t.me",                "android": "intent://#Intent;package=org.telegram.messenger;scheme=tg;end", "ios": "tg://", "play": "org.telegram.messenger"},
+    "snapchat":      {"name": "Snapchat",      "url": "https://snapchat.com",        "android": "intent://#Intent;package=com.snapchat.android;scheme=snapchat;end", "ios": "snapchat://", "play": "com.snapchat.android"},
+    "spotify":       {"name": "Spotify",       "url": "https://open.spotify.com",    "android": "intent://#Intent;package=com.spotify.music;scheme=spotify;end", "ios": "spotify://", "play": "com.spotify.music"},
+    "netflix":       {"name": "Netflix",       "url": "https://netflix.com",         "android": "intent://#Intent;package=com.netflix.mediaclient;end", "ios": "nflx://", "play": "com.netflix.mediaclient"},
+    "gmail":         {"name": "Gmail",         "url": "https://mail.google.com",     "android": "intent://#Intent;package=com.google.android.gm;action=android.intent.action.SENDTO;scheme=mailto;end", "ios": "googlimap://", "play": "com.google.android.gm"},
+    "maps":          {"name": "Google Maps",   "url": "https://maps.google.com",     "android": "geo:0,0?q=", "ios": "comgooglemaps://", "play": "com.google.android.apps.maps"},
+    "chrome":        {"name": "Chrome",        "url": "https://google.com",          "android": "intent://#Intent;package=com.android.chrome;end", "ios": "googlechrome://", "play": "com.android.chrome"},
+    "camera":        {"name": "Camera",        "url": "",                            "android": "intent:#Intent;action=android.media.action.STILL_IMAGE_CAMERA;end", "ios": "", "play": ""},
+    "settings":      {"name": "Settings",      "url": "",                            "android": "intent:#Intent;action=android.settings.SETTINGS;end", "ios": "app-settings:", "play": ""},
+    "play store":    {"name": "Play Store",    "url": "https://play.google.com",     "android": "market://", "ios": "", "play": ""},
+    "binance":       {"name": "Binance",       "url": "https://binance.com",         "android": "intent://#Intent;package=com.binance.dev;scheme=binance;end", "ios": "binanceus://", "play": "com.binance.dev"},
+    "discord":       {"name": "Discord",       "url": "https://discord.com",         "android": "intent://#Intent;package=com.discord;scheme=discord;end", "ios": "discord://", "play": "com.discord"},
+    "cash app":      {"name": "Cash App",      "url": "https://cash.app",            "android": "intent://#Intent;package=com.squareup.cash;scheme=cashme;end", "ios": "cashme://", "play": "com.squareup.cash"},
+    "playstation":   {"name": "PlayStation",   "url": "https://playstation.com",     "android": "intent://#Intent;package=com.sony.sessionsoftware;end", "ios": "", "play": "com.sony.sessionsoftware"},
+    "chrome remote": {"name": "Remote Desktop","url": "https://chrome.google.com/remotedesktop", "android": "", "ios": "", "play": "com.google.chromeremotedesktop"},
+    "files":         {"name": "Files",         "url": "",                            "android": "intent://#Intent;action=android.intent.action.VIEW;type=resource/*;end", "ios": "shareddocs://", "play": ""},
+    "calculator":    {"name": "Calculator",    "url": "",                            "android": "intent:#Intent;action=android.intent.action.SHOW_CALCULATOR;end", "ios": "", "play": ""},
+}
+
+
+def open_app(target):
+    t = (target or "").strip().lower().rstrip(".!?")
+    if not t:
+        return {"error": "Which app should I open?"}
+    hit = APP_LINKS.get(t)
+    if not hit:
+        for k, v in APP_LINKS.items():
+            if k in t or t in v["name"].lower():
+                hit = v
+                break
+    if hit:
+        return {"ok": True, "app": hit["name"], "url": hit.get("url") or "",
+                "android_intent": hit.get("android") or "", "ios_scheme": hit.get("ios") or "",
+                "play_package": hit.get("play") or "",
+                "note": "Client opens the installed app (Android intent / iOS scheme); falls back to the official website, or Play Store install if known."}
+    slug = re.sub(r"[^a-z0-9]", "", t.split()[0]) if re.match(r"^[a-z0-9 .+-]{2,30}$", t) else ""
+    if slug:
+        return {"ok": True, "app": t.title(), "url": "https://" + slug + ".com",
+                "android_intent": "", "ios_scheme": "", "play_package": "",
+                "note": "Not in the launch map — opening the official website link instead."}
+    return {"error": "I can't parse that app name."}
+
+
+def shorten_url(u):
+    """Best-effort clean short link via CVRON's free shortener (os8.me)."""
+    try:
+        _, raw, _ = http_fetch(CVRON + "/cvronapi/url-shortener.php?url=" + urllib.parse.quote(u, safe=""),
+                               timeout=25, headers={"User-Agent": "Mozilla/5.0"})
+        d = json.loads(raw)
+        if d.get("success") and d.get("short_url"):
+            return {"ok": True, "short_url": d["short_url"]}
+    except Exception:
+        pass
+    return {"ok": False}
 
 
 # ---------------------------------------------------------------- smart home (Home Assistant)
@@ -2456,7 +2680,7 @@ def get_config():
                   "default_model": KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL),
                   "fast_model": KEYS.get("GROQ_FAST_MODEL", GROQ_DEFAULT_MODEL),
                   "chat_max_tokens": int(KEYS.get("CHAT_MAX_TOKENS", 900))},
-        "keys": loaded(["OPENAI_API_KEY", "GROQ_API_KEY", "PAYSTACK_SECRET_KEY",
+        "keys": loaded(["NEXAAPI_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "PAYSTACK_SECRET_KEY",
                         "SUPABASE_URL", "GITHUB_TOKEN", "SHODAN_API_KEY",
                         "VIRUSTOTAL_API_KEY", "ABUSEIPDB_API_KEY", "IPINFO_API_KEY",
                         "NUMVERIFY_API_KEY", "LEAKCHECK_API_KEY", "URLSCAN_API_KEY",
@@ -2485,9 +2709,13 @@ def get_config():
         "image_ready": True,  # free HD engine always available; HiAPI/TokenMix upgrade quality
         "media_providers": {"hiapi": bool(key("HIA_API_KEY")), "tokenmix": bool(key("TOKENMIX_API_KEY")),
                              "free_hd_engine": True},
-        "video_ready": bool(key("HIA_API_KEY")),
+        "video_ready": True,
+        "cvron_ready": True,
         "email_verification": bool(key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY")),
         "darkweb_ready": True,
+        "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
+        "app_launch": True,
+        "verify_mode": "code",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -2756,6 +2984,14 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
         return []
     low = t.lower()
     out = []
+    # app launching (every tier — the client fires the intent)
+    mo = re.match(r"^\s*(?:please\s+)?(?:open|launch|start|fire up|boot)\s+(?:the\s+|my\s+)?([a-z0-9 .+\-]{2,30}?)\s*(?:app|application)?\s*(?:for me\s*)?[.!]?\s*$", low)
+    if mo and "image" not in low and "video" not in low and "file" not in low.split()[-1:]:
+        cand = open_app(mo.group(1))
+        if cand.get("ok") and len(low.split()) <= 6:
+            out.append({"tool": "openapp", "label": "open " + cand["app"],
+                        "result": _shrink(cand, 600)})
+            return out[:4]
     # weather
     wc = _weather_city(t)
     if wc:
@@ -3259,8 +3495,12 @@ def tracker_create(url, email, name=""):
         return {"error": "Invalid URL."}
     if not host or "." not in host:
         return {"error": "That URL has no valid domain."}
-    slug = _slugify(name) or _slugify(host) or _slugify(host.split(".")[0])
-    base = slug
+    # Professional look: the link PATH is the destination domain itself —
+    # typing waptrick.com yields /t/waptrick.com, not a random token.
+    base = re.sub(r"[^a-z0-9.-]", "", host.lower()).strip(".-") or \
+           _slugify(name) or "link"
+    base = (base[:48] or "link")
+    slug = base
     d = _tracker_load()
     i = 0
     while slug in d:
@@ -3795,6 +4035,11 @@ class Handler(BaseHTTPRequestHandler):
             # ---- link tracker (visitor intelligence) ----
             elif path == "/api/tracker/create":
                 self._send_json(tracker_create(body.get("url"), body.get("email"), body.get("name")))
+            elif path == "/api/tracker/shorten":
+                u = (body.get("url") or "").strip()
+                self._send_json(shorten_url(u) if u.startswith("http") else {"ok": False})
+            elif path == "/api/apps/open":
+                self._send_json(open_app(body.get("name") or body.get("target")))
             elif path == "/api/tracker/ping":
                 self._send_json(tracker_ping(body.get("slug"), body.get("vid"), body))
             elif path == "/api/tracker/list":
@@ -3951,6 +4196,10 @@ class Handler(BaseHTTPRequestHandler):
                                             body.get("name", "")))
             elif path == "/api/auth/confirm":
                 self._send_json(auth_confirm(body.get("token_hash") or body.get("token")))
+            elif path == "/api/auth/code/send":
+                self._send_json(auth_send_code(body.get("email")))
+            elif path == "/api/auth/code/verify":
+                self._send_json(auth_verify_code(body.get("email"), body.get("code")))
             elif path == "/api/auth/resend":
                 self._send_json(auth_resend(body.get("email")))
             elif path == "/api/auth/login":
@@ -3971,10 +4220,13 @@ class Handler(BaseHTTPRequestHandler):
                     msg = ((d.get("error_description") or d.get("msg")) if isinstance(d, dict)
                            else str(d)).lower()
                     if "not confirmed" in msg or "confirm" in msg or "verification" in msg:
-                        self._send_json({"error": "Confirm your email first — we sent a verification "
-                                                 "link to " + email + ". Open it, or tap Resend.",
+                        self._send_json({"error": "Confirm your email first — a verification code was sent to "
+                                                 + email + ". Enter the code below, or tap Send a new code.",
                                          "verify_required": True, "email": email})
                     else:
+                        if not (isinstance(r.get("data"), dict) and
+                               (r["data"].get("msg") or r["data"].get("error_description"))):
+                            r["error"] = "Invalid email or password."
                         self._send_json(r)
             # ---- 2FA / OAuth / biometric ----
             elif path == "/api/auth/2fa/setup":

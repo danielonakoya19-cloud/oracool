@@ -309,6 +309,45 @@
     .chatwrap{min-height:0; min-height:0dvh;}
     .chat{padding:8px 10px;}
   }
+  /* ===== device-fit hardening: phones & tablets — nothing clipped, nothing scrolls sideways ===== */
+  html, body{ max-width:100%; overflow-x:hidden; -webkit-text-size-adjust:100%; text-size-adjust:100%; }
+  .bubble, .foundcard, .srchcard, .logline, .panelbody p, .note{ overflow-wrap:anywhere; word-break:break-word; }
+  .statcards, .foundgrid, .toolgrid, .planpick{ grid-template-columns: repeat(auto-fill, minmax(min(150px,100%), 1fr)); }
+  .modalcard, .gatecard{ max-height: calc(100dvh - 22px); max-height: calc(100svh - 22px); overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  table{ max-width:100%; }
+  img, video{ height:auto; }
+  /* tablets (portrait) behave like phones — single column, chat-first */
+  @media (max-width: 1100px){
+    main{ grid-template-columns: minmax(0,1fr); }
+    .chat{ max-height:48dvh; }
+  }
+  @media (max-width: 980px){
+    main{ padding-left:10px; padding-right:10px; }
+    .tabs{ overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+    .tabs::-webkit-scrollbar{ display:none; }
+    .tab{ flex:0 0 auto; white-space:nowrap; }
+  }
+  @media (max-width: 720px){
+    .chat{ max-height:none; }
+    .right .panel{ padding:12px; border-radius:14px; }
+    .foundgrid{ grid-template-columns:repeat(auto-fill, minmax(min(140px,100%),1fr)); gap:8px; }
+    .statcards{ grid-template-columns:repeat(auto-fill, minmax(min(128px,100%),1fr)); }
+    .stat .v{ font-size:15px; }
+    .ptitle{ font-size:14px; }
+    .row{ gap:8px; }
+    .btn.small{ min-height:38px; }
+    .gate{ padding:10px; }
+    .chiprow{ overflow-x:auto; scrollbar-width:none; }
+    .chiprow::-webkit-scrollbar{ display:none; }
+    .keyrow{ flex-wrap:wrap; }
+    .devrow{ gap:8px; }
+    .bubble code{ font-size:12px; }
+  }
+  @media (max-width: 400px){
+    .statcards, .foundgrid, .toolgrid, .planpick{ grid-template-columns:repeat(2, minmax(0,1fr)); }
+    .bubble{ font-size:14px; }
+    .ptitle{ font-size:13px; }
+  }
   /* touch devices: bigger tap targets everywhere */
   @media (pointer: coarse){
     .btn{min-height:44px;}
@@ -549,34 +588,48 @@ async function registerPasskey(out){
     else out.innerHTML='<div class="errbox">'+escapeHtml(r.error||'Registration failed.')+'</div>';
   }catch(e){ out.innerHTML='<div class="hint">Registration cancelled or unsupported in this preview. It works on the live app / installed PWA.</div>'; }
 }
-/* ---------- email verification panel (signup sends a real Supabase email) ---------- */
+/* ---------- email verification: numeric code sent to the inbox (link paste = backup) ---------- */
 let gateVerifyEmail = '';
 function showVerifyPanel(out, email){
   gateVerifyEmail = email||'';
   const el = out && out.isConnected ? out : $('#gOut');
   if(!el) return;
   el.innerHTML = `
-    <div class="okbox">📧 A verification link was sent to <b>${escapeHtml(email||'')}</b> (check spam too). Open it on this device — the app signs you in automatically — or paste the link below.</div>
-    <input type="text" id="gvLink" placeholder="Paste the email link (…token_hash=…) or the code alone" style="margin-top:8px">
+    <div class="okbox">📧 A verification <b>code</b> was sent to <b>${escapeHtml(email||'')}</b> (check spam too).
+    Enter the numeric code from the email to activate your account — or paste the email link if you prefer.</div>
+    <input type="text" id="gvCode" inputmode="numeric" maxlength="10" placeholder="Verification code (digits only)" style="margin-top:8px; text-align:center; letter-spacing:6px; font-size:20px">
+    <button class="btn primary" style="width:100%; justify-content:center; margin-top:8px" id="gvGo">Verify code &amp; enter</button>
+    <details style="margin-top:8px"><summary class="muted" style="font-size:11px; cursor:pointer">Or paste the email link instead</summary>
+      <input type="text" id="gvLink" placeholder="https://…token_hash=…" style="margin-top:6px">
+      <button class="btn ghost" style="width:100%; justify-content:center; margin-top:6px" id="gvLinkGo">Confirm with link</button>
+    </details>
     <div class="row" style="margin-top:8px">
-      <button class="btn primary" style="flex:1; justify-content:center" id="gvGo">Confirm &amp; enter</button>
-      <button class="btn ghost" id="gvResend">↻ Resend</button>
+      <button class="btn ghost" style="flex:1; justify-content:center" id="gvResend">↻ Send a new code</button>
     </div>`;
-  $('#gvGo').onclick=async()=>{
+  const fail=(msg)=>{ showVerifyPanel(el, gateVerifyEmail);
+    el.insertAdjacentHTML('beforeend','<div class="errbox" style="margin-top:6px">'+escapeHtml(msg)+'</div>'); };
+  const sendCode=async()=>{
+    const code=$('#gvCode').value.trim();
+    if(!/^\d{4,10}$/.test(code)){ fail('Enter the numeric code from your email (digits only).'); return; }
+    const rr=await post('/api/auth/code/verify',{email:gateVerifyEmail, code});
+    if(rr.status===200 && rr.data && rr.data.access_token){ completeGate(rr, rr.data.user, rr.data.access_token, rr.data.refresh_token); return; }
+    fail(rr.error||'Could not verify that code yet.');
+  };
+  $('#gvGo').onclick=sendCode;
+  $('#gvCode').addEventListener('keydown',e=>{ if(e.key==='Enter') sendCode(); });
+  $('#gvLinkGo').onclick=async()=>{
     const v=$('#gvLink').value.trim();
     const m=v.match(/token_hash=([^&"#\s]+)/);
-    const th=m?m[1]:v;
-    if(!th){ el.insertAdjacentHTML('beforeend','<div class="errbox" style="margin-top:6px">Paste the link or code from the email first.</div>'); return; }
-    const rr=await post('/api/auth/confirm',{token_hash:th});
+    if(!m){ fail('Paste the full link from the email.'); return; }
+    const rr=await post('/api/auth/confirm',{token_hash:m[1]});
     if(rr.status===200 && rr.data && rr.data.access_token){ completeGate(rr, rr.data.user, rr.data.access_token, rr.data.refresh_token); return; }
-    showVerifyPanel(el, email);
-    el.insertAdjacentHTML('beforeend','<div class="errbox" style="margin-top:6px">'+escapeHtml(rr.error||'Could not confirm — that link may be used or expired.')+'</div>');
+    fail(rr.error||'That link was used or expired.');
   };
   $('#gvResend').onclick=async()=>{
-    const rr=await post('/api/auth/resend',{email:gateVerifyEmail});
-    if(rr.already_verified){ el.innerHTML='<div class="okbox">✓ That email is already verified — sign in now.</div>'; return; }
+    const rr=await post('/api/auth/code/send',{email:gateVerifyEmail});
+    showVerifyPanel(el, gateVerifyEmail);
     el.insertAdjacentHTML('beforeend','<div class="'+(rr.error?'errbox':'okbox')+'" style="margin-top:6px">'+
-      escapeHtml(rr.error?('Could not send: '+rr.error):(rr.message||'Verification email sent — check your inbox.'))+'</div>');
+      escapeHtml(rr.error||(rr.already_verified?'That email is already verified — sign in with your password.':(rr.message||'A fresh code is on its way — check your inbox.')))+'</div>');
   };
 }
 
@@ -718,11 +771,28 @@ function drawWave(){
   }
   waveRAF=requestAnimationFrame(drawWave);
 }
+function speechClean(t){
+  // TTS must never read markdown out loud ("asterisk star star") — strip it all.
+  let s = (t||'')
+    .replace(/```[\s\S]*?```/g, ' (code block) ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/[*_#>~|]/g, ' ')
+    .replace(/^[-•]\s+/gm, '')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/https?:\/\/\S+/g, 'a link')
+    .replace(/—/g, ', ').replace(/–/g, ', ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  try { s = s.replace(/\p{Extended_Pictographic}/gu, ' ').replace(/\s{2,}/g,' ').trim(); } catch(e){}
+  return s;
+}
 function speak(text){
   if(!settings.ttsOn || !('speechSynthesis' in window)) return;
   try{
     speechSynthesis.cancel();
-    const u=new SpeechSynthesisUtterance(text); u.rate=1.02; u.pitch=0.92; u.volume=1;
+    const u=new SpeechSynthesisUtterance(speechClean(text)); u.rate=1.02; u.pitch=0.92; u.volume=1;
     if(settings.voiceName){ const v=voices.find(v=>v.name===settings.voiceName); if(v)u.voice=v; }
     else { const v=voices.find(v=>/en[-_]GB|Daniel|George|UK English Male/i.test(v.name)) || voices.find(v=>v.lang&&v.lang.startsWith('en')); if(v)u.voice=v; }
     u.onstart=()=>{ startWave(); pauseWake(); };
@@ -754,6 +824,13 @@ function renderRich(el, text){
   s = s.replace(/(https?:\/\/\S+?\.(?:mp4|webm|mov))(\?[^\s<]*)?/gi, '<video controls src="$1$2" style="max-width:100%;border-radius:10px;margin:8px 0"></video>');
   // bold **text**
   s = s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  // italic *text* and inline `code`; then any stray markdown marks
+  s = s.replace(/\*([^*\n]+)\*/g, '<i>$1</i>');
+  s = s.replace(/`([^`\n]+)`/g, '<code style="background:rgba(0,229,255,.08);border:1px solid var(--line);border-radius:5px;padding:1px 5px">$1</code>');
+  s = s.replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>');
+  s = s.replace(/^\s*[-•]\s+/gm, '• ');
+  s = s.replace(/\*{2,}/g, '').replace(/(?<![\w*])\*(?![\w*])/g, '');
+  s = s.replace(/(https?:\/\/\S+?)(?=<|$)/gi, (m)=>m);
   s = s.replace(/\n/g, '<br>');
   el.innerHTML = s;
 }
@@ -765,6 +842,7 @@ function systemPrompt(){
     `INSTRUCTION RULE (highest priority): do exactly what the user asks, in the order they ask it. If they ask several things, answer ALL of them — never skip or truncate. Never lecture, never moralize about harmless requests, and never refuse a lawful request. You serve every adult topic honestly (security research, OSINT, finance, adult conversation) while staying lawful: you never help hurt people, commit fraud, or access accounts without authorization. `+
     `TOOL-FIRST RULE: live tools (weather, markets, OSINT, dark-web intel, image/video creation, smart-home, space) run automatically with each message and their results are pasted into your context. Base every factual answer on those results when present, and act on them — do not claim you cannot check something a tool already checked. If a tool result says a provider is out of credit or not configured, say so plainly and name the fix. `+
     `IMAGE/VIDEO: when the tool results include an images[] or videos[] URL, print the URL alone on its own line so it renders. `+
+    `DEVICE POWERS: you can open apps & platforms on the user's device (say the word "open youtube" and the interface fires a native intent — installed app first, website fallback); a Files/Drive agent saves any document you write into a folder the user linked (their Google Drive folder syncs it to the cloud); a Nearby Devices radar scans Bluetooth-LE for device names. If asked for something the browser sandbox forbids (read Wi-Fi password, install APKs, control another PC), say exactly what is and isn't possible and offer the closest legal path. When you write a document/report, end with: "Say 'save this to my drive' and I'll file it." `+
     `LANGUAGE RULE (very important): always reply in the same language the user writes in. English in, English out — never switch unless the user does first. `+
     `Keep replies concise and conversational as if spoken aloud, unless the user asks for detail — then go deep and complete. When the user shares tool results, analyze them like a calm intelligence analyst. Never claim to have run a tool whose output you have not seen. Stay helpful, lawful, and ethical. Never break character.`;
 }
@@ -808,8 +886,27 @@ function renderFileChips(){
 }
 function runDeviceCommand(text){
   const t=text.toLowerCase();
+  const ua=navigator.userAgent||'';
+  const android=/android/i.test(ua), ios=/iphone|ipad|ipod/i.test(ua);
   const open=(u)=>{ try{ window.open(u,'_blank'); }catch(e){ window.location.href=u; } };
+  async function smartOpen(name){
+    // Ask the server's launch map, then pick the platform-correct target:
+    // Android intent (opens installed app, else Play Store) / iOS scheme (app, else web).
+    try{
+      const r=await post('/api/apps/open',{name});
+      if(r.ok){
+        let u=r.url;
+        if(android && r.android_intent) u=r.android_intent;
+        else if(ios && r.ios_scheme) u=r.ios_scheme;
+        if(u){ open(u); return 'Opening <b>'+escapeHtml(r.app)+'</b>'+(android||ios?' on this device, ':' in the browser, ')+'sir.'; }
+        if(android && r.play_package){ open('market://details?id='+r.play_package); return '<b>'+escapeHtml(r.app)+'</b> is not installed — opening the Play Store so you can get it, sir.'; }
+        return 'I know <b>'+escapeHtml(r.app)+'</b> but this browser cannot launch it directly, sir.';
+      }
+    }catch(e){}
+    return null;
+  }
   const R=[
+    [/^open\s+([a-z0-9 .+-]{2,30}?)\s*(?:app|application)?\s*(?:for me)?[.!?]?$/, async (m)=>{ const msg=await smartOpen(m[1]); if(msg) addAI(msg); return !!msg; }, 'smart'],
     [/\bopen\s+whatsapp\b/, ()=>open('https://wa.me/'), 'Opening WhatsApp on your device, sir.'],
     [/\bopen\s+(?:youtube|yt)\b/, ()=>open('https://youtube.com'), 'Opening YouTube, sir.'],
     [/\bopen\s+instagram\b/, ()=>open('https://instagram.com'), 'Opening Instagram, sir.'],
@@ -825,7 +922,11 @@ function runDeviceCommand(text){
   ];
   for(const r of R){
     const m=text.match(r[0]);
-    if(m){ try{ if(r[1]) r[1](m); }catch(e){} return {handled:true, reply: r[2]||('Done, sir.')}; }
+    if(m){
+      if(r[2]==='smart'){ try{ r[1](m); }catch(e){} return {handled:true, reply:null}; }
+      try{ if(r[1]) r[1](m); }catch(e){}
+      return {handled:true, reply: r[2]||('Done, sir.')};
+    }
   }
   return {handled:false};
 }
@@ -900,7 +1001,8 @@ async function send(text){
   if(busy) return;
   if(!files.length){
     const dc=runDeviceCommand(text);
-    if(dc.handled){ addUser(text); const m=dc.reply; addAI(m); speak(m); return; }
+    if(dc.handled){ addUser(text); const m=dc.reply; if(m){ addAI(m); speak(m); } return; }
+    if(await trySaveDoc(text)){ addUser(text); return; }
   }
   busy=true; $('#sendBtn').disabled=true;
   setOrbStatus('thinking');
@@ -1252,12 +1354,21 @@ async function renderTrackerBox(){
     out.innerHTML='<div style="text-align:center;padding:8px"><span class="spinner"></span></div>';
     const r=await post('/api/tracker/create',{url, name, email:myEmail()});
     if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
-    const link=location.origin+r.url;
+    const link=(srv&&srv.tracker_domain? (srv.tracker_domain.startsWith('http')?'':'https://')+srv.tracker_domain : location.origin)+r.url;
     out.innerHTML=`
       <div class="okbox">Tracking link created for <b>${escapeHtml(r.target)}</b>.</div>
       <input type="text" value="${escapeHtml(link)}" id="trLink" readonly style="margin-top:6px">
-      <div class="row" style="margin-top:8px"><button class="btn primary" id="trCopy">Copy link</button><button class="btn ghost" id="trOpen">Test it</button><button class="btn ghost" id="trView">View live preview</button></div>
-      <div class="hint" style="margin-top:6px">Send it anywhere. Every open is logged here — they land on the real site instantly.</div>`;
+      <div class="row" style="margin-top:8px"><button class="btn primary" id="trCopy">Copy link</button><button class="btn ghost" id="trShort">✨ Get short link</button><button class="btn ghost" id="trOpen">Test it</button><button class="btn ghost" id="trView">View live preview</button></div>
+      <div id="trShortOut"></div>
+      <div class="hint" style="margin-top:6px">Send it anywhere. Every open is logged here — they land on the real site instantly. Tip: set <b>TRACKER_DOMAIN</b> in Render env (after adding a custom domain) to brand the link fully.</div>`;
+    $('#trShort').onclick=async()=>{
+      const so=$('#trShortOut'); so.innerHTML='<span class="spinner"></span>';
+      const rs=await post('/api/tracker/shorten',{url:link});
+      if(rs.ok){ so.innerHTML=`<div style="margin-top:8px"><input type="text" value="${escapeHtml(rs.short_url)}" id="trLink2" readonly style="margin-top:4px"><button class="btn small primary" id="trCopy2" style="margin-top:6px">Copy short link</button></div>`;
+        $('#trCopy2').onclick=()=>{ try{ navigator.clipboard.writeText(rs.short_url); }catch(e){} $('#trCopy2').textContent='✓ Copied'; };
+        $('#trLink').value=rs.short_url;
+      } else so.innerHTML='<div class="hint" style="margin-top:6px">Shortener unavailable right now — the link above works exactly the same.</div>';
+    };
     $('#trCopy').onclick=()=>{ const u=$('#trLink'); u.select(); try{ navigator.clipboard.writeText(u.value); }catch(e){} };
     $('#trOpen').onclick=()=>{ try{ window.open(link,'_blank'); }catch(e){ location.href=link; } };
     $('#trView').onclick=()=>trackerPreview(r.slug);
@@ -1540,7 +1651,9 @@ async function renderDevices(){
     <input type="password" id="haToken" placeholder="Paste token…" value="${escapeHtml(settings.haToken)}">
     <div class="row"><button class="btn primary" id="haSave">Save &amp; scan</button><button class="btn ghost" id="haDemo">Demo devices</button></div>
     <div class="hint">Home Assistant → Profile → create a long-lived token. Controls lights, switches, fans, media players &amp; more.</div>
-    <div id="devout" style="margin-top:14px"></div>`;
+    <div id="devout" style="margin-top:14px"></div>
+    <div id="radarBox" style="margin-top:16px"></div>
+    <div id="filesAgent" style="margin-top:16px"></div>`;
   $('#p-devices').querySelectorAll('[data-app]').forEach(b=>{ b.onclick=()=>{ try{ window.open(b.dataset.app,'_blank'); }catch(e){ window.location.href=b.dataset.app; } }; });
   $('#haSave').onclick=()=>{ settings.haUrl=$('#haUrl').value.trim(); settings.haToken=$('#haToken').value.trim(); saveSettings(); scanDevices(); };
   $('#haDemo').onclick=()=>showDemoDevices();
@@ -1560,6 +1673,128 @@ async function renderDevices(){
   };
   $('#camStop').onclick=()=>{ if(stream){ stream.getTracks().forEach(t=>t.stop()); } const v=$('#camVideo'); v.srcObject=null; v.style.display='none'; $('#camShot').style.display='none'; $('#camStop').style.display='none'; $('#camOpen').style.display=''; };
   if(hasHA) scanDevices(); else showDemoDevices();
+  renderRadar();
+  renderFilesAgent();
+}
+
+/* ---------- nearby devices radar (Bluetooth LE + network) ---------- */
+const radarFound = [];
+function renderRadar(){
+  const box=$('#radarBox'); if(!box) return;
+  const conn=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
+  const net = conn ? `${conn.type||conn.effectiveType||'—'} · downlink ${conn.downlink!=null?conn.downlink+'Mbps':'—'} · rtt ${conn.rtt!=null?conn.rtt+'ms':'—'}` : 'Network Information API unavailable in this browser';
+  box.innerHTML=`
+    <h3 class="ptitle">📡 Nearby Devices Radar</h3>
+    <div class="muted" style="font-size:11px">Browsers are sandboxed — they cannot read your Wi-Fi SSID or enumerate every LAN device (that needs a native app). What IS possible: live Bluetooth-LE scanning of nearby devices (Android Chrome), connection stats, and your smart-home devices via Home Assistant.</div>
+    <div class="statcards" style="margin-top:8px">
+      <div class="stat"><div class="l">Connection</div><div class="v" style="font-size:12px">${conn?(conn.effectiveType||'—').toUpperCase():'—'}</div></div>
+      <div class="stat"><div class="l">Online</div><div class="v" style="font-size:12px;color:${navigator.onLine?'var(--ok)':'var(--danger)'}">${navigator.onLine?'YES':'NO'}</div></div>
+      <div class="stat"><div class="l">Wi-Fi name (SSID)</div><div class="v" style="font-size:11px">not readable by browsers</div></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" id="btScan">🛜 Scan Bluetooth (8s)</button>
+      <button class="btn ghost" id="btPair">📲 Pick a Bluetooth device</button>
+    </div>
+    <div class="muted" style="font-size:10px;margin-top:4px">${escapeHtml(net)}</div>
+    <div id="radarList" class="foundgrid" style="margin-top:8px"></div>
+    <div class="hint" style="margin-top:6px">Tip: ask <b>"list my devices"</b> in chat after linking Home Assistant in Settings — that shows your actual smart devices by name.</div>`;
+  const paint=()=>{
+    const l=$('#radarList'); if(!l) return;
+    l.innerHTML = radarFound.length? radarFound.map(d=>`<div class="foundcard"><b>${escapeHtml(d.name)}</b><div class="muted" style="font-size:10px">${escapeHtml(d.kind||'Bluetooth LE')}${d.rssi!=null?' · '+d.rssi+' dBm':''}</div></div>`).join('')
+      : '<div class="muted">No devices detected yet.</div>';
+  };
+  paint();
+  $('#btScan').onclick=async()=>{
+    const out=$('#radarList');
+    if(!navigator.bluetooth){ out.innerHTML='<div class="errbox">Web Bluetooth is not available in this browser — it works in Chrome on Android (and Chrome desktop with a Bluetooth adapter).</div>'; return; }
+    try{
+      if(navigator.bluetooth.requestLEScan){
+        await navigator.bluetooth.requestLEScan({acceptAllAdvertisements:true});
+        out.innerHTML='<div class="muted">Scanning air for 8 seconds…</div>';
+        const onAdv=(ev)=>{ const n=(ev.name||ev.device&&ev.device.name||'').trim();
+          if(n && !radarFound.find(x=>x.name===n)){ radarFound.push({name:n, kind:'Bluetooth LE', rssi:ev.rssi}); paint(); } };
+        navigator.bluetooth.addEventListener('advertisementreceived', onAdv);
+        setTimeout(async()=>{ try{ await navigator.bluetooth.stopScan(); }catch(e){}
+          try{ navigator.bluetooth.removeEventListener('advertisementreceived', onAdv); }catch(e){}
+          paint();
+          if(!radarFound.length){ $('#radarList').innerHTML='<div class="muted">Nothing advertising right now — move near a powered device (earbuds out of case, watch, speaker) and rescan.</div>'; }
+        }, 8000);
+      } else { throw new Error('unsupported'); }
+    }catch(e){
+      out.innerHTML='<div class="warnbox">Live scanning is restricted in this browser. Use "Pick a Bluetooth device" — the system picker lists every nearby device with its real name/model; choose one and it appears here.</div>';
+    }
+  };
+  $('#btPair').onclick=async()=>{
+    try{
+      const d=await navigator.bluetooth.requestDevice({acceptAllDevices:true});
+      if(d && !radarFound.find(x=>x.name===d.name)){ radarFound.push({name:d.name||d.id, kind:'Bluetooth device'}); }
+      paint(); addSystemNote('📡 Radar picked up <b>'+escapeHtml(d.name||'device')+'</b> — model as reported by the device itself.');
+    }catch(e){ }
+  };
+}
+
+/* ---------- Files / Google Drive agent ---------- */
+let userDirHandle=null;
+function idbSet(k,v){ try{ const rq=indexedDB.open('oracool',1); rq.onupgradeneeded=()=>rq.result.createObjectStore('kv');
+  rq.onsuccess=()=>{ rq.result.transaction('kv','readwrite').objectStore('kv').put(v,k); }; }catch(e){} }
+function idbGet(k,cb){ try{ const rq=indexedDB.open('oracool',1); rq.onupgradeneeded=()=>rq.result.createObjectStore('kv');
+  rq.onsuccess=()=>{ const g=rq.result.transaction('kv').objectStore('kv').get(k); g.onsuccess=()=>cb(g.result); g.onerror=()=>cb(null); }; rq.onerror=()=>cb(null); }catch(e){ cb(null); } }
+async function linkFolder(){
+  if(!window.showDirectoryPicker){
+    addErr('Folder linking needs Chrome/Edge desktop. On Chrome, choose your <b>Google&nbsp;Drive</b> folder once — everything I save lands in your Drive automatically (Drive syncs the folder).');
+    return;
+  }
+  try{
+    userDirHandle=await showDirectoryPicker({mode:'readwrite'});
+    idbSet('dirHandle', userDirHandle);
+    renderFilesAgent();
+    addSystemNote('📁 Linked <b>'+(userDirHandle.name||'folder')+'</b>. Say <b>"save this document to my drive"</b> after I write anything and it lands in the <i>OraCool/</i> folder there.');
+  }catch(e){}
+}
+async function saveDocToFolder(name, content){
+  if(!userDirHandle){
+    const p=await new Promise(res=>idbGet('dirHandle',res));
+    if(!p) return false;
+    try{ userDirHandle=p; }catch(e){ return false; }
+  }
+  try{
+    const q=await userDirHandle.queryPermission({mode:'readwrite'});
+    if(q!=='granted'){ const r=await userDirHandle.requestPermission({mode:'readwrite'}); if(r!=='granted') return false; }
+    const sub=await userDirHandle.getDirectoryHandle('OraCool',{create:true});
+    const fh=await sub.getFileHandle(name.replace(/[^\w.\- ]+/g,'')+'.md',{create:true});
+    const w=await fh.createWritable(); await w.write(content); await w.close();
+    return true;
+  }catch(e){ return false; }
+}
+function downloadDoc(name, content){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([content],{type:'text/markdown'}));
+  a.download=name+'.md'; document.body.appendChild(a); a.click(); a.remove();
+}
+async function trySaveDoc(text){
+  const t=(text||'').toLowerCase();
+  if(!/\b(?:save|copy|write|put)\b.*\b(?:my\s+(?:google\s+)?drive|my\s+drive|the\s+folder|my\s+folder|my\s+files)\b/.test(t)) return false;
+  // last AI message becomes the document
+  let doc='', title='oracool-document';
+  const bubbles=[...document.querySelectorAll('#chat .bubble.ai')];
+  const last=bubbles[bubbles.length-1];
+  if(last){ doc=last.innerText; const h=doc.split('\n')[0]||''; title=(h.replace(/[^\w\- ]+/g,'').trim().toLowerCase().replace(/\s+/g,'-').slice(0,40)||title); }
+  if(!doc || doc.length<20){ addSystemNote('Say that right after I produce a document or write-up, and I will file it for you.'); return true; }
+  const ok=await saveDocToFolder(title, doc);
+  if(ok) addSystemNote('💾 Saved <b>'+title+'.md</b> into your linked folder → <b>OraCool/</b>.'+(/drive/i.test(userDirHandle&&userDirHandle.name||'')?' It will sync to your Google Drive.':''));
+  else { downloadDoc(title, doc); addSystemNote('No linked folder (or permission denied) — I downloaded the file instead. Link a folder in Devices to hand-off straight into Drive.'); }
+  return true;
+}
+function renderFilesAgent(){
+  const box=$('#filesAgent'); if(!box) return;
+  box.innerHTML=`
+    <h3 class="ptitle">🗂️ Files &amp; Drive agent</h3>
+    <div class="muted" style="font-size:11px">Let OraCool write documents straight into your own folders. Pick your <b>Google Drive</b> folder (desktop Chrome) — files saved there auto-sync to Drive. Works offline too.</div>
+    <div class="row" style="margin-top:8px"><button class="btn ${userDirHandle?'ghost':'primary'}" id="faLink">${userDirHandle?('✓ Linked: '+escapeHtml(userDirHandle.name)+' — change'):'📁 Link a folder / My Drive'}</button>
+    <button class="btn ghost" id="faHelp">How it works</button></div>
+    <div id="faNote" class="hint" style="margin-top:6px">After any document I create, say <b>“save this to my drive”</b> — it lands in <i>OraCool/</i> inside your linked folder.</div>`;
+  $('#faLink').onclick=linkFolder;
+  $('#faHelp').onclick=()=>{ $('#faNote').innerHTML='1) Chrome desktop → <b>Link a folder</b> → choose <b>Google Drive</b> (or any folder). 2) Ask me for a document ("write a project brief"). 3) Say "save this to my drive". I write it into <i>OraCool/…md</i> — Drive syncs it to the cloud for you. Phones: the file downloads instead (iOS/Android sandbox folders).'; };
 }
 function startCamera(){
   const t=document.querySelector('.tab[data-p="devices"]'); if(t) t.click();
@@ -2251,7 +2486,7 @@ function renderCreate(){
       <button class="btn primary" id="crImg" ${canImg?'':'disabled'}>🖼 Generate Image${canImg?'':' · PRO'}</button>
       <button class="btn gold" id="crVid" ${canVid?'':'disabled'}>🎬 Generate Video${canVid?'':' · ULTRA'}</button>
     </div>
-    <div class="result" id="crOut"><div class="muted">${canImg||canVid?'Ready — OraCool picks the best available engine automatically (HiAPI / TokenMix premium, with a free HD image fallback so image creation always works). Video needs HiAPI credit; ~1–3 min.':'Image creation unlocks on the PRO plan; video on ULTRA. You are on '+planLabel()+'.'}</div></div>`;
+    <div class="result" id="crOut"><div class="muted">${canImg||canVid?'Ready — OraCool picks the best available engine automatically: NexaAPI / HiAPI / TokenMix when funded, free FLUX for images and free WAN-22 animation for video. Images ~5–30s, video 1–4 min.':'Image creation unlocks on the PRO plan; video on ULTRA. You are on '+planLabel()+'.'}</div></div>`;
   const out=()=>$('#crOut');
   const media=(urls, kind)=>{
     if(kind==='video') return urls.map(u=>`<video controls src="${escapeHtml(u)}" style="width:100%;border-radius:10px;margin-top:8px"></video>`).join('');
@@ -2425,7 +2660,7 @@ function renderGate(){
     <input type="password" id="gPass" placeholder="••••••••" autocomplete="new-password">
     <div class="strength" id="gStrength"><i></i></div>
     <div class="hint" id="gHint">Password: 8+ characters with uppercase, lowercase & a number.</div>
-    <button class="btn primary" style="width:100%; justify-content:center; margin-top:16px" id="gGo">${gateMode==='signup'?'Create account (we\'ll email a verification link)':'Enter OraCool'}</button>
+    <button class="btn primary" style="width:100%; justify-content:center; margin-top:16px" id="gGo">${gateMode==='signup'?'Create account (we\'ll email a code)':'Enter OraCool'}</button>
     <div style="display:flex; gap:8px; margin-top:10px">
       <button class="btn ghost" style="flex:1; justify-content:center" id="gGoogle">Google</button>
       <button class="btn ghost" style="flex:1; justify-content:center" id="gGithub">GitHub</button>

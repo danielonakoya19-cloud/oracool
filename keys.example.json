@@ -31,5 +31,6 @@
   "HIBP_API_KEY": "",
   "NASA_API_KEY": "",
   "ALPACA_PAPER_KEY_ID": "",
-  "ALPACA_PAPER_SECRET": ""
+  "ALPACA_PAPER_SECRET": "",
+  "NEXAAPI_KEY": ""
 }

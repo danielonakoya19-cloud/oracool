@@ -25,7 +25,7 @@ Everything is already built and pushed to GitHub — you only click and paste.
 
 1. Open your new service → **Environment** tab
 2. Scroll to **Environment Variables** → click **"Add from .env"**
-3. Select & copy **ALL 42 lines** from the file **`RENDER_ENV.txt`** (this workspace)
+3. Select & copy **ALL 43 lines** from the file **`RENDER_ENV.txt`** (this workspace)
 4. Paste into the box → **Save Changes**
 5. Render restarts automatically (~1 min)
 
@@ -46,7 +46,17 @@ Everything is already built and pushed to GitHub — you only click and paste.
      `http://localhost:8000/**` while testing)
 5. Confirm **Authentication → Sign In / Providers → Email** is ENABLED and
    **Confirm email** is ON. New signups then get a real verification email; they can't
-   enter the app until they click it. Admin emails auto-skip verification.
+   enter until they enter the code. Admin emails auto-skip verification.
+6. **Show the code inside the email (recommended):** Authentication → **Email Templates →
+   "Confirm signup"** → edit the HTML body and add this line where you want it:
+   `Your OraCool activation code is: <b style="font-size:24px;letter-spacing:6px">{{ .Token }}</b>`
+   OraCool verifies that numeric code in-app (AI verifies it — no link clicking needed).
+   Without this edit, users can still paste the email link instead — the app accepts both.
+7. **Optional — branded tracking links:** buy/point any domain (e.g. `go.yourname.com` CNAME
+   to your Render service, add it as a custom domain in Render), then set env var
+   `TRACKER_DOMAIN=go.yourname.com`. Tracking links become `go.yourname.com/waptrick.com`.
+   Even without that, links are now clean (`…/t/waptrick.com`) and one-click
+   shortenable via the "✨ Get short link" button (free os8.me shortener).
 
 ---
 
