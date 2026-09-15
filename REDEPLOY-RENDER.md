@@ -99,14 +99,20 @@ The AI honestly tells a user which plan unlocks a feature they ask for.
 
 ## Image & video generation status (as of this build)
 
-- **Images**: always work — HiAPI → TokenMix → **OraCool free HD engine** (FLUX) fallback
-  cascade. Today HiAPI (`402 insufficient balance`) and TokenMix (paid models need funds)
-  are **out of credit**, so images render from the free engine with an honest note.
-- **Video**: needs HiAPI credit. Top up at **hiapi.ai → Billing** — the app activates it
-  instantly, no redeploy needed.
-- **Pixazo**: its `reve-image` model was retired by the provider (HTTP 410, 2026-08-15) —
-  removed from the cascade.
-- **OpenAI**: key valid but 0 credits — only affects premium chat brain fallback (Groq is
-  the primary brain and works).
-- **No free PRO trial exists any more** — the 24-hour trial endpoint and button are removed,
-  and any old trial tokens are cryptographically rejected.
+Cascade (images): **NexaAPI → HiAPI → TokenMix → Pollinations FLUX → CVRON flux**.
+Cascade (video): **HiAPI → CVRON free WAN-22** (auto frame-generation + animation).
+
+- **Images always work** — free HD engines are the guaranteed floor. Today NexaAPI
+  (`INSUFFICIENT_BALANCE`), HiAPI (`402`) and TokenMix (promo-credit restriction) are out
+  of funds, so images render via the free engines with an honest note naming the fix.
+- **Video always works too** — verified live: CVRON's free pipeline returned a real
+  `video/mp4` clip (~1–3 min, retries built in). Top up **hiapi.ai** or **nexawapi.com**
+  for HD/longer premium video; it activates instantly, no redeploy.
+- **Pixazo**: `reve-image` retired by the provider (HTTP 410, 2026-08-15) — removed.
+- **OpenAI**: key valid, 0 credits — only affects premium chat fallback (Groq is the
+  primary brain and works).
+- **No free PRO trial exists any more** — the 24h trial endpoint/button are removed and
+  old trial tokens are cryptographically rejected.
+- **Signups are code-verified**: Supabase emails a numeric code; the app (and the AI)
+  verifies it before entry — see Step 3 note about the email template tweak.
+
