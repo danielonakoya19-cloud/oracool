@@ -2678,7 +2678,25 @@ function renderDocVerify(){
       <input type="text" id="dvVal" placeholder="document ref / hash of scan (never full personal numbers in chat)" style="flex:1">
       <button class="btn primary" id="dvGo">Run framework check</button>
     </div>
-    <div id="dvOut" style="margin-top:8px"></div>`;
+    <div id="dvOut" style="margin-top:8px"></div>
+    <h3 class="ptitle" style="margin-top:16px">🔎 Image authenticity — forensic metadata triage</h3>
+    <div class="muted" style="font-size:11px">Paste an image URL: OraCool fetches it server-side and reports the SHA-256 fingerprint, format/dimensions, EXIF/XMP/GPS/C2PA presence and software/camera hints. Indicators only — never a tampering verdict.</div>
+    <div class="row" style="margin-top:8px"><input type="text" id="miUrl" placeholder="https://…/photo.jpg" style="flex:1"><button class="btn primary" id="miGo">Inspect</button></div>
+    <div id="miOut" style="margin-top:8px"></div>`;
+  $('#miGo').onclick=async()=>{
+    const out=$('#miOut'); out.innerHTML=SPIN;
+    const r=await post('/api/media/inspect', authBody({url:$('#miUrl').value.trim()}));
+    if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+    out.innerHTML=`<div class="foundcard">
+      <div><b>${escapeHtml((r.format||'img').toUpperCase())}</b> ${r.width?r.width+'×'+r.height:''} · ${(r.size_bytes/1024).toFixed(1)} KB
+        ${r.has_exif?'<span class="tag" style="color:var(--ok)">EXIF</span>':'<span class="tag">no EXIF</span>'}
+        ${r.has_gps?'<span class="tag" style="color:var(--danger)">GPS embedded</span>':''}
+        ${r.has_xmp?'<span class="tag">XMP</span>':''}${r.c2pa_manifest_detected?'<span class="tag" style="color:var(--gold)">C2PA claim</span>':''}</div>
+      <div class="muted" style="font-size:10px;margin-top:4px;word-break:break-all">SHA-256 <span style="color:var(--cyan2)">${escapeHtml(r.sha256)}</span></div>
+      ${r.camera_hint||r.software_hint?'<div class="muted" style="font-size:11px;margin-top:4px">hints — '+(r.camera_hint?'camera: <b>'+escapeHtml(r.camera_hint)+'</b> ':'')+(r.software_hint?'software: <b>'+escapeHtml(r.software_hint)+'</b>':'')+'</div>':''}
+      ${(r.notes||[]).map(n=>'<div class="logline" style="font-size:11px">• '+escapeHtml(n)+'</div>').join('')}
+      <div class="warnbox" style="margin-top:6px">${escapeHtml(r.disclaimer)}</div></div>`;
+  };
   $('#dvGo').onclick=async()=>{
     const out=$('#dvOut'); out.innerHTML=SPIN;
     const r=await post('/api/doc/verify', authBody({type:$('#dvType').value, value:$('#dvVal').value}));

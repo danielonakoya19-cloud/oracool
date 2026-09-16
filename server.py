@@ -356,10 +356,11 @@ def supabase_get_flag(email):
     if not url or not key("SUPABASE_SERVICE_KEY"):
         return None
     try:
-        q = urllib.parse.quote(f"email=eq.{email}")
+        q = "email=eq." + urllib.parse.quote(email.lower().strip(), safe="")
         _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/user_flags?" + q,
                                headers=_supabase_headers(), timeout=10)
         rows = json.loads(raw) if raw else []
+        rows = [r for r in rows if (r.get("email") or "").lower() == email.lower().strip()]
         return rows[0] if rows else None
     except Exception:
         return None
@@ -669,11 +670,13 @@ def check_tier(email):
     url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
     if url and svc:
         try:
-            q = urllib.parse.quote(f"email=eq.{email}")
+            q = "email=eq." + urllib.parse.quote(email, safe="")
             _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/subscribers?" + q,
                                    headers={"apikey": svc, "Authorization": "Bearer " + svc},
                                    timeout=10)
-            rows.extend(json.loads(raw))
+            # belt AND braces: never trust the gateway filter alone — re-filter client-side
+            rows.extend([r for r in (json.loads(raw) or [])
+                         if (r.get("email") or "").lower() == email])
         except Exception:
             pass
     for r in rows:
@@ -2306,6 +2309,18 @@ def _cases_load():
             d = json.load(f)
     except Exception:
         d = {}
+    if not d.get("cases") and not d.get("audit"):
+        snap = supabase_cases_load()  # fresh deploy / disk reset → restore durable snapshot
+        if snap:
+            d = snap
+            try:
+                _materialize_contents(d)
+                tmp = _cases_file() + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump(d, f)
+                os.replace(tmp, _cases_file())
+            except Exception:
+                pass
     d.setdefault("cases", {})
     d.setdefault("watch", [])
     d.setdefault("audit", [])
@@ -2313,11 +2328,108 @@ def _cases_load():
 
 
 def _cases_save(d):
+    global _cases_dirty
     with _cases_lock:
         tmp = _cases_file() + ".tmp"
         with open(tmp, "w") as f:
             json.dump(d, f)
         os.replace(tmp, _cases_file())
+    if key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY"):
+        _cases_dirty = True
+
+
+# ---- durable mirror: Render's disk is ephemeral, so cases + custody + audit
+# ---- are snapshotted (with bounded artifact contents) to Supabase every ~20s.
+_cases_dirty = False
+_cases_last_push = 0.0
+
+
+def _cases_snapshot(d):
+    """Deep-ish copy with artifact contents embedded (bounded) so evidence
+    files themselves survive a redeploy on Render's ephemeral filesystem."""
+    import copy as _copy
+    snap = _copy.deepcopy(d)
+    budget = 4_000_000
+    for c in snap.get("cases", {}).values():
+        for a in c.get("artifacts", []):
+            p = os.path.join(_ev_dir(), a["id"] + ".txt")
+            if budget <= 0:
+                break
+            try:
+                with open(p, "rb") as f:
+                    raw = f.read(120_000)
+                a["_content"] = raw.decode("utf-8", "replace")
+                a["_content_trunc"] = len(raw) >= 120_000
+                budget -= len(raw)
+            except Exception:
+                pass
+    if len(snap.get("audit", [])) > 400:
+        snap["audit"] = snap["audit"][-400:]
+    return snap
+
+
+def _materialize_contents(d):
+    for c in (d.get("cases") or {}).values():
+        for a in c.get("artifacts", []):
+            content = a.pop("_content", None)
+            a.pop("_content_trunc", None)
+            p = os.path.join(_ev_dir(), a["id"] + ".txt")
+            if content is not None and not os.path.exists(p):
+                try:
+                    with open(p, "w") as f:
+                        f.write(content)
+                except Exception:
+                    pass
+
+
+def supabase_cases_load():
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return None
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/case_store?k=eq.main&select=v",
+                               headers={"apikey": svc, "Authorization": "Bearer " + svc}, timeout=15)
+        rows = json.loads(raw)
+        if rows:
+            v = rows[0].get("v")
+            if isinstance(v, str):
+                v = json.loads(v)
+            return v
+    except Exception:
+        return None
+    return None
+
+
+def supabase_cases_push(d):
+    global _cases_last_push
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return False
+    try:
+        snap = _cases_snapshot(d)
+        http_fetch(url.rstrip("/") + "/rest/v1/case_store", method="POST",
+                   headers={"apikey": svc, "Authorization": "Bearer " + svc,
+                            "Content-Type": "application/json",
+                            "Prefer": "resolution=merge-duplicates"},
+                   json_body={"k": "main", "v": snap, "updated_at": _now()}, timeout=25)
+        _cases_last_push = time.time()
+        return True
+    except Exception:
+        return False
+
+
+def _cases_flush_loop():
+    global _cases_dirty
+    while True:
+        time.sleep(10)
+        try:
+            if _cases_dirty and (time.time() - _cases_last_push) > 18:
+                with _cases_lock:
+                    d = _cases_load()
+                    _cases_dirty = False
+                supabase_cases_push(d)
+        except Exception:
+            pass
 
 
 def _now():
@@ -2433,11 +2545,11 @@ def evidence_add(owner, cid, title, content, url="", meta=None, kind="intel"):
                     "Store the ORIGINAL artifacts untouched — OraCool preserves working copies."}
 
 
-def evidence_list(cid):
+def evidence_list(owner, cid):
     d = _cases_load()
-    c = d["cases"].get(cid)
-    if not c:
-        return {"error": "Case not found."}
+    c, err = _owner_case(d, owner, cid)
+    if err:
+        return err
     return {"case": c["name"], "artifacts": c.get("artifacts", []), "custody": c.get("custody", [])}
 
 
@@ -2779,6 +2891,129 @@ def shorten_url(u):
     except Exception:
         pass
     return {"ok": False}
+
+
+def media_inspect(url="", data_b64=""):
+    """Basic forensic triage for images — stdlib-only metadata analysis:
+    SHA-256 fingerprint, format, dimensions, EXIF/XMP/GPS/C2PA presence,
+    camera-software hints. INDICATORS ONLY, never a tampering verdict."""
+    raw = b""
+    src = ""
+    if (data_b64 or "").strip():
+        try:
+            raw = base64.b64decode(re.sub(r"^data:[^,]+,", "", data_b64.strip(), count=1))[:8_000_000]
+            src = "upload"
+        except Exception:
+            return {"error": "Could not decode the supplied image data."}
+    elif (url or "").strip().lower().startswith(("http://", "https://")):
+        try:
+            req = urllib.request.Request(url.strip(), headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=30) as f:
+                raw = f.read(8_000_000)
+            src = url.strip()
+        except Exception as e:
+            return {"error": f"Fetch failed: {str(e)[:140]}"}
+    else:
+        return {"error": "Provide an image URL or the image data to inspect."}
+    if not raw:
+        return {"error": "Empty response — nothing to analyse."}
+    out = {"source": src, "size_bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    fmt, w, h = "unknown", None, None
+    exif = xmp = gps = c2pa = False
+    software = camera = ""
+    if raw[:3] == b"\xff\xd8\xff":
+        fmt = "jpeg"
+        exif = b"Exif\x00\x00" in raw[:200_000]
+        xmp = b"http://ns.adobe.com/xap" in raw[:400_000]
+        i = 2
+        while i < len(raw) - 9 and i < 4_000_000:
+            if raw[i] != 0xFF:
+                break
+            m = raw[i + 1]
+            if m in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                h, w = int.from_bytes(raw[i + 5:i + 7], "big"), int.from_bytes(raw[i + 7:i + 9], "big")
+                break
+            if m in (0xD8, 0x01) or 0xD0 <= m <= 0xD7:
+                i += 2
+                continue
+            seglen = int.from_bytes(raw[i + 2:i + 4], "big")
+            if m == 0xE1:
+                seg = raw[i + 4:i + 4 + seglen]
+                if b"GPS" in seg or _tif_has_gps(seg):
+                    gps = True
+                sw = re.search(rb"(Adobe Photoshop|GIMP|Pixelmator|Snapseed|Canva|Photoshop)[^\x00]{0,24}", seg)
+                mk = re.search(rb"(NIKON|Canon|FUJIFILM|SONY|Panasonic|OLYMPUS|iPhone|SM-|Redmi|realme|samsung|HUAWEI|Infinix|TECNO)[A-Za-z0-9 \-]{0,20}", seg)
+                if sw:
+                    software = sw.group(1).decode(errors="replace")
+                if mk:
+                    camera = mk.group(0).decode(errors="replace").strip()
+            i += 2 + seglen
+    elif raw[:8] == b"\x89PNG\r\n\x1a\n":
+        fmt = "png"
+        if len(raw) > 33:
+            w = int.from_bytes(raw[16:20], "big")
+            h = int.from_bytes(raw[20:24], "big")
+        head = raw[:600_000]
+        xmp = b"xmp" in head
+        gps = b"GPS" in head
+    elif raw[:6] in (b"GIF87a", b"GIF89a"):
+        fmt = "gif"
+        w, h = int.from_bytes(raw[6:8], "little"), int.from_bytes(raw[8:10], "little")
+    elif raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        fmt = "webp"
+        head = raw[:600_000]
+        xmp = b"http://ns.adobe.com/xap" in head
+    c2pa = b"c2pa" in raw[:1_000_000].lower() or b"content-credentials" in raw[:1_000_000].lower()
+    out.update({"format": fmt, "width": w, "height": h,
+                "has_exif": exif, "has_xmp": xmp, "has_gps": gps, "c2pa_manifest_detected": c2pa,
+                "software_hint": software or None, "camera_hint": camera or None})
+    notes = []
+    if fmt == "jpeg":
+        if exif:
+            notes.append("EXIF present" + ((" — camera hint: " + camera) if camera else "")
+                         + ((" · software tag: " + software) if software else "")
+                         + " — read the values and cross-check against the claimed origin.")
+        else:
+            notes.append("No EXIF — typical for screenshots, messenger re-saves and web-optimised images. "
+                         "ABSENT METADATA IS NOT PROOF OF TAMPERING, it only means provenance metadata is unavailable.")
+        if gps:
+            notes.append("GPS coordinates embedded — location PII; handle with care and lawful basis.")
+        if c2pa:
+            notes.append("C2PA/Content-Credentials manifest detected — the file claims cryptographic provenance; "
+                         "validate the manifest itself with an official C2PA verifier, do not trust this string-match.")
+        if fmt == "jpeg" and w and h and (w * h) % 2 != 0:
+            notes.append("Odd pixel dimensions are unusual for direct camera output (heuristic only).")
+    elif fmt == "png":
+        notes.append("PNG commonly carries no camera EXIF; check pHYs/tEXt chunks in a full tool for edits.")
+    if not out["has_exif"] and not out["has_xmp"] and not c2pa:
+        notes.append("Zero provenance metadata — full EXIF/XMP/C2PA analysis (thumbnail comparison, "
+                     "error-level analysis, clone detection) requires a dedicated forensic tool "
+                     "(e.g. FotoForensics, Ghiro, Amplitude) — OraCool flags this for FURTHER REVIEW.")
+    out["notes"] = notes
+    out["disclaimer"] = ("INDICATORS REQUIRING FURTHER REVIEW — this is metadata triage, not an "
+                         "authenticity verdict. Preserve the original bytes: this artifact's SHA-256 above "
+                         "can be sealed into a Case with one click from the evidence view.")
+    return out
+
+
+def _tif_has_gps(seg):
+    """Locate the GPSInfo IFD pointer (0x8825) inside an EXIF TIFF block."""
+    try:
+        if b"Exif\x00\x00" not in seg:
+            return False
+        tiff = seg[seg.index(b"Exif\x00\x00") + 6:]
+        if len(tiff) < 8:
+            return False
+        end = "<" if tiff[:2] == b"II" else ">"
+        ifd_off = int.from_bytes(tiff[4:8], end)
+        n = int.from_bytes(tiff[ifd_off:ifd_off + 2], end)
+        for i in range(n):
+            e = ifd_off + 2 + i * 12
+            if tiff[e:e + 2] in (b"\x25\x88", b"\x88\x25"):
+                return True
+    except Exception:
+        pass
+    return False
 
 
 # ---------------------------------------------------------------- smart home (Home Assistant)
@@ -3191,6 +3426,8 @@ def get_config():
                            "watch_monitoring": True, "audit_log": True},
         "privacy_policy": "/privacy",
         "document_verification": doc_verification_state(),
+        "media_forensics": True,
+        "case_persistence": "supabase" if (key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY")) else "disk-only",
         "trading": {"symbols": list(TRADING_SYMBOLS.keys()),
                     "alpaca_ready": bool(key("ALPACA_PAPER_KEY_ID") and key("ALPACA_PAPER_SECRET"))},
         "plans": [{"id": pid, "label": p["label"], "price_usd": p["price_usd"],
@@ -3603,6 +3840,14 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
                   else "id card")
             out.append({"tool": "docverify", "label": "document verification · " + dt,
                         "result": _shrink(verify_document(dt, ""), 1400)})
+        # image authenticity / forensic triage of an image URL
+        if any(k in low for k in ("image authenticity", "is this image edited", "is this photo fake",
+                                  "photo tampered", "image tampered", "forensic check", "metadata of this image",
+                                  "exif of")):
+            um2 = re.search(r"https?://\S+\.(?:jpe?g|png|webp|gif)(?:\?\S+)?", low)
+            if um2:
+                out.append({"tool": "mediainspect", "label": "image forensics",
+                            "result": _shrink(media_inspect(um2.group(0)), 1400)})
         # dark-web intelligence (leak databases + Ahmia .onion index, read-only)
         if any(k in low for k in ("dark web", "dark-web", "darkweb", "onion", "tor site",
                                   "paste site", "criminal forum")):
@@ -4547,7 +4792,7 @@ class Handler(BaseHTTPRequestHandler):
                                                  body.get("kind", "intel")))
             elif path == "/api/evidence/list":
                 if self._require_tier(body, "pro"):
-                    self._send_json(evidence_list(body.get("case")))
+                    self._send_json(evidence_list(body.get("email"), body.get("case")))
             elif path == "/api/evidence/view":
                 if self._require_tier(body, "pro"):
                     self._send_json(evidence_view(body.get("email"), body.get("case"), body.get("artifact")))
@@ -4566,6 +4811,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/doc/verify":
                 if self._require_tier(body, "pro"):
                     self._send_json(verify_document(body.get("type"), body.get("value")))
+            elif path == "/api/media/inspect":
+                if self._require_tier(body, "pro"):
+                    self._send_json(media_inspect(body.get("url", ""), body.get("data_b64", "")))
             elif path == "/api/watch/add":
                 if self._require_tier(body, "pro"):
                     self._send_json(watch_add(body.get("email"), body.get("term"), body.get("case", "")))
@@ -5163,6 +5411,10 @@ def main():
     _load_keys()
     try:  # background watchlist monitor (continuous dark-web/leak alerts)
         threading.Thread(target=_watch_loop, daemon=True).start()
+    except Exception:
+        pass
+    try:  # durable case/evidence mirror to Supabase (survives Render redeploys)
+        threading.Thread(target=_cases_flush_loop, daemon=True).start()
     except Exception:
         pass
     server = ThreadingHTTPServer((HOST, PORT), Handler)
