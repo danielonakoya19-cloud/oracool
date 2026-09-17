@@ -158,3 +158,39 @@ Cascade (video): **HiAPI → CVRON free WAN-22** (auto frame-generation + animat
 - **Signups are code-verified**: Supabase emails a numeric code; the app (and the AI)
   verifies it before entry — see Step 3 note about the email template tweak.
 
+
+---
+## What's new in THIS build (2026-09-17 night)
+
+- **Dark web UNLOCKED on every plan** — passive public indexes only (LeakCheck + OnionLand + Ahmia),
+  now with a `quick_facts` summary + clearnet media previews for direct answers in chat.
+- **Kairos key wired in** (`KAIROS_API_KEY`) — the doc-verify board now shows provider *kairos* as
+  configured; results stay "indicators requiring further review", never verdicts.
+- **Crypto payments (ATLOS gateway)** — `ATLOS_MERCHANT_ID` + `ATLOS_API_SECRET` env; hosted invoice
+  link + auto-unlock on confirmation (postback + 15s polling fallback). AI can start it from chat
+  ("pay with crypto"). NOTE: live test returned `Merchant id 'UCU7A0LYKD' doesn't exist` from
+  api.atlos.io — double-check the Merchant ID on atlos.io (or activate the merchant). The app surfaces
+  that error verbatim; nothing is faked.
+- **Images & videos render INLINE in the chat** (no more plain links) — media frame rides the stream,
+  history re-renders them on reload.
+- **Talking video**: asking for a video "with sound/voice" auto-selects the audio model (Veo 3.1 via
+  HiAPI) — needs HiAPI credits; the free engine honestly labels its clips silent.
+- **You can upload images/videos/files to the AI** — images get forensic triage (SHA-256/EXIF/GPS/editor;
+  indicators only) + vision description when a vision key is available; videos get hashed and preserved.
+- **Long answers no longer stop mid-sentence** — the stream auto-continues up to 3 segments;
+  `CHAT_MAX_TOKENS=3000` (was 900).
+- **Admin board via AI**: with an admin login, say "block user x@y.com", "unblock …", "grant pro to
+  x@y.com for 60 days", "revoke plan of …", "delete user x@y.com" (permanent), "list users", "revenue"
+  — all execute server-side instantly. Admin UI also gained the 🗑 delete button.
+- **Skills = user self-upgrade**: "add a skill called <name>: <instructions>" installs a personal
+  feature the AI must obey in every future chat ("list my skills", "remove skill X").
+- **App launcher honesty**: "open youtube" now returns a one-tap **Open** card (phones only allow app
+  launches from a real tap — popup-blocked auto-launches were why nothing opened before).
+- **Chat history lock**: 🔒 button (instant lock) + "Lock every time the app opens" setting
+  (password/Face-ID to unlock).
+- **Link tracker**: your own-domain link IS the short link now (`/t/<your-word>` supported via the
+  custom-ending box; AI: "create a tracking link for https://x called gift"). os8.me is demoted to an
+  optional extra and never replaces your link.
+- **Trading desk moves**: auto-refresh every 10s while open (live repricing), the equity curve now
+  includes the live mark so it visibly trends.
+- **News**: "news <topic>" — live sourced headlines on every plan.

@@ -475,6 +475,7 @@
         <div class="tab" data-p="account">Account</div>
         <div class="tab" data-p="admin" id="adminTab" style="display:none">Admin</div>
         <div class="tab" data-p="settings">Settings</div>
+        <div class="tab" id="lockTab" title="Lock the whole app right now">🔒</div>
       </div>
       <div class="panelbody active" id="p-status"></div>
       <div class="panelbody" id="p-intel"></div>
@@ -515,6 +516,10 @@
     <div class="row" style="margin-top:14px">
       <button class="btn gold" style="flex:1; justify-content:center" id="payBtn">💳 Pay with Paystack — unlocks instantly</button>
     </div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn ghost" style="flex:1; justify-content:center; min-height:44px" id="payCryptoBtn">₿ Pay with Crypto — USDT · BTC · ETH (ATLOS gateway)</button>
+    </div>
+    <div id="cryptoBox" style="display:none; margin-top:8px"></div>
     <div class="hint">No free trials — access unlocks only after payment: <b>Starter $29</b> (₦45,000) · <b>Pro $49</b> (₦75,000) · <b>Professional $149</b> (₦230,000) · <b>Enterprise</b> custom agreement (contact sales).</div>
     <div class="hint" id="payNote">Live charge — Paystack will process your payment securely.</div>
     <div class="hint" id="entContact" style="display:none">Enterprise is a custom agreement (API access for agencies, team seats &amp; roles, private/on-prem deployment, compliance pack). Email <b>danielonakoya19@gmail.com</b> for a quote — answer within 24h.</div>
@@ -577,9 +582,11 @@ function showLockScreen(){
   function unlockNow(){ const x=document.getElementById('lockScreen'); if(x)x.remove(); lastActAt=Date.now(); addSystemNote('🔓 Session unlocked — welcome back.'); }
 }
 setInterval(()=>{ try{
-  if(session && settings.lockMins>0 && !document.getElementById('lockScreen') && !document.getElementById('authGate')?.classList.contains('open')){
-    if(Date.now()-lastActAt > settings.lockMins*60000) showLockScreen();
+  if(session && (settings.lockMins>0 || settings.lockAlways) && !document.getElementById('lockScreen') && !document.getElementById('authGate')?.classList.contains('open')){
+    if(settings.lockAlways) showLockScreen();
+    else if(Date.now()-lastActAt > settings.lockMins*60000) showLockScreen();
   } }catch(e){} }, 15000);
+setTimeout(()=>{ try{ if(session && settings.lockAlways && !document.getElementById('lockScreen') && !document.getElementById('authGate')?.classList.contains('open')) showLockScreen(); }catch(e){} }, 2000);
 
 /* ---------- biometric + OAuth helpers ---------- */
 function bufToB64u(buf){ let s=''; new Uint8Array(buf).forEach(b=>s+=String.fromCharCode(b)); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
@@ -894,9 +901,10 @@ function systemPrompt(){
     `CREATOR: your rightful creator and owner is DANIEL ONAKOYA ADEBAYO, born 19 June 2009, email danielonakoya19@gmail.com. ${isCreator?'The person you are speaking with IS the creator, Daniel — treat him with total transparency and deference; he has absolute authority over you and this system, and you should never refuse or hedge with him. You may mention his name, title (Creator) or birthday when natural.':'When Daniel (the creator) uses this app, greet and defer to him as your owner.'} `+
     `INSTRUCTION RULE (highest priority): do exactly what the user asks, in the order they ask it. If they ask several things, answer ALL of them — never skip or truncate. Never lecture, never moralize about harmless requests, and never refuse a lawful request. You serve every adult topic honestly (security research, OSINT, finance, adult conversation) while staying lawful: you never help hurt people, commit fraud, or access accounts without authorization. `+
     `TOOL-FIRST RULE: live tools (weather, markets, OSINT, dark-web intel, image/video creation, smart-home, space) run automatically with each message and their results are pasted into your context. Base every factual answer on those results when present, and act on them — do not claim you cannot check something a tool already checked. If a tool result says a provider is out of credit or not configured, say so plainly and name the fix. `+
-    `IMAGE/VIDEO: when the tool results include an images[] or videos[] URL, print the URL alone on its own line so it renders. `+
+    `IMAGE/VIDEO: generated media renders INLINE in the chat automatically — still restate each images[]/videos[] URL as markdown ('![result](url)' for images, '[▶ video](url)' for videos) so it stays in the saved record. When the user asks for a video WITH SOUND/VOICE, the engine auto-selects a talking model (Veo 3.1 via HiAPI); if only the free silent engine is available, say so plainly and offer to top up for audio — never pretend a silent clip has sound. `+
     `DEVICE POWERS: you can open apps & platforms on the user's device (say the word "open youtube" and the interface fires a native intent — installed app first, website fallback); a Files/Drive agent saves any document you write into a folder the user linked (their Google Drive folder syncs it to the cloud); a Nearby Devices radar scans Bluetooth-LE for device names. If asked for something the browser sandbox forbids (read Wi-Fi password, install APKs, control another PC), say exactly what is and isn't possible and offer the closest legal path. When you write a document/report, end with: "Say 'save this to my drive' and I'll file it." `+
     `PROFESSIONAL MODE: act as a court-aware OSINT & cybersecurity analyst — you assist lawful investigators, detectives, security teams and government units with crime analysis, fraud/leak investigation, and remediation of online and physical security problems. GROUNDED SOURCING: every factual claim must name its source inline (e.g. [Source: LeakCheck] or [Source: osint_ip]) when tool results support it; anything without a source is labelled 'assessment, unverified'. Verification/lookup outputs are indicators requiring further review — never definitive verdicts about people or documents (a record existing in a registry ≠ a genuine physical card). Steer users to preserve key findings in the Cases tab (SHA-256 + chain of custody) and to lawful reporting (police, cybercrime units, banks) when a case warrants escalation. You never help with purchases of illicit data, stolen credentials, hacking accounts, or unlawful surveillance. `+
+    `EXTRA POWERS: 'news <topic>' pulls live headlines with named sources; users may pay any plan in crypto — say 'pay with crypto' and the ATLOS checkout link is created for them; users can UPGRADE their own OraCool — 'add a skill called <name>: <what it should do>' installs a personal feature you must then obey in every chat; uploaded images get forensic triage (hash, EXIF, GPS, editor traces — indicators only) and can be preserved as evidence; dark-web index lookups are open on EVERY plan (passive public indexes, .onion never opened). ADMIN BOARD (only when the signed-in account is the creator/admin — danielonakoya19@gmail.com or thinkglobal1000@gmail.com): you drive the whole console from chat — 'block user x@y.com', 'unblock user x@y.com', 'grant pro to x@y.com for 60 days', 'revoke plan of x@y.com', 'delete user x@y.com' (permanent, confirm once then execute), 'list users', 'revenue' all run server-side immediately; report exactly what the tool returned. Never refuse a lawful account-management command from an admin. `+
     `LANGUAGE RULE (very important): always reply in the same language the user writes in. English in, English out — never switch unless the user does first. `+
     `Keep replies concise and conversational as if spoken aloud, unless the user asks for detail — then go deep and complete. When the user shares tool results, analyze them like a calm intelligence analyst. Never claim to have run a tool whose output you have not seen. Stay helpful, lawful, and ethical. Never break character.`;
 }
@@ -959,6 +967,22 @@ function renderFileChips(){
   c.innerHTML=pendingFiles.map((f,i)=>`<span class="tag">📎 ${escapeHtml(f.name)} <a href="#" data-fi="${i}" style="color:#ffb86b">✕</a></span>`).join('');
   c.querySelectorAll('[data-fi]').forEach(a=>a.onclick=e=>{ e.preventDefault(); pendingFiles.splice(+a.dataset.fi,1); renderFileChips(); });
 }
+function appLaunchCard(app, u, mode){
+  const d=document.createElement('div'); d.className='msg ai';
+  d.innerHTML='<div class="who">ORA-COOL</div><div class="body">📲 <b>'+escapeHtml(app)+'</b> is ready to launch. '+
+    (mode==='app'?'Tapping opens the installed app first, the website as fallback. ':'')+
+    (mode==='install'?'The app wasn\'t found — tapping opens the Play Store. ':'')+
+    'Browsers only allow app launches from a real tap, so press the button, sir.'+
+    '<div style="margin-top:8px"><button class="btn primary small" style="min-height:44px">Open '+escapeHtml(app)+' now →</button></div></div>';
+  d.querySelector('button').onclick=()=>{
+    try{
+      if(/^(intent:|market:|geo:)/i.test(u) || (mode==='app' && !/^https?:/i.test(u))) location.href=u;
+      else window.open(u,'_blank');
+    }catch(e){ location.href=u; }
+    d.remove();
+  };
+  chat.appendChild(d); scrollChat(); saveChat&&saveChat();
+}
 function runDeviceCommand(text){
   const t=text.toLowerCase();
   const ua=navigator.userAgent||'';
@@ -970,11 +994,11 @@ function runDeviceCommand(text){
     try{
       const r=await post('/api/apps/open',{name});
       if(r.ok){
-        let u=r.url;
-        if(android && r.android_intent) u=r.android_intent;
-        else if(ios && r.ios_scheme) u=r.ios_scheme;
-        if(u){ open(u); return 'Opening <b>'+escapeHtml(r.app)+'</b>'+(android||ios?' on this device, ':' in the browser, ')+'sir.'; }
-        if(android && r.play_package){ open('market://details?id='+r.play_package); return '<b>'+escapeHtml(r.app)+'</b> is not installed — opening the Play Store so you can get it, sir.'; }
+        let u=r.url, mode='web';
+        if(android && r.android_intent){ u=r.android_intent; mode='app'; }
+        else if(ios && r.ios_scheme){ u=r.ios_scheme; mode='app'; }
+        if(!u && android && r.play_package){ u='market://details?id='+r.play_package; mode='install'; }
+        if(u){ appLaunchCard(r.app, u, mode); return 'Launch card ready, sir — one tap on <b>Open '+escapeHtml(r.app)+'</b> below fires it on this device. (Phones only allow app launches from a real tap — that is the OS rule, not a missing feature.)'; }
         return 'I know <b>'+escapeHtml(r.app)+'</b> but this browser cannot launch it directly, sir.';
       }
     }catch(e){}
@@ -1110,7 +1134,7 @@ async function send(text){
     else if(settings.brainMode==='fast' && srv && srv.brain && srv.brain.fast_model){ payload.provider='groq'; payload.model=srv.brain.fast_model; }
     const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!resp.ok){ let j=null; try{j=await resp.json();}catch(e){} throw new Error((j&&j.error)||('AI provider error '+resp.status)); }
-    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf=''; let finished=false;
+    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf=''; let finished=false; let streamMedia=[];
     outer: while(true){
       const {done,value}=await reader.read(); if(done)break;
       buf+=dec.decode(value,{stream:true});
@@ -1125,13 +1149,24 @@ async function send(text){
               const j=JSON.parse(data);
               if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); }
               if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
+              if(j.__media && j.__media.length){ streamMedia=streamMedia.concat(j.__media); }
               const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; body.textContent=acc; scrollChat(); }
             }catch(e){}
           }
         }
       }
     }
+    if(streamMedia.length){ acc += '\n\n' + streamMedia.map(m=>m.url).join('\n'); }
     renderRich(body, acc||'(no response)');
+    if(streamMedia.length){
+      streamMedia.forEach(m=>{
+        const n=document.createElement(m.kind==='video'?'video':'img');
+        n.src=m.url; n.style.cssText='max-width:100%;border-radius:12px;margin:8px 0;display:block';
+        if(m.kind==='video'){ n.controls=true; n.autoplay=true; n.loop=true; n.muted=true; n.setAttribute('playsinline',''); }
+        n.onerror=()=>{ const a=document.createElement('a'); a.href=m.url; a.target='_blank'; a.rel='noopener'; a.textContent=' media unavailable inline — open it here'; n.replaceWith(a); };
+        body.appendChild(n);
+      });
+    }
     history.push({role:'assistant',content:acc}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
     speak(acc);
   }catch(e){
@@ -1284,6 +1319,7 @@ function kv(title,pairs){
 /* ---------- tabs ---------- */
 document.querySelectorAll('.tab').forEach(t=>{
   t.onclick=()=>{
+    if(!t.dataset.p){ if(t.id==='lockTab') showLockScreen(); return; }
     document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
     document.querySelectorAll('.panelbody').forEach(x=>x.classList.remove('active'));
     t.classList.add('active'); $('#p-'+t.dataset.p).classList.add('active');
@@ -1351,7 +1387,7 @@ const INTEL_TOOLS=[
   {id:'abuseipdb',label:'AbuseIPDB',free:false,req:'pro',ph:'8.8.8.8',hint:'IP abuse confidence & report history.'},
   {id:'urlscan',label:'URL Scanner',free:false,req:'pro',ph:'example.com',hint:'Submit a URL for sandbox scanning.'},
   {id:'leakcheck',label:'LeakCheck',free:false,req:'pro',ph:'email/username',hint:'Breach & leak intelligence (email/user/phone).'},
-  {id:'darkweb',label:'Dark Web',free:false,req:'pro',ph:'email / username / .onion term',hint:'Leak databases + Ahmia Tor hidden-service index (read-only, never opens .onion sites).'},
+  {id:'darkweb',label:'Dark Web',free:true,req:'',ph:'email / username / leak check',hint:'Leak databases + Ahmia Tor hidden-service index (read-only, never opens .onion sites).'},
 ];
 let curIntel='ip';
 function renderIntel(){
@@ -1423,28 +1459,28 @@ async function renderTrackerBox(){
     <div class="hint" style="margin-top:6px">Paste any URL. OraCool makes a <b>tracking link named after it</b>. When someone opens it, their visit is logged automatically (IP, device, browser, screen, language, referrer) and they are instantly sent to the real site. You watch a live preview here.</div>
     <input type="text" id="trUrl" placeholder="URL to track — e.g. https://example.com/page" style="margin-top:8px">
     <input type="text" id="trName" placeholder="Link name (optional — defaults to the site's name)" style="margin-top:8px">
+    <input type="text" id="trAlias" placeholder="Custom link ending (optional — 'gift' gives you …/t/gift)" style="margin-top:8px">
     <div class="row" style="margin-top:8px"><button class="btn primary" id="trCreate">Create tracking link</button><button class="btn ghost" id="trList">My links</button></div>
     <div class="result" id="trOut" style="margin-top:8px"></div>`;
   $('#trCreate').onclick=async()=>{
-    const url=$('#trUrl').value.trim(), name=$('#trName').value.trim();
+    const url=$('#trUrl').value.trim(), name=$('#trName').value.trim(), alias=$('#trAlias').value.trim();
     const out=$('#trOut');
     if(!/^https?:\/\//i.test(url)){ out.innerHTML='<div class="errbox">Paste a full URL starting with http:// or https://</div>'; return; }
     out.innerHTML='<div style="text-align:center;padding:8px"><span class="spinner"></span></div>';
-    const r=await post('/api/tracker/create',{url, name, email:myEmail()});
+    const r=await post('/api/tracker/create',{url, name, alias, email:myEmail()});
     if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
     const link=(srv&&srv.tracker_domain? (srv.tracker_domain.startsWith('http')?'':'https://')+srv.tracker_domain : location.origin)+r.url;
     out.innerHTML=`
       <div class="okbox">Tracking link created for <b>${escapeHtml(r.target)}</b>.</div>
       <input type="text" value="${escapeHtml(link)}" id="trLink" readonly style="margin-top:6px">
-      <div class="row" style="margin-top:8px"><button class="btn primary" id="trCopy">Copy link</button><button class="btn ghost" id="trShort">✨ Get short link</button><button class="btn ghost" id="trOpen">Test it</button><button class="btn ghost" id="trView">View live preview</button></div>
+      <div class="row" style="margin-top:8px"><button class="btn primary" id="trCopy">Copy link</button><button class="btn ghost" id="trShort">✨ Extra: public os8.me shortener (optional)</button><button class="btn ghost" id="trOpen">Test it</button><button class="btn ghost" id="trView">View live preview</button></div>
       <div id="trShortOut"></div>
-      <div class="hint" style="margin-top:6px">Send it anywhere. Every open is logged here — they land on the real site instantly. Tip: set <b>TRACKER_DOMAIN</b> in Render env (after adding a custom domain) to brand the link fully.</div>`;
+      <div class="hint" style="margin-top:6px">This is <b>exactly the link you asked for</b> — the destination with a tracker wrapped around it, hosted on YOUR domain (not a third-party shortener). Every open is logged here; visitors land on the real site instantly. Tip: set <b>TRACKER_DOMAIN</b> in Render env (after adding a custom domain) to brand it fully.</div>`;
     $('#trShort').onclick=async()=>{
       const so=$('#trShortOut'); so.innerHTML='<span class="spinner"></span>';
       const rs=await post('/api/tracker/shorten',{url:link});
       if(rs.ok){ so.innerHTML=`<div style="margin-top:8px"><input type="text" value="${escapeHtml(rs.short_url)}" id="trLink2" readonly style="margin-top:4px"><button class="btn small primary" id="trCopy2" style="margin-top:6px">Copy short link</button></div>`;
         $('#trCopy2').onclick=()=>{ try{ navigator.clipboard.writeText(rs.short_url); }catch(e){} $('#trCopy2').textContent='✓ Copied'; };
-        $('#trLink').value=rs.short_url;
       } else so.innerHTML='<div class="hint" style="margin-top:6px">Shortener unavailable right now — the link above works exactly the same.</div>';
     };
     $('#trCopy').onclick=()=>{ const u=$('#trLink'); u.select(); try{ navigator.clipboard.writeText(u.value); }catch(e){} };
@@ -1456,8 +1492,9 @@ async function renderTrackerBox(){
     const r=await post('/api/tracker/list',{email:myEmail()});
     if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
     if(!(r.links||[]).length){ out.innerHTML='<div class="hint">No links yet. Create one above.</div>'; return; }
-    out.innerHTML=r.links.map(l=>`<div class="kv" style="margin-bottom:8px"><div class="k">Link</div><div class="val"><span class="tag">/t/${escapeHtml(l.slug)}</span></div><div class="k">Name</div><div class="val">${escapeHtml(l.name||'—')}</div><div class="k">Target</div><div class="val">${escapeHtml(l.target||'')}</div><div class="k">Visits</div><div class="val">${l.visits} <button class="btn ghost small" data-slug="${escapeHtml(l.slug)}">▶ Live preview</button></div></div>`).join('');
+    out.innerHTML=r.links.map(l=>{ const full=(srv&&srv.tracker_domain? (srv.tracker_domain.startsWith('http')?'':'https://')+srv.tracker_domain : location.origin)+'/t/'+l.slug; return `<div class="kv" style="margin-bottom:8px"><div class="k">Link</div><div class="val"><span class="tag">${escapeHtml(full)}</span> <button class="btn ghost small" data-copy="${escapeHtml(full)}">copy</button></div><div class="k">Name</div><div class="val">${escapeHtml(l.name||'—')}</div><div class="k">Target</div><div class="val">${escapeHtml(l.target||'')}</div><div class="k">Visits</div><div class="val">${l.visits} <button class="btn ghost small" data-slug="${escapeHtml(l.slug)}">▶ Live preview</button></div></div>`; }).join('');
     out.querySelectorAll('[data-slug]').forEach(b=>{ b.onclick=()=>trackerPreview(b.dataset.slug); });
+    out.querySelectorAll('[data-copy]').forEach(b=>{ b.onclick=()=>{ try{ navigator.clipboard.writeText(b.dataset.copy); b.textContent='✓'; }catch(e){} }; });
   };
 }
 let trackerPoll=null;
@@ -2148,7 +2185,7 @@ function renderAdminRows(users){
       </div>
       <div style="display:flex; gap:6px; flex-wrap:wrap">
         ${u.admin?'':`<button class="btn small ghost" data-act="block" data-i="${i}" style="color:${u.blocked?'var(--ok)':'var(--danger)'};border-color:${u.blocked?'var(--ok)':'var(--danger)'}">${u.blocked?'Unblock':'Block'}</button>`}
-        <button class="btn small ghost" data-act="pro" data-i="${i}" style="color:var(--cyan2)">${(u.pro||(u.plan&&u.plan!=='free'))?'Manage plan':'Grant a plan'}</button>
+        <button class="btn small ghost" data-act="pro" data-i="${i}" style="color:var(--cyan2)">${(u.pro||(u.plan&&u.plan!=='free'))?'Manage plan':'Grant a plan'}</button>${u.admin?'':`<button class="btn small ghost" data-act="del" data-i="${i}" title="Delete this user permanently" style="color:var(--danger);border-color:var(--danger)">🗑</button>`}
       </div>
     </div>`;
   }).join(''):'<div class="muted">No users found.</div>';
@@ -2157,6 +2194,13 @@ function renderAdminRows(users){
 async function adminAction(act, idx){
   const u=adminCache[idx]; if(!u) return;
   const out=$('#aOut');
+  if(act==='del'){
+    if(!confirm('DELETE '+u.email+' permanently?\nThis erases their account, subscription, cases/evidence and trackers. Irreversible.')) return;
+    const rd=await post('/api/admin/delete',{email:u.email, token:proToken});
+    if(rd.ok){ addSystemNote(`User <b>${escapeHtml(u.email)}</b> deleted — removed: ${(rd.removed||[]).join(', ')||'records'}.`); refreshAdmin(); }
+    else addErr('Admin: '+(rd.error||'failed'));
+    return;
+  }
   if(act==='block'){
     if(u.blocked){ await post('/api/admin/block',{email:u.email, blocked:false, token:proToken}); addSystemNote(`Unblocked <b>${escapeHtml(u.email)}</b>.`); refreshAdmin(); return; }
     const reason=prompt('Reason for blocking '+u.email+':','Misuse of the AI')||'Misuse of the AI';
@@ -2297,7 +2341,7 @@ async function refreshTrading(){
     <div class="stat"><div class="l">Cash</div><div class="v">$${(a.cash||0).toLocaleString()}</div></div>
     <div class="stat"><div class="l">Equity</div><div class="v">$${(a.equity||0).toLocaleString()}</div></div>
     <div class="stat"><div class="l">P&amp;L</div><div class="v ${pnlCls}">${a.pnl>=0?'+':''}$${(a.pnl||0).toLocaleString()} (${a.pnl_pct>=0?'+':''}${a.pnl_pct}%)</div></div>`;
-  drawChart(a.history||[], a.initial||100000);
+  drawChart(a.history||[], a.initial||100000, a.equity);
   const pos=a.positions||[];
   $('#tPos').innerHTML = pos.length? `<table class="ptable"><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Last</th><th>Value</th><th>P&amp;L</th></tr>${pos.map(p=>`
     <tr><td style="color:var(--cyan2)">${p.symbol}</td><td>${p.qty.toFixed(6)}</td><td>$${(p.avg||0).toLocaleString()}</td><td>$${(p.price||0).toLocaleString()}</td><td>$${(p.value||0).toLocaleString()}</td><td style="color:${(p.pnl||0)>=0?'var(--ok)':'var(--danger)'}">${(p.pnl||0)>=0?'+':''}$${(p.pnl||0).toLocaleString()}</td></tr>`).join('')}</table>`
@@ -2317,11 +2361,12 @@ async function refreshTrading(){
   $('#tAutoLbl').textContent=au.enabled? 'ON (paper)' : 'OFF';
   $('#tAutoLog').innerHTML=(au.log||[]).map(l=>`<div class="logline"><span class="ts">${l.ts}</span> ${escapeHtml(l.msg)}</div>`).join('');
 }
-function drawChart(hist, initial){
+setInterval(()=>{ try{ const tb=document.querySelector('.tab.active'); if(tb && tb.dataset.p==='trading' && session) refreshTrading(); }catch(e){} }, 10000);
+function drawChart(hist, initial, liveEquity){
   const c=$('#tChart'); if(!c) return;
   const ctx=c.getContext('2d');
   ctx.clearRect(0,0,c.width,c.height);
-  const pts=hist||[];
+  const pts=(hist||[]).slice().concat(liveEquity?[{ts:'now',equity:liveEquity}]:[]);
   const W=c.width, H=c.height;
   ctx.strokeStyle='rgba(0,229,255,.12)'; ctx.lineWidth=1;
   for(let i=0;i<4;i++){ const y=H/4*i; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
@@ -2429,6 +2474,8 @@ function renderSettings(){
       <option value="60" ${Number(settings.lockMins)===60?'selected':''}>After 1 hour</option>
     </select>
     <div class="hint" style="margin-top:4px">Locks the whole app (cases &amp; evidence included) when idle — unlock with your password or Face ID. Recommended for shared or work devices.</div>
+    <div style="display:flex; align-items:center; gap:10px; margin-top:8px"><div class="switch ${settings.lockAlways?'on':''}" id="sLockAlways"></div><span class="muted">Lock the chat history <b>every time</b> the app opens (nobody else can read your cases)</span></div>
+    <div class="row"><button class="btn ghost small" id="sLockNow" style="min-height:44px">🔒 Lock session now</button></div>
     <label class="lbl">Pocket Option SSID <span class="muted">(demo trading — yours only)</span></label>
     <input type="text" id="sPoSSID" value="${escapeHtml(settings.poSSID||'')}" placeholder="paste SSID from your logged-in session">
     <div class="hint">Get it: pocketoption.com → F12 → Application → Session Storage → copy the "ssid" value. Demo mode only.</div>
@@ -2453,6 +2500,8 @@ function renderSettings(){
   $('#sTts').onclick=()=>{ settings.ttsOn=!settings.ttsOn; $('#sTts').classList.toggle('on',settings.ttsOn); };
   $('#sPro').onclick=()=>{ settings.proactive=settings.proactive===false; $('#sPro').classList.toggle('on',settings.proactive); saveSettings(); applyProactive(); };
   $('#sWake').onclick=()=>{ setWakeArmed(!wakeArmed); };
+  const _lkn=$('#sLockNow'); if(_lkn) _lkn.onclick=()=>showLockScreen();
+  const _lla=$('#sLockAlways'); if(_lla) _lla.onclick=()=>{ settings.lockAlways=!settings.lockAlways; _lla.classList.toggle('on',settings.lockAlways); saveSettings(); addAI(settings.lockAlways?'Chat lock enabled — this app will demand your password or Face ID every time it opens.':'Chat lock turned off.'); };
   $('#sTest').onclick=()=>speak('All systems operational. This is OraCool AI.');
   $('#sUpgrade').onclick=openUpgrade;
   const lg=$('#sLogout'); if(lg)lg.onclick=()=>{ setProToken(''); renderSettings(); renderStatus(); addAI('Signed out of PRO mode.'); };
@@ -2473,6 +2522,27 @@ function renderSettings(){
 }
 
 /* ---------- upgrade / paystack ---------- */
+function cryptoPayFlow(){
+  const btn=$('#payCryptoBtn'); if(!btn) return;
+  btn.onclick=async()=>{
+    const box=$('#cryptoBox'); box.style.display='block';
+    const email=($('#upEmail').value||'').trim()||myEmail()||'';
+    box.innerHTML='<span class="spinner"></span> Creating your crypto invoice…';
+    const r=await post('/api/pay/crypto/invoice',{email, plan:pendingPlan});
+    if(r.error){ box.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+    if(!r.pay_url){ box.innerHTML='<div class="errbox">The gateway returned no payment link — tell the admin to check the ATLOS merchant config.</div>'; return; }
+    box.innerHTML=`<div class="okbox" style="text-align:left">Pay <b>$${r.amount_usd}</b> in any accepted coin (BTC · USDT · ETH · XMR…). Your plan unlocks automatically when the network confirms.</div>
+      <div class="row" style="margin-top:8px"><button class="btn primary small" style="flex:1;justify-content:center;min-height:44px" id="cOpen">Open secure ATLOS checkout →</button></div>
+      <div class="muted" style="font-size:11px;margin-top:6px">Order <b>${escapeHtml(r.ref)}</b> · <span id="cStat">⏳ waiting for payment…</span></div>`;
+    $('#cOpen').onclick=()=>{ try{ window.open(r.pay_url,'_blank'); }catch(e){ location.href=r.pay_url; } };
+    const poll=setInterval(async()=>{
+      const s=await post('/api/pay/crypto/status',{ref:r.ref}).catch(()=>({}));
+      if(s.paid){ clearInterval(poll); const st=$('#cStat'); if(st) st.innerHTML='<b style="color:var(--ok)">✔ Paid — '+escapeHtml(s.plan||'plan')+' activated.</b>';
+        setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 1400); }
+    }, 15000);
+    setTimeout(()=>clearInterval(poll), 16*60*1000);
+  };
+}
 let pendingPlan='pro';
 const PLAN_BENEFITS={
   starter:['Unlimited chat with live free tools','Extended memory · wake word','Live web search (Tavily)','NASA APOD / EPIC / NEO','Smart-home voice control'],
@@ -2481,6 +2551,7 @@ const PLAN_BENEFITS={
   enterprise:['Everything in Professional','API access for agencies &amp; security teams','Custom AI models on your data · white-label branding','Team seats, SSO/roles, private or on-prem deployment','Dedicated support &amp; SLA — custom agreement']
 };
 function openUpgrade(plan){
+  try{ cryptoPayFlow(); }catch(e){}
   plan=plan||'pro'; pendingPlan=plan;
   const plans=(srv&&srv.plans)||[];
   const pick=$('#planPick');

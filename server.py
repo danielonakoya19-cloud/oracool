@@ -2168,7 +2168,7 @@ def gen_image(prompt, aspect_ratio="1:1"):
     return {"error": "Image generation unavailable — " + " | ".join(failures + ["free engines failed"])}
 
 
-def gen_video(prompt, duration=None):
+def gen_video(prompt, duration=None, want_audio=False):
     """Text-to-video cascade: HiAPI (premium) → CVRON free (flux frame + WAN-22
     animation). Errors are surfaced honestly with the exact fix."""
     prompt = (prompt or "").strip()
@@ -2176,11 +2176,19 @@ def gen_video(prompt, duration=None):
         return {"error": "Describe the video you want, e.g. 'a drone flying over a rainforest'."}
     if len(prompt) < 3:
         return {"error": "Prompt too short."}
+    want_audio = bool(want_audio)
     failures = []
     k = key("HIA_API_KEY")
     if k:
-        model = KEYS.get("HIA_VIDEO_MODEL", HIA_VIDEO_DEFAULT)
+        if want_audio:
+            model = KEYS.get("HIA_VIDEO_AUDIO_MODEL", "veo-3.1/text-to-video")
+        else:
+            model = KEYS.get("HIA_VIDEO_MODEL", HIA_VIDEO_DEFAULT)
         inp = {"prompt": prompt}
+        if want_audio:
+            inp["prompt"] = (prompt + " [include natural synchronized audio: ambient sound, "
+                             "and clear spoken voice if anyone speaks in the scene]")
+            inp["generate_audio"] = True
         if duration:
             inp["duration"] = duration
         tid, err = hiapi_submit(model, inp, k)
@@ -2188,7 +2196,8 @@ def gen_video(prompt, duration=None):
             res = hiapi_poll(tid, k, budget=150)
             if res.get("ok"):
                 return {"ok": True, "provider": "hiapi", "model": model,
-                        "prompt": prompt, "videos": res.get("urls", [])}
+                        "prompt": prompt, "videos": res.get("urls", []),
+                        "audio": "synchronized audio generated (Veo/sound-aware model)" if want_audio else "model did not request audio"}
             failures.append("HiAPI: " + str(res.get("error"))[:140])
         else:
             failures.append("HiAPI: " + (err or "no task id"))
@@ -2197,11 +2206,18 @@ def gen_video(prompt, duration=None):
     cv = _cvron_video(prompt)
     if cv.get("ok"):
         out = {"ok": True, "provider": "cvron-free (WAN-22)", "model": "wan22-img2video",
-               "prompt": prompt, "videos": cv["urls"]}
+               "prompt": prompt, "videos": cv["urls"], "audio": False}
+        notes = []
+        if want_audio:
+            notes.append("SOUND WAS REQUESTED but free engines render SILENT video — with HiAPI "
+                         "credits OraCool auto-switches to Veo 3.1 which generates the clip WITH "
+                         "voice and synchronized sound. Top up at hiapi.ai to enable talking video.")
         if failures:
-            out["note"] = ("Premium video providers were unavailable (" + "; ".join(failures)
-                           + ") — this clip was animated by CVRON's free WAN-22 API. "
-                           "Top up HiAPI for longer HD video.")
+            notes.append("Premium video providers were unavailable (" + "; ".join(failures) +
+                         ") — this clip was animated by CVRON's free WAN-22 API. "
+                         "Top up HiAPI for longer HD video.")
+        if notes:
+            out["note"] = " ".join(notes)
         return out
     return {"error": "Video generation unavailable — " + " | ".join(failures + [cv.get("error", "cvron failed")])
             + ". If the balance is empty, top up at hiapi.ai or nexawapi.com and premium video activates instantly."}
@@ -2277,9 +2293,50 @@ def osint_darkweb(target):
             out["sources"].append("Ahmia hidden-service search")
     except Exception as e:
         out["ahmia_search"] = {"error": str(e)[:120]}
+    # Direct-information summary the AI can quote verbatim
+    hits = ((out.get("hidden_service_search") or {}).get("results") or []) + \
+           ((out.get("ahmia_search") or {}).get("results") or [])
+    lk = out.get("leak_databases") or {}
+    try:
+        leak_hits = len(lk.get("leaks") or lk.get("results") or lk.get("entries") or [])
+    except Exception:
+        leak_hits = 0
+    out["quick_facts"] = {"hidden_services_found": len(hits),
+                          "top_matches": [(h.get("title") or h.get("onion") or h.get("link") or "")[:70]
+                                          for h in hits[:5]],
+                          "breach_database_rows": leak_hits,
+                          "leak_sources": out.get("sources", [])}
+    # Media previews: never fetched from .onion hosts — only from the CLEARNET
+    # mirror URLs the public indexes mention. Safe, http(s)-only.
+    clearnet = []
+    for h in hits:
+        for m in re.findall(r"https?://(?:[a-z0-9-]+\.)+[a-z]{2,}[^\s\"'<>]*",
+                            (h.get("snippet") or "") + " " + (h.get("description") or "")):
+            if ".onion" not in m and m not in clearnet and "onionland" not in m and "ahmia" not in m:
+                clearnet.append(m)
+        if len(clearnet) >= 4:
+            break
+    gallery = []
+    for cu in clearnet[:4]:
+        try:
+            _, raw, _ = http_fetch(cu, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+            page = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+            im = re.search(r'property="og:image"[^>]*content="([^"]+)"', page) or \
+                 re.search(r'content="([^"]+)"[^>]*property="og:image"', page) or \
+                 re.search(r'<img[^>]+src="(https?://[^"]+\.(?:png|jpe?g|webp|gif)[^"]*)"', page)
+            vd = re.search(r'<(?:video|source)[^>]+src="(https?://[^"]+\.(?:mp4|webm)[^"]*)"', page)
+            if im and im.group(1).startswith("http"):
+                gallery.append({"image": im.group(1)[:300], "from": cu[:120]})
+            if vd and vd.group(1).startswith("http"):
+                gallery.append({"video": vd.group(1)[:300], "from": cu[:120]})
+        except Exception:
+            continue
+    if gallery:
+        out["media"] = gallery[:6]
     out["safety"] = ("Read-only dark-web OSINT for investigation. .onion links are listed for "
                      "reference only — OraCool never opens them. Many dark-web services host scams "
-                     "or malware; never transact with anything found here.")
+                     "or malware; never transact with anything found here. Media previews come from "
+                     "public CLEARNET mirrors referenced in the index — never from .onion hosts.")
     return out
 
 
@@ -2778,11 +2835,12 @@ def _watch_loop():
         time.sleep(6 * 3600)
 
 
-DOC_PROVIDERS = {"seon": "SEON_API_KEY", "kinegram": "KINEGRAM_KEY", "kairos": "KAIROS_KEY"}
+DOC_PROVIDERS = {"seon": ("SEON_API_KEY",), "kinegram": ("KINEGRAM_KEY", "KINEGRAM_API_KEY"),
+                 "kairos": ("KAIROS_KEY", "KAIROS_API_KEY")}
 
 
 def doc_verification_state():
-    configured = [n for n, k in DOC_PROVIDERS.items() if key(k)]
+    configured = [n for n, ks in DOC_PROVIDERS.items() if any(key(k) for k in ks)]
     return {"configured": bool(configured), "providers": configured}
 
 
@@ -2817,7 +2875,7 @@ def verify_document(dtype, data):
     else:
         out["note"] = ("No verification provider configured. To activate real checks, contract with "
                        "SEON, Kinegram or Kairos and set its key (SEON_API_KEY / KINEGRAM_KEY / "
-                       "KAIROS_KEY) in keys.json or the Render environment. Until then OraCool "
+                       "KAIROS_KEY or KAIROS_API_KEY) in keys.json or the Render environment. Until then OraCool "
                        "reports framework status only and never fabricates an authenticity verdict — "
                        "that is the legally responsible behaviour.")
     return out
@@ -3366,7 +3424,7 @@ TIER_ORDER = ["free", "starter", "pro", "ultra", "enterprise"]
 TIER_TOOL_SETS = {
     "free":       ["ip", "domain", "email", "username", "phone", "weather", "stock", "crypto", "fred", "time", "math", "space"],
     "starter":    ["search"],
-    "pro":        ["shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck", "darkweb", "image", "mars", "library"],
+    "pro":        ["shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck", "image", "mars", "library"],
     "ultra":      ["video", "github", "domscan", "fcs", "smart"],
     "enterprise": ["*"],
 }
@@ -3400,7 +3458,7 @@ def get_config():
                   "default_provider": KEYS.get("BRAIN_PROVIDER", "groq"),
                   "default_model": KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL),
                   "fast_model": KEYS.get("GROQ_FAST_MODEL", GROQ_DEFAULT_MODEL),
-                  "chat_max_tokens": int(KEYS.get("CHAT_MAX_TOKENS", 900))},
+                  "chat_max_tokens": int(KEYS.get("CHAT_MAX_TOKENS", 3000))},
         "keys": loaded(["NEXAAPI_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "PAYSTACK_SECRET_KEY",
                         "SUPABASE_URL", "GITHUB_TOKEN", "SHODAN_API_KEY",
                         "VIRUSTOTAL_API_KEY", "ABUSEIPDB_API_KEY", "IPINFO_API_KEY",
@@ -3409,7 +3467,8 @@ def get_config():
                         "FRED_API_KEY", "ALPACA_PAPER_KEY_ID", "ALPACA_PAPER_SECRET",
                         "NASA_API_KEY", "HIA_API_KEY", "PIXAZO_KEY", "SHORTAPI_KEY",
                         "TOKENMIX_API_KEY", "FCS_API_KEY", "DOMSCAN_API_KEY",
-                        "GOOGLE_CLIENT_ID", "HA_URL"]),
+                        "GOOGLE_CLIENT_ID", "HA_URL",
+                        "KAIROS_API_KEY", "ATLOS_MERCHANT_ID", "ATLOS_API_SECRET"]),
         "paystack_public_key": key("PAYSTACK_PUBLIC_KEY") if not key("PAYSTACK_TEST") else key("PAYSTACK_TEST_PUBLIC"),
         "paystack_test": bool(key("PAYSTACK_TEST")),
         "paystack_currency": (KEYS.get("PAYSTACK_CURRENCY") or "NGN").upper(),
@@ -3443,6 +3502,11 @@ def get_config():
         "cvron_ready": True,
         "email_verification": bool(key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY")),
         "darkweb_ready": True,
+        "darkweb_open": True,
+        "crypto_ready": bool(key("ATLOS_API_SECRET") and key("ATLOS_MERCHANT_ID")),
+        "news_ready": True,
+        "skills_ready": True,
+        "upload_media": True,
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "code",
@@ -3708,7 +3772,7 @@ def _shrink(obj, limit=1200):
         txt = str(obj)
     return txt[:limit]
 
-def auto_tools(text, tier="free", ha_url=None, ha_token=None):
+def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None):
     """Detect intent in the user's message and RUN the matching live tool(s)."""
     t = (text or "").strip()
     if not t:
@@ -3775,6 +3839,16 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
         if um and any(k in low for k in ("username", "handle", "profile", "@", "lookup", "who is")):
             out.append({"tool": "username", "label": "username " + um.group(1),
                         "result": _shrink(osint_username(um.group(1)))})
+    # dark-web intelligence — FREE on every plan (passive public indexes only:
+    # breach databases + OnionLand/Ahmia hidden-service directories. .onion sites
+    # are NEVER opened; no Tor, no downloads, no transactions.)
+    if any(k in low for k in ("dark web", "dark-web", "darkweb", "onion", "tor site",
+                              "paste site", "criminal forum", "leaked on")):
+        term = re.sub(r"(?i)\b(?:dark\s?-?\s?web|darkweb|onion|tor site|search|check|look up|look for|for|about|on|the|a|an)\b",
+                      " ", t)
+        term = " ".join(term.split())[:60] or "marketplace"
+        out.append({"tool": "darkweb", "label": "dark-web · " + term,
+                    "result": _shrink(osint_darkweb(term), 1800)})
     # space (free)
     if any(k in low for k in ("picture of the day", "apod", "space picture", "nasa picture", "picture today")):
         out.append({"tool": "space", "label": "NASA picture of the day", "result": _shrink(space_apod())})
@@ -3848,14 +3922,6 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
             if um2:
                 out.append({"tool": "mediainspect", "label": "image forensics",
                             "result": _shrink(media_inspect(um2.group(0)), 1400)})
-        # dark-web intelligence (leak databases + Ahmia .onion index, read-only)
-        if any(k in low for k in ("dark web", "dark-web", "darkweb", "onion", "tor site",
-                                  "paste site", "criminal forum")):
-            term = re.sub(r"(?i)\b(?:dark\s?-?\s?web|darkweb|onion|tor site|search|check|look up|look for|for|about|on|the|a|an)\b",
-                          " ", t)
-            term = " ".join(term.split())[:60] or "marketplace"
-            out.append({"tool": "darkweb", "label": "dark-web · " + term,
-                        "result": _shrink(osint_darkweb(term), 1800)})
         # NASA Mars rovers + image library (PRO)
         if "mars" in low and ("rover" in low or "mars" in low):
             out.append({"tool": "space", "label": "Mars rover imagery", "result": _shrink(space_mars())})
@@ -3877,8 +3943,11 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
         vm = re.search(r"(?:generate|create|make)\s+(?:a\s+)?(?:video|clip|animation|film)\s*(?:of|about|for)?\s*(.{6,200})", low)
         if vm and any(k in low for k in ("video", "clip", "animation", "film")):
             prompt = vm.group(1).strip().rstrip("?!., ")
+            want_aud = bool(re.search(r"\b(?:with|having|have)\s+(?:sound|audio|voice|speech|voices|talking)\b", low))
+            if want_aud:
+                prompt = re.sub(r"\s*\b(?:with|having|have)\s+(?:sound|audio|voice|speech|voices)\b\s*", " ", prompt).strip()
             if prompt:
-                r = gen_video(prompt)
+                r = gen_video(prompt, want_audio=want_aud)
                 out.append({"tool": "video", "label": "video · " + prompt[:40],
                             "result": _shrink(r, 1200)})
         if "github" in low:
@@ -3890,6 +3959,74 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
             except Exception:
                 pass
 
+    # Live news — free, global, sourced (Google News RSS)
+    if re.search(r"\b(news|headlines|latest updates|what happened|current events)\b", low):
+        q = re.sub(r"(?i)\b(news|headlines|latest|updates|what|happened|current|events|today|give|me|show|any|about|the|a)\b", " ", low)
+        q = " ".join(q.split())[:80]
+        out.append({"tool": "news", "label": "news · " + (q[:28] or "world"),
+                    "result": _shrink(osint_news(q), 2200)})
+
+    # Link tracker from chat: "create a tracking link for https://x called myword"
+    lm = re.search(r"(?:create|make)\s+(?:a\s+)?(?:short|tracking)?\s*link\s+(?:for|to)\s+(https?://\S+|[\w.-]+\.\w{2,}\S*)(?:\s+(?:called|named|as)\s+([a-z0-9][a-z0-9.-]{1,30}))?", low)
+    if lm and email and "tracker" not in low:
+        tgt = lm.group(1)
+        if not tgt.lower().startswith("http"):
+            tgt = "https://" + tgt
+        r = tracker_create(tgt, email, alias=(lm.group(2) or ""))
+        out.append({"tool": "link", "label": "track · " + (r.get("slug") or tgt[:20]),
+                    "result": _shrink(r, 400)})
+
+    # Custom skills — the user can upgrade their own AI with new features
+    if email:
+        sm = re.search(r"(?:add|create|teach yourself|upgrade yourself with|make a new)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:skill|feature|command)\s+(?:called|named|to|that)?\s*[:\"']?([^\"'\n:]{2,40})[:\s]*", low)
+        if sm:
+            nm = sm.group(1).strip().strip(".!?, ")[:40]
+            tail = low.split(sm.group(0), 1)[-1].strip(" .:\"'")
+            r = skill_save(email, nm, nm, (tail or ("When relevant, execute this skill: " + nm))[:2000])
+            out.append({"tool": "skill", "label": "skill · " + nm[:28], "result": _shrink(r, 400)})
+        if re.search(r"list my skills|what skills do i have|show my (custom )?features", low):
+            out.append({"tool": "skills", "label": "skills",
+                        "result": _shrink({"skills": skills_load(email)}, 1400)})
+        dm = re.search(r"(?:remove|delete|forget)\s+(?:my\s+)?(?:skill|feature)\s+([^?\n.]{2,50})", low)
+        if dm:
+            out.append({"tool": "skill", "label": "forget skill",
+                        "result": _shrink(skill_delete(email, dm.group(1).strip()), 300)})
+
+    # Creator/admin board — the AI runs the console itself, server-side
+    if email and is_admin(email):
+        bm = re.search(r"(?:block|ban|suspend)\s+(?:the\s+)?(?:user|account)?\s*([^\s@]+@[^\s@]+\.[^\s@]+)", low)
+        um = re.search(r"(?:unblock|unban|reinstate|allow)\s+(?:the\s+)?(?:user|account)?\s*([^\s@]+@[^\s@]+\.[^\s@]+)", low)
+        gm = re.search(r"grant\s+(starter|pro|ultra|professional|enterprise)(?:\s+plan)?\s+(?:to|for)\s+([^\s@]+@[^\s@]+\.[^\s@]+)(?:\s+for\s+(\d+)\s*days?)?", low)
+        rm = re.search(r"(?:revoke|downgrade|cancel)\s+(?:the\s+)?(?:subscription|plan|access)\s+(?:of|for|to)\s+([^\s@]+@[^\s@]+\.[^\s@]+)", low)
+        dm2 = re.search(r"(?:delete|remove|erase)\s+(?:the\s+)?(?:user|account)\s+([^\s@]+@[^\s@]+\.[^\s@]+)", low)
+        bm = bm and not (um and um.start() <= bm.start()) and bm
+        if bm and "unblock" not in low[bm.start():bm.start()+10]:
+            tgt = _clean_email(bm.group(1))
+            out.append({"tool": "admin", "label": "block " + tgt,
+                        "result": _shrink(block_user(tgt, True,
+                                                      "blocked by admin via AI chat", email), 300)})
+        if um:
+            tgt = _clean_email(um.group(1))
+            out.append({"tool": "admin", "label": "unblock " + tgt,
+                        "result": _shrink(block_user(tgt, False,
+                                                      "unblocked by admin via AI chat", email), 300)})
+        if gm:
+            plan = "ultra" if gm.group(1) in ("professional", "ultra") else gm.group(1)
+            tgt = gm.group(2).lower().strip(" .,;:\"'")
+            out.append({"tool": "admin", "label": "grant " + gm.group(1),
+                        "result": _shrink(admin_set_pro(tgt, plan,
+                                                         int(gm.group(3) or 30), email), 350)})
+        if rm:
+            out.append({"tool": "admin", "label": "revoke plan",
+                        "result": _shrink(admin_set_pro(rm.group(1).lower().strip(" .,;:\"'"), "free", by=email), 300)})
+        if dm2:
+            out.append({"tool": "admin", "label": "DELETE user",
+                        "result": _shrink(admin_delete_user(dm2.group(1).lower().strip(" .,;:\"'"), email), 450)})
+        if re.search(r"list (?:all )?(?:the )?users|how many users|my (?:users|customers|subscribers)|who signed up", low):
+            out.append({"tool": "admin", "label": "user board", "result": _shrink(admin_users_payload(), 2200)})
+        if re.search(r"\b(revenue|mrr|income|earnings|sales report)\b", low):
+            out.append({"tool": "admin", "label": "revenue", "result": _shrink(admin_revenue_payload(), 1500)})
+
     # Locked-feature notices: the AI explains what plan unlocks it (honest, no fake results)
     def _locked(feature, plan):
         out.append({"tool": "locked", "label": feature,
@@ -3900,8 +4037,6 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None):
     if not tier_gte(tier, "pro"):
         if any(k in low for k in ("shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck")):
             _locked("deep OSINT (Shodan / VirusTotal / AbuseIPDB / URLScan / LeakCheck)", "pro")
-        if any(k in low for k in ("dark web", "dark-web", "darkweb", "onion", "tor site")):
-            _locked("dark-web intelligence (breach databases + Ahmia hidden-service index)", "pro")
         im2 = re.search(r"(?:generate|create|make|draw|imagine)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
         if im2 and any(k in low for k in ("generate", "create", "make", "draw", "imagine", "image", "picture")):
             _locked("image creation", "pro")
@@ -3971,6 +4106,36 @@ def _xlsx_text(data):
         return ""
 
 
+def _vision_describe(name, mime, data_b64):
+    """Best-effort image description through any vision-capable provider key.
+    Returns "" when nothing can serve it — never a fabricated description."""
+    gk = key("GROQ_API_KEY")
+    tries = []
+    if gk:
+        tries.append(("https://api.groq.com/openai/v1/chat/completions", gk,
+                      KEYS.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")))
+    ok_ = key("OPENAI_API_KEY")
+    if ok_:
+        tries.append(("https://api.openai.com/v1/chat/completions", ok_, "gpt-4o-mini"))
+    payload_img = {"type": "image_url", "image_url": {"url": "data:" + (mime or "image/jpeg") + ";base64," + (data_b64 or "")[:1_400_000]}}
+    for url, k, model in tries:
+        try:
+            _, raw, _ = http_fetch(url, method="POST", timeout=60,
+                                   headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
+                                   json_body={"model": model, "max_tokens": 300,
+                                              "messages": [{"role": "user", "content": [
+                                                  {"type": "text",
+                                                   "text": "Describe this image factually for an OSINT analyst: objects, text visible, people-count (no names), scene type, likely edit/screenshot evidence. 3 sentences max."},
+                                                  payload_img]}]})
+            d = json.loads(raw)
+            c = (d.get("choices") or [{}])[0].get("message", {}).get("content")
+            if c and len(c.strip()) > 20:
+                return c.strip()
+        except Exception:
+            continue
+    return ""
+
+
 def analyze_file(name, mime, data_b64):
     try:
         data = base64.b64decode(data_b64 or "")
@@ -3994,10 +4159,30 @@ def analyze_file(name, mime, data_b64):
     elif ext in (".html", ".htm"):
         kind = "html"
         text = re.sub(r"<[^>]+>", " ", data.decode("utf-8", "replace"))
-    elif mime.startswith("image/"):
-        return {"name": name, "type": "image", "chars": 0, "text": "",
-                "note": "This is an image. Reading it requires a vision model (OpenAI gpt-4o); "
-                        "your OpenAI account has no credits right now. Add billing and I'll analyze images too."}
+    elif mime.startswith("image/") or ext in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"):
+        fore = {}
+        try:
+            fore = media_inspect(data_b64=data_b64) or {}
+        except Exception:
+            pass
+        desc = _vision_describe(name, mime or ("image/" + ("png" if ext == ".png" else "jpeg")), data_b64)
+        note = ("Image received. " + (desc + " " if desc else "") +
+                "Fingerprints: SHA-256 " + str(fore.get("sha256") or "?")[:16] + "… · " +
+                str(fore.get("format") or "?").upper() + " " +
+                (f"{fore.get('width')}x{fore.get('height')}" if fore.get("width") else "") +
+                (" · EXIF present" if fore.get("exif") else "") +
+                (" · GPS embedded" if fore.get("gps") else " · no GPS") +
+                (" · editing software detected: " + str(fore.get("software")) if fore.get("software") else "") +
+                " — say 'preserve as evidence' to freeze it into a case.")
+        return {"name": name, "type": "image", "chars": 0, "text": desc[:4000],
+                "sha256": fore.get("sha256", ""), "note": note}
+    elif mime.startswith("video/") or ext in (".mp4", ".mov", ".webm", ".avi", ".mkv"):
+        sha = hashlib.sha256(data).hexdigest()
+        return {"name": name, "type": "video", "chars": 0, "text": "",
+                "sha256": sha,
+                "note": (f"Video received ({len(data)/1e6:.1f} MB, SHA-256 {sha[:16]}…). Frame-level "
+                         "AI analysis needs the paid vision stack, but OraCool can hash, preserve and "
+                         "chain-custody it, and match its fingerprint against anything already in your cases.")}
     else:
         try:
             kind, text = "text", data.decode("utf-8", "replace")
@@ -4010,6 +4195,301 @@ def analyze_file(name, mime, data_b64):
             "preview": text[:1200],
             "note": "Extracted text is ready — I'll analyze it in your next message."}
 
+
+
+# ---------------------------------------------------------------- live news
+def osint_news(query=""):
+    """Live headlines from Google News RSS — free, global, source-named."""
+    q = (query or "").strip()
+    if q:
+        u = ("https://news.google.com/rss/search?q=" + urllib.parse.quote(q + " when:7d")
+             + "&hl=en-NG&gl=NG&ceid=NG:en")
+    else:
+        u = "https://news.google.com/rss?hl=en-NG&gl=NG&ceid=NG:en"
+    try:
+        _, raw, _ = http_fetch(u, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        page = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+    except Exception as e:
+        return {"error": "News fetch failed: " + str(e)[:120]}
+    items = re.findall(r"<item>(.*?)</item>", page, re.S)[:12]
+    heads = []
+    for it in items:
+        t = re.search(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", it, re.S)
+        d = re.search(r"<pubDate>(.*?)</pubDate>", it, re.S)
+        s = re.search(r"<source[^>]*>(.*?)</source>", it, re.S)
+        l = re.search(r"<link>(.*?)</link>", it, re.S)
+        heads.append({"title": _strip_tags(html.unescape(t.group(1))) if t else "",
+                      "source": _strip_tags(html.unescape(s.group(1))) if s else "",
+                      "when": d.group(1).strip() if d else "",
+                      "url": l.group(1).strip() if l else ""})
+    return {"query": q, "headlines": heads[:10],
+            "note": "Live from Google News (last 7 days). Quote [Source: <publisher> · <date>] for every headline."}
+
+
+# ---------------------------------------------------------------- user skills
+_skills_lock = threading.RLock()
+
+
+def _skills_file():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    return os.path.join(DATA_DIR, "skills.json")
+
+
+def _skills_all():
+    try:
+        with open(_skills_file()) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def skills_load(email):
+    return _skills_all().get((email or "").strip().lower(), [])
+
+
+def skill_save(email, name, trigger, instructions):
+    """Install a custom feature for one account — the AI obeys it in every chat.
+    (Prompt-level self-extension: honest 'upgrade' without touching server code.)"""
+    email = (email or "").strip().lower()
+    if not email:
+        return {"error": "Sign in first — skills attach to your account."}
+    name = re.sub(r"\s+", " ", (name or "").strip())[:60]
+    if not name:
+        return {"error": "Name the skill, e.g. 'add a skill called phone-triage'."}
+    with _skills_lock:
+        d = _skills_all()
+        lst = [s for s in d.get(email, []) if s.get("name", "").lower() != name.lower()][:24]
+        lst.append({"name": name, "trigger": (trigger or name)[:80],
+                    "instructions": (instructions or "").strip()[:2000],
+                    "created": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())})
+        d[email] = lst
+        with open(_skills_file(), "w") as f:
+            json.dump(d, f, indent=1)
+    return {"ok": True, "saved": name,
+            "note": "Skill installed for this account and active in every chat now. "
+                    "'list my skills' to review, 'remove skill <name>' to delete."}
+
+
+def skill_delete(email, name):
+    email = (email or "").strip().lower()
+    name = (name or "").strip().lower()
+    with _skills_lock:
+        d = _skills_all()
+        lst = d.get(email, [])
+        keep = [s for s in lst if s.get("name", "").lower() != name]
+        if len(keep) == len(lst):
+            keep = [s for s in lst if name not in s.get("name", "").lower()]
+        if len(keep) == len(lst):
+            return {"error": "No skill by that name."}
+        d[email] = keep
+        with open(_skills_file(), "w") as f:
+            json.dump(d, f, indent=1)
+    return {"ok": True, "removed": name}
+
+
+def _clean_email(s):
+    s = (s or "").strip().strip(" .,;:" + chr(34) + chr(39))
+    s = s.rstrip(".,;:")
+    return s.lower()
+
+
+# ---------------------------------------------------------------- admin delete
+def admin_delete_user(email, by=""):
+    """Permanent user removal: Supabase account + subscription + flags + cases
+    + trackers. Admin-only route; never callable by the owner themselves."""
+    email = (email or "").strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return {"error": "Enter a valid email address."}
+    if email in [a.lower() for a in admin_emails()]:
+        return {"error": "An admin/creator account cannot be deleted."}
+    removed = []
+    url = (key("SUPABASE_URL") or "").rstrip("/")
+    svc = key("SUPABASE_SERVICE_KEY")
+    u = _supa_admin_user(email)
+    if u and u.get("id") and url and svc:
+        try:
+            http_fetch(url + "/auth/v1/admin/users/" + u["id"], method="DELETE",
+                       headers={"apikey": svc, "Authorization": "Bearer " + svc,
+                                "Content-Type": "application/json"}, json_body={}, timeout=25)
+            removed.append("auth account")
+        except Exception as e:
+            return {"error": "Could not delete the Supabase account: " + str(e)[:140]}
+    try:
+        with _sub_lock:
+            subs = [s for s in load_subscribers() if (s.get("email") or "").lower() != email]
+            with open(_sub_file(), "w") as f:
+                json.dump(subs, f, indent=2)
+        removed.append("subscription")
+    except Exception:
+        pass
+    if url and svc:
+        eq = urllib.parse.quote(email, safe="")
+        for tbl in ("user_flags", "case_store"):
+            try:
+                http_fetch(url + "/rest/v1/" + tbl + "?email=eq." + eq, method="DELETE",
+                           headers={"apikey": svc, "Authorization": "Bearer " + svc}, timeout=20)
+            except Exception:
+                pass
+        removed.append("supabase rows")
+    try:
+        d = _cases_load()
+        gone = [cid for cid, c in (d.get("cases") or {}).items()
+                if (c.get("owner") or "").lower() == email]
+        for cid in gone:
+            del d["cases"][cid]
+        if gone:
+            _cases_save(d)
+        removed.append(str(len(gone)) + " case(s)")
+    except Exception:
+        pass
+    try:
+        d = _tracker_load()
+        gone = [k for k, v in d.items() if (v.get("creator") or "") == email]
+        for k in gone:
+            del d[k]
+        if gone:
+            _tracker_save(d)
+        removed.append(str(len(gone)) + " tracker(s)")
+    except Exception:
+        pass
+    try:
+        audit_log(by or "admin", "admin.delete_user", email + " — removed: " + ", ".join(removed))
+    except Exception:
+        pass
+    return {"ok": True, "email": email, "removed": [r for r in removed],
+            "note": "User and every trace of their data deleted, permanently."}
+
+
+# ---------------------------------------------------------------- crypto payments (ATLOS)
+def atlos_api(epath, body_obj):
+    base = (key("ATLOS_BASE") or "https://api.atlos.io/gateway/rest").rstrip("/")
+    secret = key("ATLOS_API_SECRET")
+    mer = key("ATLOS_MERCHANT_ID")
+    if not secret or not mer:
+        return {"error": "Crypto gateway not configured — set ATLOS_MERCHANT_ID and "
+                         "ATLOS_API_SECRET in the environment (atlos.io dashboard → Settings)."}
+    b = dict(body_obj or {})
+    b.setdefault("MerchantId", mer)
+    try:
+        _, raw, _ = http_fetch(base + epath, method="POST", timeout=35,
+                               headers={"ApiSecret": secret, "Content-Type": "application/json"},
+                               json_body=b)
+        return json.loads(raw)
+    except urllib.error.HTTPError as e:
+        try:
+            d = json.loads(e.read().decode("utf-8", "replace"))
+        except Exception:
+            d = {}
+        return {"error": "ATLOS: " + str(d.get("ErrorMessage") or d or ("HTTP " + str(e.code)))[:180]}
+    except Exception as e:
+        return {"error": "ATLOS gateway unreachable: " + str(e)[:140]}
+
+
+_crypto_lock = threading.RLock()
+
+
+def _crypto_orders_file():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    return os.path.join(DATA_DIR, "crypto_orders.json")
+
+
+def _crypto_orders():
+    try:
+        with open(_crypto_orders_file()) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def crypto_invoice(email, plan="pro", site=""):
+    email = (email or "").strip().lower()
+    plan = (plan or "pro").lower()
+    if plan == "professional":
+        plan = "ultra"
+    if plan not in PLANS or PLANS[plan].get("custom"):
+        return {"error": "Pick Starter, Pro or Professional to pay with crypto."}
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return {"error": "I need the email that should receive the plan."}
+    usd = PLANS[plan]["price_usd"]
+    ref = "ora-" + _token(6) + "-" + plan
+    inv = atlos_api("/Invoice/Create", {
+        "OrderId": ref, "OrderAmount": float(usd), "OrderCurrency": "USD",
+        "UserEmail": email, "UserName": email.split("@")[0], "SendEmail": False,
+        "PostbackUrl": (site.rstrip("/") + "/api/pay/crypto/postback") if site else "",
+        "Memo": json.dumps({"email": email, "plan": plan, "ref": ref}),
+        "TimeExpire": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3 * 3600)),
+    })
+    if inv.get("Id"):
+        with _crypto_lock:
+            d = _crypto_orders()
+            d[ref] = {"email": email, "plan": plan, "invoice": inv["Id"],
+                      "created": int(time.time()), "granted": False}
+            with open(_crypto_orders_file(), "w") as f:
+                json.dump(d, f, indent=1)
+        link = inv.get("PaymentLink") or inv.get("paymentLink") or ""
+        return {"ok": True, "ref": ref, "pay_url": link, "amount_usd": usd, "plan": plan,
+                "note": "Hosted ATLOS checkout — BTC, USDT, ETH, XMR and every accepted coin works. "
+                        "Access unlocks automatically when the payment confirms."}
+    return {"error": "ATLOS could not create the invoice: " + str(inv.get("error") or inv)[:200]}
+
+
+def crypto_grant(ref, src="atlos"):
+    d = _crypto_orders()
+    o = d.get(ref)
+    if not o:
+        return {"ok": False, "note": "unknown order ref"}
+    if o.get("granted"):
+        return {"ok": True, "already": True, "plan": o.get("plan")}
+    o["granted"] = True
+    o["confirmed_via"] = src
+    with _crypto_lock:
+        d[ref] = o
+        with open(_crypto_orders_file(), "w") as f:
+            json.dump(d, f, indent=1)
+    r = admin_set_pro(o["email"], o["plan"], PLANS.get(o["plan"], {}).get("days", 30), src)
+    if isinstance(r, dict):
+        r["crypto_ref"] = ref
+    try:
+        audit_log("gateway", "crypto.paid", ref + " · " + str(src))
+    except Exception:
+        pass
+    return r
+
+
+def crypto_status(ref):
+    ref = (ref or "").strip()
+    o = _crypto_orders().get(ref)
+    if not o:
+        return {"error": "No pending crypto order with that reference."}
+    if o.get("granted"):
+        return {"paid": True, "granted": True, "plan": o["plan"], "email": o["email"]}
+    txs = atlos_api("/Transaction/List", {"TimeStart": time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(o.get("created", int(time.time())) - 600))})
+    tx = None
+    if isinstance(txs, dict):
+        for t in (txs.get("Transactions") or txs.get("transactions") or []):
+            if str(t.get("OrderId") or t.get("orderId") or "") == ref:
+                tx = t
+                break
+    if tx and int(tx.get("Status", tx.get("status") or 0)) >= 100:
+        crypto_grant(ref, "poll")
+        return {"paid": True, "granted": True, "plan": o["plan"], "email": o["email"]}
+    return {"paid": False, "waiting": True, "plan": o["plan"],
+            "amount_usd": PLANS.get(o["plan"], {}).get("price_usd"),
+            "message": "Waiting for the on-chain payment. Send the exact amount on the ATLOS page — "
+                       "your plan unlocks itself the moment the network confirms."}
+
+
+def crypto_postback_handle(body):
+    ref = str(body.get("OrderId") or body.get("orderId") or "")
+    try:
+        st = int(body.get("Status", body.get("status") or 0))
+    except Exception:
+        st = 0
+    if ref and ref in _crypto_orders() and st >= 100:
+        crypto_grant(ref, "postback")
+        return {"ok": True, "granted": True}
+    return {"ok": True, "seen": True}
 
 # ---------------------------------------------------------------- 2FA (TOTP, RFC 6238)
 
@@ -4248,7 +4728,7 @@ def _slugify(s):
     s = re.sub(r"[^a-z0-9-]", "", (s or "").lower())
     return s[:48] or None
 
-def tracker_create(url, email, name=""):
+def tracker_create(url, email, name="", alias=""):
     url = (url or "").strip()
     if not re.match(r"^https?://", url, re.I):
         return {"error": "Enter a full URL starting with http:// or https://"}
@@ -4260,7 +4740,8 @@ def tracker_create(url, email, name=""):
         return {"error": "That URL has no valid domain."}
     # Professional look: the link PATH is the destination domain itself —
     # typing waptrick.com yields /t/waptrick.com, not a random token.
-    base = re.sub(r"[^a-z0-9.-]", "", host.lower()).strip(".-") or \
+    al = re.sub(r"[^a-z0-9.-]", "", (alias or "").strip().lower()).strip(".-")
+    base = al or re.sub(r"[^a-z0-9.-]", "", host.lower()).strip(".-") or \
            _slugify(name) or "link"
     base = (base[:48] or "link")
     slug = base
@@ -4277,8 +4758,9 @@ def tracker_create(url, email, name=""):
                "visits": []}
     _tracker_save(d)
     return {"slug": slug, "url": "/t/" + slug, "target": url,
-            "note": "Send this link. When someone opens it, their visit is logged and "
-                    "they are instantly sent to the real site."}
+            "note": "This IS the link you asked for — " + ("exactly " + url if True else url) +
+                    " with a tracker wrapped around it. When someone opens it, their visit is "
+                    "logged and they land on the real site instantly."}
 
 def tracker_hit(slug, ip, ua, referer):
     d = _tracker_load()
@@ -4770,8 +5252,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/osint/username":
                 self._send_json(osint_username(body.get("username")))
             elif path == "/api/osint/darkweb":
-                if self._require_tier(body, "pro"):
-                    self._send_json(osint_darkweb(body.get("target") or body.get("query")))
+                self._send_json(osint_darkweb(body.get("target") or body.get("query")))
             # ---- investigation platform (PRO+): cases, evidence, extraction, wallets, watch ----
             elif path == "/api/case/create":
                 if self._require_tier(body, "pro"):
@@ -4955,6 +5436,28 @@ class Handler(BaseHTTPRequestHandler):
                                                         body.get("amount"), body.get("action"),
                                                         body.get("duration")))
             # ---- admin
+            elif path == "/api/news":
+                self._send_json(osint_news(body.get("query") or ""))
+            elif path == "/api/skills/list":
+                self._send_json({"skills": skills_load((body.get("email") or "").strip().lower())})
+            elif path == "/api/skills/save":
+                self._send_json(skill_save((body.get("email") or "").strip().lower(),
+                                           body.get("name"), body.get("name"),
+                                           body.get("instructions")))
+            elif path == "/api/skills/delete":
+                self._send_json(skill_delete((body.get("email") or "").strip().lower(),
+                                              body.get("name") or ""))
+            elif path == "/api/pay/crypto/invoice":
+                host = (self.headers.get("Host") or "").split(":")[0]
+                site = (key("TRACKER_DOMAIN") or (("https://" + host) if ("." in host or host.startswith("localhost")) else "")).strip()
+                if site and not site.startswith("http"):
+                    site = "https://" + site
+                self._send_json(crypto_invoice((body.get("email") or "").strip(),
+                                               body.get("plan") or "pro", site))
+            elif path == "/api/pay/crypto/status":
+                self._send_json(crypto_status(body.get("ref")))
+            elif path == "/api/pay/crypto/postback":
+                self._send_json(crypto_postback_handle(body))
             elif path == "/api/admin/users":
                 if _require_admin(self, body):
                     self._send_json(admin_users_payload())
@@ -4976,6 +5479,10 @@ class Handler(BaseHTTPRequestHandler):
                 if payload:
                     self._send_json(admin_set_pro(body.get("email"), body.get("tier"),
                                                   body.get("days"), payload.get("sub", "")))
+            elif path == "/api/admin/delete":
+                payload = _require_admin(self, body)
+                if payload:
+                    self._send_json(admin_delete_user(body.get("email"), payload.get("sub", "")))
             # ---- PRO tools (JWT-gated by tier; each tier inherits the ones below)
             elif path == "/api/pro/search":
                 if self._require_tier(body, "starter"):
@@ -5001,7 +5508,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(gen_image(body.get("prompt"), body.get("aspect_ratio", "1:1")))
             elif path == "/api/video":
                 if self._require_tier(body, "ultra"):
-                    self._send_json(gen_video(body.get("prompt"), body.get("duration")))
+                    self._send_json(gen_video(body.get("prompt"), body.get("duration"),
+                                             bool(body.get("with_audio") or body.get("audio"))))
             # ---- smart home (free when linked; AI drives devices by voice)
             elif path == "/api/smart/list":
                 self._send_json(smart_list(body.get("ha_url"), body.get("ha_token")))
@@ -5243,15 +5751,17 @@ class Handler(BaseHTTPRequestHandler):
         tier = "free"
         if body.get("tools", True):
             tier = "free"
+            chat_email = (body.get("email") or "").strip()
             tok = (body.get("token") or "").strip()
             if tok:
                 p = verify_jwt(tok, key("JWT_SECRET") or "dev-secret")
                 if p:
                     tier = p.get("tier") or "free"
+                    chat_email = (chat_email or p.get("sub") or "").strip()
                     if p.get("admin"):
                         tier = "enterprise"
             else:
-                tier = check_tier((body.get("email") or "").strip())
+                tier = check_tier(chat_email)
             last_user = ""
             for m in reversed(messages):
                 if m.get("role") == "user":
@@ -5261,12 +5771,24 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     tool_runs = auto_tools(last_user, tier,
                                            ha_url=body.get("ha_url"),
-                                           ha_token=body.get("ha_token"))
+                                           ha_token=body.get("ha_token"),
+                                           email=chat_email)
                 except Exception as e:
                     tool_runs = [{"tool": "error", "label": "auto-tools", "result": str(e)[:200]}]
         tool_ctx = tool_context(tool_runs)
         if tool_ctx:
             messages = [{"role": "system", "content": tool_ctx}] + messages
+        # User-taught skills: personal features the AI must honor for this account
+        try:
+            _sk = skills_load(chat_email) if chat_email else []
+            if _sk:
+                messages = [{"role": "system", "content":
+                    "CUSTOM SKILLS this user installed on their own OraCool (features you now support "
+                    "for this account) — execute them exactly as written whenever relevant:\n" +
+                    "\n".join("- " + str(s.get("name", "skill")) + ": " + str(s.get("instructions") or "")[:400]
+                               for s in _sk[:8])}] + messages
+        except Exception:
+            pass
         # Identity the brain carries regardless of what the client sent: the
         # creator bond + current plan. The AI must know who built it.
         messages = [{"role": "system", "content":
@@ -5292,6 +5814,18 @@ class Handler(BaseHTTPRequestHandler):
             "escalated."}
         ] + messages
         tool_summary = [{"tool": t.get("tool"), "label": t.get("label")} for t in tool_runs]
+        # Generated media rides back to the browser and renders INLINE in the chat
+        chat_media = []
+        for t in tool_runs:
+            if t.get("tool") in ("image", "video"):
+                try:
+                    d = json.loads(t.get("result") or "{}")
+                    for uu in (d.get("images") or []):
+                        chat_media.append({"kind": "image", "url": uu})
+                    for uu in (d.get("videos") or []):
+                        chat_media.append({"kind": "video", "url": uu})
+                except Exception:
+                    pass
 
         # ---- cores: auto-engage the most relevant intelligence cores on every message
         core_names = []
@@ -5314,7 +5848,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         url = base_url + "/chat/completions"
-        max_tokens = int(body.get("max_tokens") or KEYS.get("CHAT_MAX_TOKENS", 900))
+        max_tokens = int(body.get("max_tokens") or KEYS.get("CHAT_MAX_TOKENS", 3000))
         temperature = float(body.get("temperature") or 0.7)
         payload = {"model": model, "messages": messages, "temperature": temperature,
                    "max_tokens": max(16, min(max_tokens, 4096)), "stream": stream}
@@ -5325,86 +5859,165 @@ class Handler(BaseHTTPRequestHandler):
             # (free Groq models limit output tokens/min) is retried once at a
             # smaller max_tokens instead of surfacing a raw gateway error.
             otpm_retry = True
-            while True:
+            acc_full = ""
+            cont_msgs = messages
+            for _round in range(3):
+                pp = dict(payload)
+                pp["messages"] = cont_msgs
                 headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
                 try:
-                    _, raw, _ = http_fetch(url, method="POST", headers=headers, json_body=payload, timeout=120)
+                    _, raw, _ = http_fetch(url, method="POST", headers=headers, json_body=pp, timeout=120)
                     data = json.loads(raw)
-                    content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
-                    self._send_json({"content": content, "tools": tool_summary, "cores": core_names})
+                    ch0 = (data.get("choices") or [{}])[0]
+                    content = ch0.get("message", {}).get("content", "") or ""
+                    acc_full += content
+                    # LONG-ANSWER FIX: if the model stopped at the token limit, ask it to
+                    # continue — up to 3 segments — so answers never end mid-sentence.
+                    if (ch0.get("finish_reason") == "length" and _round < 2 and content.strip()):
+                        cont_msgs = list(cont_msgs) + [
+                            {"role": "assistant", "content": content},
+                            {"role": "user", "content": "Continue exactly where you stopped. "
+                             "Repeat nothing, no preface, no apologies."}]
+                        continue
+                    self._send_json({"content": acc_full, "tools": tool_summary,
+                                     "cores": core_names, "media": chat_media})
                 except urllib.error.HTTPError as e:
-                    body = e.read().decode("utf-8", "replace")
-                    if (e.code == 429 and otpm_retry and "max_tokens" in body
+                    err_body = e.read().decode("utf-8", "replace")
+                    if (e.code == 429 and otpm_retry and "max_tokens" in err_body
                             and payload.get("max_tokens", 0) > 700):
                         payload["max_tokens"] = 700
                         otpm_retry = False
                         continue
-                    if provider == "auto" and key("GROQ_API_KEY") and "groq" not in base_url:
+                    if provider == "auto" and key("GROQ_API_KEY") and "groq" not in base_url and not acc_full:
                         api_key = key("GROQ_API_KEY")
                         base_url = "https://api.groq.com/openai/v1"
                         model = KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL)
                         url = base_url + "/chat/completions"
                         payload["model"] = model
                         continue
-                    self._send_json({"error": f"AI provider error {e.code}: {body[:300]}"}, 502)
+                    if acc_full:
+                        self._send_json({"content": acc_full, "tools": tool_summary,
+                                         "cores": core_names, "media": chat_media,
+                                         "note": "The provider dropped during a continuation segment."})
+                    else:
+                        self._send_json({"error": f"AI provider error {e.code}: {err_body[:300]}"}, 502)
                 except Exception as e:
-                    self._send_json({"error": str(e)}, 502)
+                    if acc_full:
+                        self._send_json({"content": acc_full, "tools": tool_summary,
+                                         "cores": core_names, "media": chat_media})
+                    else:
+                        self._send_json({"error": str(e)}, 502)
                 return
 
-        # streaming — attempt primary, fallback to Groq on failure if 'auto'
-        tried = []
-        otpm_retry = True
+        # streaming — relayed through OraCool so long answers auto-continue:
+        # when a provider hits its per-call token limit (finish_reason 'length')
+        # the stream stays open and the model is asked to continue, up to 3
+        # segments total. The browser just sees one endless, complete reply.
+        acc_stream = ""
+        cont_rounds = 0
+        stream_msgs = messages
+        first_frame = True
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        if tool_summary or core_names or chat_media:
+            try:
+                self.wfile.write(("data: " + json.dumps({"__tools": tool_summary,
+                                                          "__cores": core_names,
+                                                          "__media": chat_media}) + "\n\n").encode())
+                self.wfile.flush()
+            except Exception:
+                pass
         while True:
-            tried.append(base_url)
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
                        "Accept": "text/event-stream", "User-Agent": UA}
-            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
+            spayload = dict(payload)
+            spayload["messages"] = stream_msgs
+            req = urllib.request.Request(url, data=json.dumps(spayload).encode("utf-8"),
                                          headers=headers, method="POST")
             ctx = ssl.create_default_context()
             try:
                 resp = urllib.request.urlopen(req, timeout=180, context=ctx)
             except urllib.error.HTTPError as e:
                 _body = e.read().decode("utf-8", "replace")
-                if (e.code == 429 and otpm_retry and "max_tokens" in _body
+                if (e.code == 429 and cont_rounds == 0 and "max_tokens" in _body
                         and payload.get("max_tokens", 0) > 700):
                     payload["max_tokens"] = 700
-                    otpm_retry = False
                     continue
-                if provider == "auto" and key("GROQ_API_KEY") and "groq" not in base_url:
+                if provider == "auto" and key("GROQ_API_KEY") and "groq" not in base_url and not acc_stream:
                     api_key = key("GROQ_API_KEY")
                     base_url = "https://api.groq.com/openai/v1"
                     model = KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL)
                     url = base_url + "/chat/completions"
                     payload["model"] = model
                     continue
-                self._send_json({"error": f"AI provider error {e.code}: "
-                                          f"{_body[:300]}"}, 502)
-                return
-            except Exception as e:
-                self._send_json({"error": str(e)}, 502)
-                return
-
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            if tool_summary or core_names:
-                try:
-                    self.wfile.write(("data: " + json.dumps({"__tools": tool_summary, "__cores": core_names}) + "\n\n").encode())
-                    self.wfile.flush()
-                except Exception:
-                    pass
-            try:
-                for raw_line in resp:
+                if not acc_stream:
                     try:
-                        self.wfile.write(raw_line)
+                        self.wfile.write(("data: " + json.dumps({"error": f"AI provider error {e.code}: {_body[:240]}"}) + "\n\n").encode())
+                        self.wfile.write(b"data: [DONE]\n\n")
                         self.wfile.flush()
                     except Exception:
+                        pass
+                    return
+                break
+            except Exception as e:
+                if not acc_stream:
+                    try:
+                        self.wfile.write(("data: " + json.dumps({"error": str(e)[:240]}) + "\n\n").encode())
+                        self.wfile.write(b"data: [DONE]\n\n")
+                        self.wfile.flush()
+                    except Exception:
+                        pass
+                return
+            fr = None
+            round_txt = ""
+            try:
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", "replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    p = line[5:].strip()
+                    if p == "[DONE]":
                         break
+                    try:
+                        d = json.loads(p)
+                    except Exception:
+                        continue
+                    ch0 = (d.get("choices") or [{}])[0]
+                    dlt = (ch0.get("delta") or {}).get("content")
+                    if ch0.get("finish_reason"):
+                        fr = ch0.get("finish_reason")
+                    if dlt:
+                        round_txt += dlt
+                        try:
+                            self.wfile.write(("data: " + json.dumps({"choices": [{"delta": {"content": dlt}}]}) + "\n\n").encode())
+                            self.wfile.flush()
+                        except Exception:
+                            resp.close()
+                            return
+                    first_frame = False
             finally:
-                resp.close()
-            return
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+            acc_stream += round_txt
+            if fr == "length" and round_txt.strip() and cont_rounds < 2 and len(acc_stream) < 40000:
+                cont_rounds += 1
+                stream_msgs = list(stream_msgs) + [
+                    {"role": "assistant", "content": acc_stream},
+                    {"role": "user", "content": "Continue exactly where you stopped. "
+                     "Repeat nothing, no preface, no apologies."}]
+                continue
+            break
+        try:
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+        except Exception:
+            pass
+        return
 
 
 def main():
