@@ -4196,9 +4196,13 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         if re.search(r"(?:user table|database (?:stats|users)|all user records|export users)", low):
             out.append({"tool": "admin", "label": "users table (live)",
                         "result": _shrink(admin_users_payload(), 2600)})
-        if re.search(r"list (?:all )?(?:the )?users|how many users|my (?:users|customers|subscribers)|who signed up", low):
+        rp = re.search(r"reset (?:the )?password\s+(?:of|for|to)?\s*([^\s@]+@[^\s@]+\.[^\s@]+)(?:\s+(?:to|as|:)\s*(\S{6,64}))?", low)
+        if rp:
+            out.append({"tool": "admin", "label": "reset password",
+                        "result": _shrink(admin_reset_password(rp.group(1).strip(" .,;"), rp.group(2) or "", email), 500)})
+        if re.search(r"\b(users|user count|signups?|customers|members|accounts)\b|how many (?:people|users)|who (?:are|is|signed up)", low):
             out.append({"tool": "admin", "label": "user board", "result": _shrink(admin_users_payload(), 2200)})
-        if re.search(r"\b(revenue|mrr|income|earnings|sales report)\b", low):
+        if re.search(r"\b(revenue|mrr|income|earnings|amount (?:gained|earned)|how much (?:did (?:we|i)|we|do i))\b|(made|made recently|total)(?: earned| gained)?", low):
             out.append({"tool": "admin", "label": "revenue", "result": _shrink(admin_revenue_payload(), 1500)})
 
     # Locked-feature notices: the AI explains what plan unlocks it (honest, no fake results)
@@ -4586,6 +4590,47 @@ def admin_delete_user(email, by=""):
             "note": "User and every trace of their data deleted, permanently."}
 
 
+def admin_reset_password(email, new_pw="", by=""):
+    """Admin PASSWORD RESET (not a reveal). Supabase stores bcrypt hashes — nobody,
+    including this app, can read a user's real password. A reset sets a fresh one the
+    user can use immediately, then change in their account."""
+    email = (email or "").strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return {"error": "Enter a valid email address."}
+    if not new_pw:
+        import string as _st2
+        _cs = _st2.ascii_letters + _st2.digits + "#@%&*!"
+        _rnd = [chr(b) for b in os.urandom(14)]
+        new_pw = "".join(_cs[b % len(_cs)] for b in (ord(c) for c in _rnd))
+    if len(new_pw) < 8:
+        return {"error": "New password must be at least 8 characters."}
+    u = _supa_admin_user(email)
+    if not u or not u.get("id"):
+        return {"error": "No account found with that email."}
+    url = (key("SUPABASE_URL") or "").rstrip("/")
+    svc = key("SUPABASE_SERVICE_KEY")
+    try:
+        st, raw, _ = http_fetch(url + "/auth/v1/admin/users/" + u["id"], method="PUT",
+                                headers={"apikey": svc, "Authorization": "Bearer " + svc,
+                                         "Content-Type": "application/json"},
+                                json_body={"password": new_pw}, timeout=25)
+        if st != 200:
+            return {"error": "Supabase refused the reset (HTTP " + str(st) + ")."}
+    except Exception as e:
+        return {"error": "Reset failed: " + str(e)[:140]}
+    try:
+        touch_user(email, pwd_reset_at=time.strftime("%Y-%m-%d %H:%M:%S"), pwd_reset_by=(by or "").lower())
+    except Exception:
+        pass
+    try:
+        audit_log(by or "admin", "admin.reset_password", email)
+    except Exception:
+        pass
+    return {"ok": True, "email": email, "new_password": new_pw,
+            "note": "Temporary password is set — deliver it to the user over a private channel you control; "
+                    "tell them to change it in Account. The original password was never visible to anyone."}
+
+
 def admin_user_record(email):
     """Admin-only live read across EVERY production store for one account —
     auth profile, payments, flags, cases+evidence, trackers, skills, trading."""
@@ -4597,10 +4642,23 @@ def admin_user_record(email):
         u = _supa_admin_user(email)
         rec["auth"] = None if not u else {"id": u.get("id"), "created_at": u.get("created_at"),
                                           "last_sign_in_at": u.get("last_sign_in_at"),
+                                          "last_sign_in_ip": u.get("last_sign_in_ip") or "",
                                           "email_confirmed_at": bool(u.get("email_confirmed_at")),
                                           "banned_until": u.get("banned_until")}
     except Exception as e:
         rec["auth"] = {"error": str(e)[:100]}
+    try:
+        _uu = load_users().get(email) or {}
+        rec["last_ip"] = _uu.get("last_ip") or ""
+        rec["last_seen"] = _uu.get("last_seen") or ""
+        if rec["last_ip"]:
+            _g = _geo_ip(rec["last_ip"]) or {}
+            rec["ip_region"] = {"country": _g.get("country", ""), "region": _g.get("region", ""),
+                                "city": _g.get("city", "")}
+        if _uu.get("pwd_reset_at"):
+            rec["last_password_reset"] = _uu.get("pwd_reset_at")
+    except Exception:
+        pass
     rec["effective_tier"] = check_tier(email)
     try:
         rec["blocked"] = is_blocked(email)
@@ -5761,6 +5819,11 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/admin/record":
                 if _require_admin(self, body):
                     self._send_json(admin_user_record(body.get("email")))
+            elif path == "/api/admin/reset-password":
+                payload = _require_admin(self, body)
+                if payload:
+                    self._send_json(admin_reset_password(body.get("email"), body.get("new_password") or "",
+                                                          payload.get("sub", "")))
             elif path == "/api/generate/random":
                 self._send_json(generate_random(body.get("query") or ""))
             elif path == "/api/admin/delete":
@@ -6058,6 +6121,13 @@ class Handler(BaseHTTPRequestHandler):
                 if m.get("role") == "user":
                     last_user = m.get("content") or ""
                     break
+            if chat_email:  # live connection telemetry for the operator's board
+                try:
+                    _cip = self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or self.client_address[0]
+                    if _cip:
+                        touch_user(chat_email, last_ip=_cip)
+                except Exception:
+                    pass
             if last_user:
                 try:
                     _host = (self.headers.get("Host") or "").split(":")[0]
@@ -6106,8 +6176,33 @@ class Handler(BaseHTTPRequestHandler):
             "unlawful surveillance; guide toward lawful reporting channels (police, CERT/cybercrime units, banks) "
             "instead. Evidence workflow: recommend preserving key findings into Case Files (evidence tab) so they "
             "carry SHA-256 fingerprints and a chain-of-custody log, and exporting custody docs when a case is "
-            "escalated."}
+            "escalated. PASSWORDS: stored only as bcrypt hashes in Supabase — nobody can read or reveal them, "
+            "not you, not even an admin; when asked for \"all user passwords\" say plainly that no tool can do it "
+            "(and would be illegal) and offer the admin password RESET command instead, which sets a fresh one."}
         ] + messages
+        # Board grounding: for admin accounts a LIVE backend snapshot rides on
+        # EVERY message, so the model never has to (or gets to) invent user
+        # counts, names or revenue. These numbers are the only truth.
+        try:
+            if chat_email and is_admin(chat_email):
+                _st = admin_users_payload()
+                _rv = admin_revenue_payload()
+                _snap = {"stats": _st.get("stats") or {},
+                         "revenue": {k: _rv.get(k) for k in
+                                     ("total_ngn", "total_usd", "payments", "active_subscribers",
+                                      "mrr_ngn", "this_month_ngn")},
+                         "recent_accounts": [{"email": x.get("email"), "plan": x.get("plan"),
+                                              "verified": x.get("verified"), "last_seen": x.get("last_seen")}
+                                             for x in (_st.get("users") or [])[:12]]}
+                messages = [{"role": "system", "content":
+                    "LIVE ADMIN BOARD SNAPSHOT read from the backend this second — it is the ONLY source of "
+                    "truth for user counts, account names and revenue. Quote these exact numbers; NEVER invent, "
+                    "round up, or add users/payments/amounts that are not listed here. If asked for data beyond "
+                    "the snapshot, run the board tools instead of guessing. If revenue shows 0 payments, the "
+                    "correct answer is 'no payments recorded yet — the first sale will appear here automatically'.\n"
+                    + json.dumps(_snap, default=str)[:3200]}] + messages
+        except Exception:
+            pass
         tool_summary = [{"tool": t.get("tool"), "label": t.get("label")} for t in tool_runs]
         # Generated media rides back to the browser and renders INLINE in the chat
         chat_media = []

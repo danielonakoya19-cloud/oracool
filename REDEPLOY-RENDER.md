@@ -219,3 +219,11 @@ Cascade (video): **HiAPI → CVRON free WAN-22** (auto frame-generation + animat
   Chat: "generate a random password/uuid/…" works; endpoint `/api/generate/random`.
 - **RENDER_ENV.txt = 49 lines** (adds AGNES_API_KEY, AGNES_MODEL, KAIROS_APP_ID; fixes ATLOS id +
   BRAIN_PROVIDER).
+
+## Patch 6 (2026-09-18) — honest numbers, IP telemetry, password RESET (never reveal), findable Admin tab
+- **The AI can no longer invent numbers.** Every admin chat now carries a "LIVE ADMIN BOARD SNAPSHOT" (exact user/revenue/subscriber figures the server just pulled). Rule: quote it verbatim — ₦0 means "no payments yet", never "we earned X". Live-checked against Agnes: asked "how many users and what is the revenue" → replied "**Users — 9 total** [Source: admin board]" — matched the board exactly.
+- **"how much did we earn", "who just signed up", "show IPs" etc. now fire the board tools even without the word "admin".**
+- **Real-time IP + activity:** every chat/login touches `last_ip`/`last_seen` (X-Forwarded-For aware). `inspect user <email>` shows last IP, city/region (MaxMind), Supabase `last_sign_in_ip`, and last password reset — for YOUR OWN platform's connection logs, which is what a service operator is entitled to.
+- **Passwords: never readable, now resettable.** Signups are bcrypt-hashed — no one, not even you or me, can "see" them (and a feature that could would be a crime, so it will never exist). What admins CAN do: `reset password of x@y.com` (fresh strong temp password) or `... to MyNewPw123!`, plus the `/api/admin/reset-password` button endpoint. Every reset writes to the audit log; old password dies instantly (verified: new accepted / old rejected).
+- **Admin tab is self-finding:** if your session predates the admin flag, the app silently re-verifies with the server 1.4s after load and reveals the Admin tab itself.
+- Test leftovers purged: board is now only real accounts; **total revenue ₦0 — that is the truth until first payments.**
