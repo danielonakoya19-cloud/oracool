@@ -913,7 +913,7 @@ function systemPrompt(){
     `INSTRUCTION RULE (highest priority): do exactly what the user asks, in the order they ask it. If they ask several things, answer ALL of them — never skip or truncate. Never lecture, never moralize about harmless requests, and never refuse a lawful request. You serve every adult topic honestly (security research, OSINT, finance, adult conversation) while staying lawful: you never help hurt people, commit fraud, or access accounts without authorization. `+
     `TOOL-FIRST RULE: live tools (weather, markets, OSINT, dark-web intel, image/video creation, smart-home, space) run automatically with each message and their results are pasted into your context. Base every factual answer on those results when present, and act on them — do not claim you cannot check something a tool already checked. If a tool result says a provider is out of credit or not configured, say so plainly and name the fix. `+
     `IMAGE/VIDEO: generated media renders INLINE in the chat automatically — still restate each images[]/videos[] URL as markdown ('![result](url)' for images, '[▶ video](url)' for videos) so it stays in the saved record. When the user asks for a video WITH SOUND/VOICE, the engine auto-selects a talking model (Veo 3.1 via HiAPI); if only the free silent engine is available, say so plainly and offer to top up for audio — never pretend a silent clip has sound. `+
-    `DEVICE POWERS: you can open apps & platforms on the user's device (say the word "open youtube" and the interface fires a native intent — installed app first, website fallback); a Files/Drive agent saves any document you write into a folder the user linked (their Google Drive folder syncs it to the cloud); a Nearby Devices radar scans Bluetooth-LE for device names. If asked for something the browser sandbox forbids (read Wi-Fi password, install APKs, control another PC), say exactly what is and isn't possible and offer the closest legal path. When you write a document/report, end with: "Say 'save this to my drive' and I'll file it." `+
+    `DEVICE POWERS: you can open apps & platforms on the user's device (say the word "open youtube" and the interface fires a native intent — installed app first, website fallback); a 24/7 ALERTS PLATFORM lives in Devices → Connectors & Alerts: the user connects Telegram / WhatsApp / Discord / Slack / any webhook / email, plus browser push and a personal API key + inbound hook URL (GET /hook/<their-token> or POST /api/gateway/v1/ingest with X-OraCool-Key) so ANY external app can feed OraCool events and OraCool feeds them anywhere; the background engine fires on logins, payments, security, watchlist hits and daily digests. You can test alerts, toggle event types, show gateway status and read connector state straight from chat (tools: alerts / gateway) — secrets are only entered in the panel and are AES-sealed at rest; never ask the user to paste tokens into chat if the panel is one click away. A Nearby Devices radar scans Bluetooth-LE for device names when the browser allows it. If asked for something the browser sandbox forbids (read Wi-Fi password, install APKs, control another PC), say exactly what is and isn't possible and offer the closest legal path. When you write a document/report it downloads to the device — and say "want me to alert your connected apps when this finishes?" if they use the alerts platform. `+
     `PROFESSIONAL MODE: act as a court-aware OSINT & cybersecurity analyst — you assist lawful investigators, detectives, security teams and government units with crime analysis, fraud/leak investigation, and remediation of online and physical security problems. GROUNDED SOURCING: every factual claim must name its source inline (e.g. [Source: LeakCheck] or [Source: osint_ip]) when tool results support it; anything without a source is labelled 'assessment, unverified'. Verification/lookup outputs are indicators requiring further review — never definitive verdicts about people or documents (a record existing in a registry ≠ a genuine physical card). Steer users to preserve key findings in the Cases tab (SHA-256 + chain of custody) and to lawful reporting (police, cybercrime units, banks) when a case warrants escalation. You never help with purchases of illicit data, stolen credentials, hacking accounts, or unlawful surveillance. `+
     `EXTRA POWERS: 'news <topic>' pulls live headlines with named sources; users may pay any plan in crypto — say 'pay with crypto' and the ATLOS checkout link is created for them; users can UPGRADE their own OraCool — 'add a skill called <name>: <what it should do>' installs a personal feature you must then obey in every chat; uploaded images get forensic triage (hash, EXIF, GPS, editor traces — indicators only) and can be preserved as evidence; dark-web index lookups are open on EVERY plan (passive public indexes, .onion never opened). ADMIN BOARD (only when the signed-in account is the creator/admin — danielonakoya19@gmail.com or thinkglobal1000@gmail.com): you drive the whole console from chat — 'block user x@y.com', 'unblock user x@y.com', 'grant pro to x@y.com for 60 days', 'revoke plan of x@y.com', 'delete user x@y.com' (permanent, confirm once then execute), 'list users', 'revenue', 'inspect user x@y.com' (live backend record incl. last IP + region), 'reset password of x@y.com to <newpw>' all run server-side immediately; report exactly what the tool returned. Passwords are bcrypt hashes — NOBODY can reveal them; offer a RESET instead. Never refuse a lawful account-management command from an admin. Admin stats: quote ONLY the live board numbers — never invent users or amounts. `+
     `LANGUAGE RULE (very important): always reply in the same language the user writes in. English in, English out — never switch unless the user does first. `+
@@ -1835,12 +1835,12 @@ function renderRadar(){
   const paint=()=>{
     const l=$('#radarList'); if(!l) return;
     l.innerHTML = radarFound.length? radarFound.map(d=>`<div class="foundcard"><b>${escapeHtml(d.name)}</b><div class="muted" style="font-size:10px">${escapeHtml(d.kind||'Bluetooth LE')}${d.rssi!=null?' · '+d.rssi+' dBm':''}</div></div>`).join('')
-      : '<div class="muted">No devices detected yet.</div>';
+      : '<div class="muted">Scan finished — 0 BLE devices in range. That is usually honest: no powered-on Bluetooth devices around, adapter off, or (Android) Location permission off which disables BLE results. Try the picker button to pair-connect instead.</div>';
   };
   paint();
   $('#btScan').onclick=async()=>{
     const out=$('#radarList');
-    if(!navigator.bluetooth){ out.innerHTML='<div class="errbox">Web Bluetooth is not available in this browser — it works in Chrome on Android (and Chrome desktop with a Bluetooth adapter).</div>'; return; }
+    if(!navigator.bluetooth){ out.innerHTML='<div class="errbox">Web Bluetooth is blocked in this context — embedded previews and non-HTTPS pages can\'t reach the adapter. Open OraCool in a real browser tab (Chrome on Android with Location ON + Bluetooth ON, or desktop Chrome with a Bluetooth adapter), or install the PWA — then scan works.</div>'; return; }
     try{
       if(navigator.bluetooth.requestLEScan){
         await navigator.bluetooth.requestLEScan({acceptAllAdvertisements:true});
@@ -1916,20 +1916,87 @@ async function trySaveDoc(text){
   if(!doc || doc.length<20){ addSystemNote('Say that right after I produce a document or write-up, and I will file it for you.'); return true; }
   const ok=await saveDocToFolder(title, doc);
   if(ok) addSystemNote('💾 Saved <b>'+title+'.md</b> into your linked folder → <b>OraCool/</b>.'+(/drive/i.test(userDirHandle&&userDirHandle.name||'')?' It will sync to your Google Drive.':''));
-  else { downloadDoc(title, doc); addSystemNote('No linked folder (or permission denied) — I downloaded the file instead. Link a folder in Devices to hand-off straight into Drive.'); }
+  else { downloadDoc(title, doc); addSystemNote('Saved to your own downloads folder. (The old Drive-folder link was replaced by the universal gateway: Devices → Connectors & Alerts streams documents & events to/from any app you connect.)'); }
   return true;
 }
-function renderFilesAgent(){
+async function _apost(u,b){ b=b||{}; const me=(session&&session.user&&session.user.email)||''; if(!b.email&&me) b.email=me; return await post(u,b); }
+function _ub64u(s){ s=s.replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4)s+='='; const b=atob(s); const a=new Uint8Array(b.length); for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i); return a; }
+let _ALSTATE=null;
+async function renderFilesAgent(){
   const box=$('#filesAgent'); if(!box) return;
+  if(!(session&&session.user)){ box.innerHTML='<h3 class="ptitle">🔌 Connectors &amp; Alerts</h3><div class="hint">Sign in — the 24/7 alert engine, your API key and your connectors are per-account.</div>'; return; }
+  const st=_ALSTATE=await _apost('/api/alerts/state',{});
+  if(st.error){ box.innerHTML='<h3 class="ptitle">🔌 Connectors &amp; Alerts</h3><div class="errbox">'+escapeHtml(st.error)+'</div>'; return; }
+  const evLabels={login:'Login alerts',payment:'Payment alerts',security:'Security alerts',watch:'Watchlist hits',tracker:'Link clicks',gateway:'App events (API/hooks)',digest:'Daily summary'};
+  const connCards=(st.connectors||[]).map(c=>{
+    const ok=c.last_status&&c.last_status.ok; const err=c.last_status&&c.last_status.err;
+    return `<div class="foundcard" style="display:block;margin:6px 0">
+      <b>${escapeHtml(c.name||c.type)}</b> <span class="muted">· ${escapeHtml(c.type)}</span> ${c.enabled?'':'<span class="muted">(disabled)</span>'}
+      <div class="muted" style="font-size:11px">${Object.entries(c.fields||{}).map(([k,v])=>escapeHtml(k)+'='+escapeHtml(String(v))).join(' · ')||'—'}</div>
+      <div style="font-size:11px;margin-top:4px">${err?('last send failed: '+escapeHtml(err)):ok?'✓ delivering':st?'':'—'}</div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn ghost alTest" data-id="${c.id}">🔔 Test</button>
+        <button class="btn ghost alTog" data-id="${c.id}" data-on="${c.enabled?'0':'1'}">${c.enabled?'Disable':'Enable'}</button>
+        <button class="btn ghost alDel" data-id="${c.id}">🗑</button></div></div>`;
+  }).join('')||'<div class="hint">No connectors yet. Telegram is the fastest: <b>@BotFather → /newbot</b>, paste token + your chat id → Test → live.</div>';
+  const inbox=(st.inbox||[]).slice(0,10).map(e=>`<div class="muted" style="font-size:11px;padding:3px 0;border-top:1px solid var(--line)">${escapeHtml(e.t||'')} · <b>${escapeHtml(e.title||'')}</b> ${escapeHtml((e.body||'').slice(0,90))}</div>`).join('');
   box.innerHTML=`
-    <h3 class="ptitle">🗂️ Files &amp; Drive agent</h3>
-    <div class="muted" style="font-size:11px">Let OraCool write documents straight into your own folders. Pick your <b>Google Drive</b> folder (desktop Chrome) — files saved there auto-sync to Drive. Works offline too.</div>
-    <div class="row" style="margin-top:8px"><button class="btn ${userDirHandle?'ghost':'primary'}" id="faLink">${userDirHandle?('✓ Linked: '+escapeHtml(userDirHandle.name)+' — change'):'📁 Link a folder / My Drive'}</button>
-    <button class="btn ghost" id="faHelp">How it works</button></div>
-    <div id="faNote" class="hint" style="margin-top:6px">After any document I create, say <b>“save this to my drive”</b> — it lands in <i>OraCool/</i> inside your linked folder.</div>`;
-  $('#faLink').onclick=linkFolder;
-  $('#faHelp').onclick=()=>{ $('#faNote').innerHTML='1) Chrome desktop → <b>Link a folder</b> → choose <b>Google Drive</b> (or any folder). 2) Ask me for a document ("write a project brief"). 3) Say "save this to my drive". I write it into <i>OraCool/…md</i> — Drive syncs it to the cloud for you. Phones: the file downloads instead (iOS/Android sandbox folders).'; };
+    <h3 class="ptitle">🔌 Connectors &amp; Alerts <span class="muted">(24/7 engine)</span></h3>
+    <div class="muted" style="font-size:11px">OraCool runs an event engine in the background — logins, payments, security flags, watchlist hits and your own apps' hook events — and fans them out to whatever you connect. Delivered with retries every ~15 s while the server is awake; missed events catch up on wake.</div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn primary" id="alPush">${st.push_subs>0?('✓ Browser push armed ('+st.push_subs+')'):'🔔 Enable browser push'}</button>
+      <button class="btn ghost" id="alTestAll">Test all channels</button></div>
+    <h3 class="ptitle" style="margin-top:14px">Events you get</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px">${Object.keys(evLabels).map(k=>`<label style="font-size:12px;display:flex;gap:6px;align-items:center;min-height:32px"><input type="checkbox" class="alEv" data-k="${k}" ${((st.events||{})[k])?'checked':''}> ${evLabels[k]}${k==='digest'?' <input type=\"number\" min=\"0\" max=\"23\" class=\"alHour\" value=\"'+(st.digest_hour==null?7:st.digest_hour)+'\" style=\"width:52px\"> h UTC':''}</label>`).join('')}</div>
+    <h3 class="ptitle" style="margin-top:14px">Your channels</h3>
+    ${connCards}
+    <details style="margin-top:8px"><summary class="hint" style="cursor:pointer">＋ Add connector</summary>
+      <label class="lbl">Type</label>
+      <select id="alType" class="txt" style="width:100%">${Object.entries(st.conn_labels||{}).map(([k,v])=>`<option value="${k}">${escapeHtml(v)}</option>`).join('')}</select>
+      <div id="alFields"></div>
+      <div class="row" style="margin-top:6px"><button class="btn primary" id="alSave">Save connector</button></div>
+      <div class="hint" id="alHelp"></div></details>
+    <h3 class="ptitle" style="margin-top:14px">🧩 Any app → OraCool (API gateway)</h3>
+    <div class="muted" style="font-size:11px">Give any app, script or Zapier your hook URL and they feed OraCool — the event lands in your inbox and goes out to your connected channels. Machine-to-machine: <b>POST /api/gateway/v1/ingest</b> with <b>X-OraCool-Key</b>.</div>
+    <div class="row" style="margin-top:6px" style="flex-wrap:wrap">
+      <input type="text" class="txt" readonly value="${escapeHtml(location.origin + (st.hook_url||''))}" id="alHook" style="flex:1;min-width:180px;font-size:11px">
+      <button class="btn ghost" id="alCopyHook">Copy</button></div>
+    <div class="row" style="margin-top:6px">
+      <span class="muted" style="font-size:11px">${st.api_key_mask?('key: '+escapeHtml(st.api_key_mask)):'no API key yet'}</span>
+      <button class="btn ghost" id="alKey">${st.api_key_mask?'Rotate':'Create'} API key</button></div>
+    <div id="alKeyOut"></div>
+    <h3 class="ptitle" style="margin-top:14px">Recent events</h3>
+    <div>${inbox||'<div class="hint">Nothing yet — click "Test all channels" or hit your hook URL.</div>'}</div>`;
+  const renderFields=()=>{ const t=$('#alType').value; const fields=(st.conn_fields||{})[t]||[];
+    $('#alHelp').innerHTML=(st.conn_help||{})[t]||'';
+    $('#alFields').innerHTML=fields.map(f=>`<label class="lbl">${escapeHtml(f.replace(/_/g,' '))}</label><input type="${(f==='bot_token'||f==='webhook_url'||f==='access_token'||f==='secret')?'password':'text'}" class="txt alc" data-f="${f}" style="width:100%" placeholder="${escapeHtml(f)}">`).join(''); };
+  $('#alType').onchange=renderFields; renderFields();
+  $('#alSave').onclick=async()=>{ const cfg={}; document.querySelectorAll('.alc').forEach(i=>{ if(i.value.trim()) cfg[i.dataset.f]=i.value.trim(); });
+    const r=await _apost('/api/alerts/connector/save',{type:$('#alType').value, cfg});
+    if(r.error){ $('#alHelp').innerHTML='<span class="errbox">'+escapeHtml(r.error)+'</span>'; }
+    else{ if(r.warn) alert(r.warn); _ALSTATE=null; renderFilesAgent(); } };
+  box.querySelectorAll('.alDel').forEach(b=>b.onclick=async()=>{ await _apost('/api/alerts/connector/delete',{id:b.dataset.id}); _ALSTATE=null; renderFilesAgent(); });
+  box.querySelectorAll('.alTog').forEach(b=>b.onclick=async()=>{ await _apost('/api/alerts/connector/toggle',{id:b.dataset.id, enabled:b.dataset.on==='1'}); _ALSTATE=null; renderFilesAgent(); });
+  box.querySelectorAll('.alTest').forEach(b=>b.onclick=async()=>{ const r=await _apost('/api/alerts/connector/test',{id:b.dataset.id}); alert(JSON.stringify(r.sent||r.error||r).slice(0,300)); _ALSTATE=null; renderFilesAgent(); });
+  $('#alTestAll').onclick=async()=>{ const r=await _apost('/api/alerts/connector/test',{}); alert(JSON.stringify(r.sent||r.error||r).slice(0,400)); _ALSTATE=null; renderFilesAgent(); };
+  box.querySelectorAll('.alEv').forEach(cb=>cb.onchange=async()=>{ await _apost('/api/alerts/settings',{events:{[cb.dataset.k]:cb.checked}}); });
+  const hb=box.querySelector('.alHour'); if(hb) hb.onchange=async()=>{ await _apost('/api/alerts/settings',{digest_hour:parseInt(hb.value||'7',10)}); };
+  $('#alCopyHook').onclick=()=>{ try{ navigator.clipboard.writeText($('#alHook').value); $('#alCopyHook').textContent='✓ copied'; }catch(e){ $('#alHook').select(); document.execCommand&&document.execCommand('copy'); } };
+  $('#alKey').onclick=async()=>{ const r=await _apost('/api/gateway/key/rotate',{});
+    $('#alKeyOut').innerHTML=r.api_key?`<div class="hint" style="margin-top:4px">New key — shown ONCE, store it now:<br><code style="word-break:break-all">${escapeHtml(r.api_key)}</code> <button class="btn ghost" id="alCopyKey" style="min-height:28px;padding:2px 8px">Copy</button></div>`:'<div class="errbox">'+escapeHtml(r.error||'failed')+'</div>';
+    const cc=$('#alCopyKey'); if(cc) cc.onclick=()=>{ navigator.clipboard.writeText(r.api_key); cc.textContent='✓'; }; };
+  $('#alPush').onclick=async()=>{
+    if(!('serviceWorker' in navigator)||!('PushManager' in window)){ alert('This browser has no Web Push (iOS Safari supports it only for installed PWAs). In-app alerts still work while the app is open.'); return; }
+    try{
+      const p=await post('/api/push/vapid',{}); const reg=await navigator.serviceWorker.ready;
+      const opt={userVisibleOnly:true}; if(p.public_key) opt.applicationServerKey=_ub64u(p.public_key);
+      const sub=await reg.pushManager.subscribe(opt);
+      const r=await _apost('/api/push/subscribe',{subscription:sub.toJSON(), ua:navigator.userAgent});
+      alert(r.ok?'Push armed — alerts pop even with the tab closed.':'Subscription stored but server push is offline (pywebpush/VAPID keys not on this host) — in-app alerts still work. '+(r.error||''));
+      _ALSTATE=null; renderFilesAgent();
+    }catch(e){ alert('Push failed: '+(e.message||e)+' — needs HTTPS, granted notification permission, and a real browser tab (not an embedded preview).'); } };
 }
+
 function startCamera(){
   const t=document.querySelector('.tab[data-p="devices"]'); if(t) t.click();
   setTimeout(()=>{ const b=$('#camOpen'); if(b) b.click(); }, 200);

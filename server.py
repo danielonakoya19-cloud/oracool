@@ -258,6 +258,10 @@ def admin_set_pro(email, tier, days=30, by=""):
         except Exception:
             pass
         touch_user(email, pro=False)
+        try:
+            emit_event(email, "payment", "Plan revoked", "Access back to Free beta" + (" (by " + by + ")" if by else ""))
+        except Exception:
+            pass
         return {"ok": True, "revoked": True, "email": email}
     if tier not in PLANS:
         return {"error": "Unknown plan."}
@@ -270,6 +274,11 @@ def admin_set_pro(email, tier, days=30, by=""):
     save_subscriber(rec)
     supabase_store_subscriber(rec)
     touch_user(email, pro=True)
+    try:
+        emit_event(email, "payment", "Plan granted: " + str(tier).upper() + " · " + str(days) + " days",
+                   ("granted by " + by) if by else "admin action")
+    except Exception:
+        pass
     return {"ok": True, "granted": True, "email": email, "tier": tier, "days": days}
 
 # ------------------------------------------------------------------ subscribers
@@ -2916,6 +2925,11 @@ def watch_check_one(w):
     if hits and hits != prev:
         w.setdefault("alerts", []).append({"t": _now(), "hits": hits, "was": prev})
         w["alerts"] = w["alerts"][-10:]
+        try:
+            emit_event(w.get("owner") or "", "watch", "⚠ Watchlist hit: " + str(term)[:80],
+                       str(hits) + " finding(s) — was " + str(prev) + ". Open Cases to review.")
+        except Exception:
+            pass
     w["last_hits"] = hits
 
 
@@ -3536,6 +3550,15 @@ def record_paystack_success(data):
            "channel": data.get("channel"), "tier": plan, "plan": plan}
     save_subscriber(rec)
     supabase_store_subscriber(rec)
+    try:
+        emit_event(email or "", "payment", "Payment received — ₦{:,.0f} · {}".format(
+            rec.get("amount_ngn") or 0, str(plan).upper()),
+            "ref " + str(rec.get("reference")) + " · via " + str(rec.get("channel") or "?") +
+            " · expires " + str(rec.get("expires_at")))
+        notify_admins("payment", "💰 Revenue: ₦{:,.0f} · {}".format(rec.get("amount_ngn") or 0, str(plan).upper()),
+                      str(email) + " ref " + str(rec.get("reference")))
+    except Exception:
+        pass
     return rec
 
 
@@ -3801,6 +3824,633 @@ def plan_info(body):
     plans.sort(key=lambda x: x["rank"])
     return {"tier": tier, "email": email, "plans": plans,
             "note": "Admins receive full Enterprise access automatically."}
+
+# ============================================ connectors, alerts & gateway (24/7 platform)
+
+_ALERTS_LOCK = threading.RLock()
+_OUTBOX_LOCK = threading.Lock()
+_alerts_dirty = [False]
+_gw_rl = {}
+_track_last = {}
+
+CONN_TYPES = {
+    "telegram": {"label": "Telegram bot", "fields": ["bot_token", "chat_id"],
+                 "secrets": ["bot_token"],
+                 "help": "Create a bot with @BotFather, paste its token. Get your numeric chat_id from @userinfobot. The bot must have joined/left your chat."},
+    "whatsapp": {"label": "WhatsApp (Meta Cloud API)", "fields": ["access_token", "phone_number_id", "to_number"],
+                 "secrets": ["access_token"],
+                 "help": "Meta developer portal: a WhatsApp Business app — permanent token, phone number id and your number in international format."},
+    "discord": {"label": "Discord webhook", "fields": ["webhook_url"], "secrets": ["webhook_url"],
+                "help": "Channel settings → Integrations → Webhooks → New Webhook → copy URL."},
+    "slack": {"label": "Slack incoming webhook", "fields": ["webhook_url"], "secrets": ["webhook_url"],
+              "help": "App management → Incoming Webhooks → Add to channel → copy URL."},
+    "webhook": {"label": "Any webhook / your own server", "fields": ["url", "secret"], "optional": ["secret"], "secrets": ["secret"],
+                "help": "OraCool POSTs JSON {title, body, time, source} to your URL, signed with X-OraCool-Signature (HMAC-SHA256 of the raw body, hex) if a secret is set."},
+    "email": {"label": "Email relay", "fields": ["to"], "secrets": [],
+              "help": "Works only if the server host configured RESEND_API_KEY — otherwise use Telegram/Discord/webhook."},
+}
+
+
+def _alerts_file():
+    return os.path.join(DATA_DIR, "alerts.json")
+
+
+def _outbox_file():
+    return os.path.join(DATA_DIR, "alerts_outbox.json")
+
+
+def supabase_kv_put(k, obj):
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return False
+    try:
+        http_fetch(url.rstrip("/") + "/rest/v1/case_store", method="POST",
+                   headers={"apikey": svc, "Authorization": "Bearer " + svc,
+                            "Content-Type": "application/json",
+                            "Prefer": "resolution=merge-duplicates"},
+                   json_body={"k": k, "v": obj, "updated_at": _now()}, timeout=25)
+        return True
+    except Exception:
+        return False
+
+
+def supabase_kv_get(k):
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return None
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/case_store?k=eq." + k + "&select=v",
+                               headers={"apikey": svc, "Authorization": "Bearer " + svc}, timeout=15)
+        rows = json.loads(raw)
+        if rows:
+            v = rows[0].get("v")
+            if isinstance(v, str):
+                v = json.loads(v)
+            return v if isinstance(v, dict) else None
+    except Exception:
+        return None
+    return None
+
+
+def _alerts_all():
+    try:
+        with open(_alerts_file()) as f:
+            return json.load(f)
+    except Exception:
+        try:  # first boot after a Render redeploy: recover from the durable kv mirror
+            remote = supabase_kv_get("alerts")
+            if isinstance(remote, dict):
+                return remote
+        except Exception:
+            pass
+        return {}
+
+
+def _alerts_write(d):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    tmp = _alerts_file() + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=1)
+    os.replace(tmp, _alerts_file())
+    _alerts_dirty[0] = True
+
+
+def _outbox_load():
+    try:
+        with open(_outbox_file()) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _outbox_write(ob):
+    tmp = _outbox_file() + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(ob, f)
+    os.replace(tmp, _outbox_file())
+
+
+def _default_alerts_state():
+    return {"connectors": {}, "events": {"login": True, "payment": True, "security": True,
+                                         "watch": True, "tracker": False, "gateway": True,
+                                         "digest": False},
+            "push_subs": [], "inbox": [], "delivered": [], "digest_hour": 7,
+            "last_digest": "", "api_key_sha": "", "api_key_mask": "", "hook_token": "",
+            "created": _now()}
+
+
+def _alert_defaults(st):
+    if not isinstance(st.get("events"), dict):
+        st["events"] = _default_alerts_state()["events"]
+    for k, v in _default_alerts_state()["events"].items():
+        st["events"].setdefault(k, v)
+    for k in ("connectors", "push_subs", "inbox", "delivered"):
+        if not isinstance(st.get(k), (dict, list)):
+            st[k] = [] if k != "connectors" else {}
+    st.setdefault("digest_hour", 7)
+    st.setdefault("last_digest", "")
+    if not st.get("hook_token"):
+        st["hook_token"] = os.urandom(12).hex()
+
+
+def alerts_state(email, create=False):
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    with _ALERTS_LOCK:
+        d = _alerts_all()
+        st = d.get(email)
+        if st is None and create:
+            st = _default_alerts_state()
+            d[email] = st
+            _alerts_write(d)
+        if st is None:
+            return None
+        return st
+
+
+def _alerts_mutate(email, fn):
+    email = (email or "").strip().lower()
+    if not email:
+        return {"error": "Sign in first — alerts attach to your account."}
+    with _ALERTS_LOCK:
+        d = _alerts_all()
+        st = d.setdefault(email, _default_alerts_state())
+        _alert_defaults(st)
+        r = fn(st)
+        _alerts_write(d)
+        return r
+
+
+def _seal(v):
+    try:
+        if key("ENCRYPTION_KEY"):
+            return crypto.seal(str(v), key("ENCRYPTION_KEY"), key("ENCRYPTION_IV"))
+    except Exception:
+        pass
+    return str(v)
+
+
+def _unseal(v):
+    v = str(v or "")
+    if re.fullmatch(r"[0-9a-f]{32,}", v):
+        try:
+            return crypto.open_seal(v, key("ENCRYPTION_KEY"), key("ENCRYPTION_IV"))
+        except Exception:
+            pass
+    return v
+
+
+def _mask_val(v):
+    v = str(v or "")
+    if not v:
+        return ""
+    if len(v) <= 10:
+        return "•" * len(v)
+    return v[:4] + "…" + v[-4:]
+
+
+def _conn_public(c):
+    cfg = c.get("cfg") or {}
+    return {"id": c.get("id"), "type": c.get("type"), "name": c.get("name"),
+            "enabled": c.get("enabled", True), "last_status": c.get("last_status") or {},
+            "fields": {k: _mask_val(_unseal(v)) if k in (CONN_TYPES.get(c.get("type"), {}) or {}).get("secrets", [])
+                       else _unseal(v) for k, v in cfg.items()}}
+
+
+def connector_send(c, ev):
+    ctype = c.get("type"); cfg = {k: _unseal(v) for k, v in (c.get("cfg") or {}).items()}
+    text = "⚡ " + str(ev.get("title") or "OraCool alert") + "\n" + str(ev.get("body") or "") + \
+           "\n— OraCool · " + str(ev.get("t") or "")
+    try:
+        if ctype == "telegram" and cfg.get("bot_token") and cfg.get("chat_id"):
+            _, raw, _ = http_fetch("https://api.telegram.org/bot" + cfg["bot_token"].strip() + "/sendMessage",
+                                   method="POST", timeout=15,
+                                   json_body={"chat_id": str(cfg["chat_id"]).strip(), "text": text[:3800],
+                                              "disable_web_page_preview": True})
+            d = json.loads(raw) if raw else {}
+            if d.get("ok"):
+                return {"ok": True}
+            return {"ok": False, "error": str(d.get("description") or raw)[:160]}
+        if ctype in ("discord", "slack") and str(cfg.get("webhook_url") or "").startswith("https://"):
+            body = {"content": text[:1900]} if ctype == "discord" else {"text": text[:2900]}
+            _, raw, _ = http_fetch(cfg["webhook_url"].strip(), method="POST", timeout=15, json_body=body)
+            return {"ok": True}
+        if ctype == "webhook" and str(cfg.get("url") or "").startswith("http"):
+            payload = json.dumps({"title": ev.get("title"), "body": ev.get("body"),
+                                  "time": ev.get("t"), "type": ev.get("type"),
+                                  "source": "oracool-alerts"}).encode()
+            hdrs = {"Content-Type": "application/json"}
+            sec = str(cfg.get("secret") or "")
+            if sec:
+                import hmac as _hmac, hashlib as _hl
+                hdrs["X-OraCool-Signature"] = "sha256=" + _hmac.new(sec.encode(), payload, _hl.sha256).hexdigest()
+            req = urllib.request.Request(cfg["url"].strip(), data=payload, headers=hdrs, method="POST")
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                resp.read()
+            return {"ok": True}
+        if ctype == "whatsapp" and cfg.get("access_token") and cfg.get("phone_number_id") and cfg.get("to_number"):
+            _, raw, _ = http_fetch("https://graph.facebook.com/v21.0/" + str(cfg["phone_number_id"]).strip() + "/messages",
+                                   method="POST", timeout=20,
+                                   headers={"Authorization": "Bearer " + str(cfg["access_token"]).strip()},
+                                   json_body={"messaging_product": "whatsapp", "to": re.sub(r"\D", "", str(cfg["to_number"])),
+                                              "type": "text", "text": {"body": text[:1500]}})
+            d = json.loads(raw) if raw else {}
+            if d.get("messages") or d.get("messageId"):
+                return {"ok": True}
+            return {"ok": False, "error": str(d.get("error", {}).get("message") or raw)[:160]}
+        if ctype == "email":
+            rk = key("RESEND_API_KEY")
+            if not rk:
+                return {"ok": False, "error": "no email relay configured on the server (RESEND_API_KEY)"}
+            _, raw, _ = http_fetch("https://api.resend.com/emails", method="POST", timeout=20,
+                                   headers={"Authorization": "Bearer " + rk},
+                                   json_body={"from": key("RESEND_FROM") or "OraCool <onboarding@resend.dev>",
+                                              "to": [cfg.get("to")], "subject": str(ev.get("title") or "OraCool alert"),
+                                              "text": text})
+            return {"ok": True}
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "error": "HTTP " + str(e.code) + " " + str(e.read().decode("utf-8", "replace"))[:120]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:160]}
+    return {"ok": False, "error": "connector not configured properly (" + str(ctype) + ")"}
+
+
+# ---- push (VAPID, optional pywebpush; degrades to in-app polling) ----
+
+def _vapid_paths():
+    return (os.path.join(DATA_DIR, "vapid_private.pem"), os.path.join(DATA_DIR, "vapid_public.txt"))
+
+
+def _vapid_ensure():
+    pr, pu = _vapid_paths()
+    try:
+        if os.path.exists(pr) and os.path.exists(pu):
+            pub = open(pu).read().strip()
+            if pub:
+                return pr, pub
+    except Exception:
+        pass
+    try:
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import serialization
+        import base64 as _b64
+        k = ec.generate_private_key(ec.SECP256R1())
+        pem = k.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                              serialization.NoEncryption())
+        pub = k.public_key().public_bytes(serialization.Encoding.X962,
+                                          serialization.PublicFormat.UncompressedPoint)
+        b64 = _b64.urlsafe_b64encode(pub).decode().rstrip("=")
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(pr, "wb") as f:
+            f.write(pem)
+        with open(pu, "w") as f:
+            f.write(b64)
+        return pr, b64
+    except Exception:
+        return None, None
+
+
+def _push_available():
+    try:
+        import pywebpush  # noqa: F401
+        return bool(_vapid_ensure()[0])
+    except Exception:
+        return False
+
+
+def _push_fan(email, ev):
+    try:
+        st = alerts_state(email)
+        subs = (st or {}).get("push_subs") or []
+        if not subs:
+            return
+        pr, pub = _vapid_ensure()
+        if not pr:
+            return
+        from pywebpush import webpush
+        import urllib.parse as _up
+        admin0 = (admin_emails() or ["admin"])[0]
+        for s in list(subs):
+            try:
+                aud = _up.urlparse(s.get("endpoint", "")).scheme + "://" + _up.urlparse(s.get("endpoint", "")).netloc
+                webpush(subscription_info=s, data=json.dumps({"title": ev.get("title"), "body": ev.get("body")}),
+                        vapid_private_key=pr,
+                        vapid_claims={"sub": "mailto:" + admin0, "aud": aud})
+            except Exception as e:
+                msg = str(e)
+                if "404" in msg or "410" in msg or "gone" in msg.lower():
+                    with _ALERTS_LOCK:
+                        d = _alerts_all()
+                        sst = d.get(email)
+                        if sst:
+                            sst["push_subs"] = [x for x in sst.get("push_subs", [])
+                                                 if x.get("endpoint") != s.get("endpoint")]
+                            _alerts_write(d)
+    except Exception:
+        pass
+
+
+# ---- the event bus: emit → inbox → connectors (retry outbox) + push ----
+
+def emit_event(email, etype, title, body="", meta=None):
+    email = (email or "").strip().lower()
+    if not email:
+        return {"ok": False, "error": "no email"}
+    ev = {"id": os.urandom(4).hex(), "t": _now(), "type": etype,
+          "title": (title or "OraCool alert")[:160], "body": (body or "")[:600]}
+    if meta:
+        ev["meta"] = str(meta)[:200]
+    queued = 0
+    push_on = True
+    with _ALERTS_LOCK:
+        d = _alerts_all()
+        st = d.setdefault(email, _default_alerts_state())
+        _alert_defaults(st)
+        st.setdefault("inbox", []).append(ev)
+        st["inbox"] = st["inbox"][-150:]
+        _alerts_write(d)
+        evs = st.get("events") or {}
+        push_on = bool(evs.get(etype, True))
+        try:
+            with _OUTBOX_LOCK:
+                ob = _outbox_load()
+                for cid, c in (st.get("connectors") or {}).items():
+                    if c.get("enabled", True) and evs.get(etype, True):
+                        ob.append({"uid": os.urandom(4).hex(), "email": email, "cid": cid,
+                                   "ev": ev, "tries": 0, "next": time.time()})
+                ob = ob[-400:]
+                _outbox_write(ob)
+                queued = sum(1 for x in ob if x.get("ev", {}).get("id") == ev["id"])
+        except Exception:
+            pass
+    if push_on:
+        try:
+            threading.Thread(target=_push_fan, args=(email, ev), daemon=True).start()
+        except Exception:
+            pass
+    return {"ok": True, "id": ev["id"], "queued": queued}
+
+
+def notify_admins(etype, title, body=""):
+    for a in (admin_emails() or []):
+        try:
+            emit_event(a, etype, title, body)
+        except Exception:
+            pass
+
+
+def _alerts_flush_outbox():
+    now = time.time()
+    with _OUTBOX_LOCK:
+        ob = _outbox_load()
+        if not ob:
+            return
+        due = [x for x in ob if x.get("next", 0) <= now]
+    if not due:
+        return
+    touches = {}
+    retry = []
+    for it in due:
+        st = alerts_state(it.get("email")) or {}
+        c = (st.get("connectors") or {}).get(it.get("cid"))
+        if not c or not c.get("enabled", True) or \
+           not (st.get("events") or {}).get(it.get("ev", {}).get("type"), True):
+            continue
+        r = connector_send(c, it["ev"]) or {}
+        t = touches.setdefault(it["email"], {"ls": {}, "delivered": []})
+        t["ls"][it["cid"]] = {"t": _now(), "ok": bool(r.get("ok")), "err": (r.get("error") or "")[:160]}
+        t["delivered"].append({"t": _now(), "cid": it["cid"], "type": it["ev"]["type"],
+                               "ok": bool(r.get("ok")), "err": (r.get("error") or "")[:120]})
+        if not r.get("ok"):
+            it["tries"] = int(it.get("tries", 0)) + 1
+            if it["tries"] < 3:
+                it["next"] = now + 90 * it["tries"]
+                retry.append(it)
+    done_ids = {x.get("uid") for x in due if x.get("uid")}
+    with _OUTBOX_LOCK:
+        fresh = _outbox_load()
+        keep = [x for x in fresh if x.get("uid") not in done_ids] + retry
+        _outbox_write(keep[-400:])
+    if touches:
+        with _ALERTS_LOCK:
+            d = _alerts_all()
+            for em, ch in touches.items():
+                dst = d.setdefault(em, _default_alerts_state())
+                _alert_defaults(dst)
+                for cid, ls in ch["ls"].items():
+                    cc = (dst.get("connectors") or {}).get(cid)
+                    if cc is not None:
+                        cc["last_status"] = ls
+                dst.setdefault("delivered", [])
+                dst["delivered"] = (dst["delivered"] + ch["delivered"])[-40:]
+            _alerts_write(d)
+
+
+def _alerts_digest_check():
+    hh = time.strftime("%H"); today = time.strftime("%Y-%m-%d")
+    due = []
+    with _ALERTS_LOCK:
+        d = _alerts_all()
+        for em, st in d.items():
+            _alert_defaults(st)
+            if (st.get("events") or {}).get("digest") and int(st.get("digest_hour") or 7) <= int(hh) \
+               and st.get("last_digest") != today:
+                st["last_digest"] = today
+                evs = [e for e in st.get("inbox", []) if str(e.get("t", ""))[:10] == today]
+                kinds = sorted({e.get("type", "?") for e in evs})
+                summ = ("Quiet day — no events." if not evs else
+                        "{} event(s) today: ".format(len(evs)) + ", ".join(kinds) + ".")
+                if is_admin(em):
+                    try:
+                        s2 = admin_users_payload().get("stats") or {}
+                        summ += " Board: {} users · {} paid · ₦{} total.".format(
+                            s2.get("users", 0), s2.get("paid", 0), s2.get("total_pnl", 0))
+                    except Exception:
+                        pass
+                due.append((em, summ))
+        _alerts_write(d)
+    for em, summ in due:
+        emit_event(em, "digest", "OraCool daily summary · " + today, summ)
+
+
+def _alerts_loops():
+    time.sleep(6)
+    while True:
+        try:
+            _alerts_flush_outbox()
+        except Exception:
+            pass
+        try:
+            _alerts_digest_check()
+        except Exception:
+            pass
+        try:
+            if _alerts_dirty[0] and key("SUPABASE_URL"):
+                _alerts_dirty[0] = False
+                supabase_kv_put("alerts", _alerts_all())
+        except Exception:
+            pass
+        time.sleep(15)
+
+
+# ---- user-facing state / helpers (panel + chat tools) ----
+
+def gateway_issue_key(email):
+    def fn(st):
+        raw = "ora_live_" + os.urandom(21).hex()
+        st["api_key_sha"] = __import__("hashlib").sha256(raw.encode()).hexdigest()
+        st["api_key_mask"] = raw[:13] + "…" + raw[-4:]
+        return {"api_key": raw, "shown_once": True,
+                "hook_path": "/hook/" + (st.get("hook_token") or ""),
+                "note": "Use as X-OraCool-Key header. POST /api/gateway/v1/ingest or GET your hook URL from any app; the event lands in your inbox and fans out to your connected channels."}
+    return _alerts_mutate(email, fn)
+
+
+def gateway_auth(keystr):
+    keystr = (keystr or "").strip()
+    if not keystr:
+        return None
+    import hashlib as _hl
+    want = _hl.sha256(keystr.encode()).hexdigest()
+    for em, st in _alerts_all().items():
+        if st.get("api_key_sha") and st["api_key_sha"] == want:
+            return em
+    return None
+
+
+def hook_owner(tok):
+    tok = (tok or "").strip()
+    if not tok:
+        return None
+    for em, st in _alerts_all().items():
+        if st.get("hook_token") and st["hook_token"] == tok:
+            return em
+    return None
+
+
+def gateway_info(email):
+    st = alerts_state((email or "").lower())
+    if not st:
+        st = alerts_state(email, create=True)
+        st = st or _default_alerts_state()
+    site = key("TRACKER_DOMAIN") or ""
+    if site and not site.startswith("http"):
+        site = "https://" + site
+    return {"api_key_mask": st.get("api_key_mask") or "", "has_key": bool(st.get("api_key_sha")),
+            "hook_url": (site or "") + "/hook/" + str(st.get("hook_token") or ""),
+            "ingest_url": (site or "") + "/api/gateway/v1/ingest",
+            "connectors": len([c for c in (st.get("connectors") or {}).values() if c.get("enabled", True)]),
+            "events_on": sorted([k for k, v in (st.get("events") or {}).items() if v]),
+            "push_ready": _push_available(), "push_subs": len(st.get("push_subs") or [])}
+
+
+def alerts_panel_status(email):
+    st = alerts_state((email or "").lower())
+    if not st:
+        return {"error": "The alerts platform is not set up for this account yet — open Devices → Connectors & Alerts once and everything lights up."}
+    return {"connectors": [_conn_public(c) for c in (st.get("connectors") or {}).values()],
+            "events": st.get("events"), "digest_hour": st.get("digest_hour"),
+            "push_ready": _push_available(), "push_subs": len(st.get("push_subs") or []),
+            "gateway": gateway_info(email),
+            "recent": (st.get("inbox") or [])[-3:][::-1]}
+
+
+def alerts_toggle(email, etype, on):
+    return _alerts_mutate(email, lambda st: (st["events"].__setitem__(etype, bool(on)),
+                                             {"ok": True, etype: bool(on)})[1])
+
+
+def alerts_test_all(email, cid=None):
+    st = alerts_state((email or "").lower())
+    if not st or not (st.get("connectors") or {}):
+        return {"error": "No connectors yet — add one in Devices → Connectors & Alerts (Telegram takes 30 seconds)."}
+    ev = {"title": "OraCool test alert", "body": "If you can read this, the pipeline is live: event engine → your channel.",
+          "t": _now(), "type": "test", "id": "test"}
+    res = {}
+    for c_id, c in (st.get("connectors") or {}).items():
+        if cid and c_id != cid:
+            continue
+        res[c.get("name") or c.get("type")] = connector_send(c, ev)
+    if cid is None and not res:
+        return {"error": "All connectors are disabled."}
+    return {"sent": res, "push": emit_event(email, "test", "OraCool test alert (push)", "delivered via test call") if cid is None else "skipped"}
+
+
+def _gw_rate(owner, limit=120, win=60):
+    now = time.time()
+    e = _gw_rl.get(owner)
+    if not e or now - e[0] > win:
+        _gw_rl[owner] = [now, 1]
+        return True
+    e[1] += 1
+    return e[1] <= limit
+
+
+def _track_alert(rec, entry):
+    owner = (rec.get("owner") or rec.get("email") or "").lower()
+    if not owner:
+        return
+    st = alerts_state(owner)
+    if not st or not (st.get("events") or {}).get("tracker"):
+        return
+    tkey = owner + "|" + str(entry.get("ip"))
+    if time.time() - _track_last.get(tkey, 0) < 600:
+        return
+    _track_last[tkey] = time.time()
+    geo = entry.get("geo") or {}
+    emit_event(owner, "tracker", "Someone opened your tracked link",
+               str((entry.get("device") or {}).get("os") or "device") + " · IP " + str(entry.get("ip")) +
+               (" · " + geo.get("city") if geo.get("city") else ""))
+
+
+def skills_market():
+    items = []
+    for owner, lst in (_skills_all() or {}).items():
+        for s in lst or []:
+            if s.get("shared"):
+                lo = (owner or "?").split("@")[0][:1]
+                dom = (owner or "?").split("@")[-1]
+                items.append({"name": s.get("name"), "author": lo + "***@" + dom,
+                              "trigger": s.get("trigger", ""),
+                              "instructions_preview": (s.get("instructions") or "")[:240],
+                              "created": s.get("created")})
+    return {"skills": items[:80],
+            "note": "Community skills. Owner shares with 'share skill <name>'; anyone installs with 'install skill <name>'. Marketplace never shows full instructions until installed."}
+
+
+def skill_share(email, name, on=True):
+    name = (name or "").strip().lower()
+    def fn(st):
+        pass
+    with _skills_lock:
+        d = _skills_all()
+        lst = d.get((email or "").lower(), [])
+        for s in lst:
+            if s.get("name", "").lower() == name:
+                s["shared"] = bool(on)
+                with open(_skills_file(), "w") as f:
+                    json.dump(d, f, indent=1)
+                return {"ok": True, "skill": s.get("name"), "shared": bool(on),
+                        "note": "It is on the marketplace now." if on else "Removed from the marketplace."}
+    return {"error": "No skill named '" + name + "' on your account."}
+
+
+def skill_install(email, name):
+    name = (name or "").strip().lower()
+    src = None
+    for owner, lst in (_skills_all() or {}).items():
+        for s in lst or []:
+            if s.get("shared") and s.get("name", "").lower() == name:
+                src = s
+                break
+        if src:
+            break
+    if not src:
+        return {"error": "No shared skill with that name on the marketplace."}
+    return skill_save(email, src.get("name"), src.get("trigger"),
+                      src.get("instructions") + "\n\n[Installed from OraCool skill marketplace — verify it does what you want before relying on it.]")
+
 
 # ---------------------------------------------------------------- encrypted vault
 
@@ -4204,6 +4854,39 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             out.append({"tool": "admin", "label": "user board", "result": _shrink(admin_users_payload(), 2200)})
         if re.search(r"\b(revenue|mrr|income|earnings|amount (?:gained|earned)|how much (?:did (?:we|i)|we|do i))\b|(made|made recently|total)(?: earned| gained)?", low):
             out.append({"tool": "admin", "label": "revenue", "result": _shrink(admin_revenue_payload(), 1500)})
+
+    # ---- connectors & alerts platform (every tier — the user's own channels) ----
+    if email:
+        if re.search(r"\b(connect|link|hook|wire|set ?up|add)\b[^.?]{0,28}\b(telegram|whatsapp|discord|slack|webhook|notificatio|alerts?|my (?:apps?|data)|apps?|api|phone.{0,10}(?:alerts|notify))\b", low) \
+           or re.search(r"\b(notificatio|alerts?)\b.{0,16}\b(connect|setup|set up|work|status)\b", low):
+            out.append({"tool": "alerts", "label": "connectors & alerts (live)",
+                        "result": _shrink(alerts_panel_status(email), 1200)})
+        if re.search(r"\b(?:send|fire|trigger)\b.{0,12}\b(?:me\b)?.{0,8}\b(?:test\b)?.{0,4}\b(?:alert|notification|push)\b|test (?:my |the )?(?:alerts?|notifications?|connector)", low):
+            out.append({"tool": "alerts", "label": "test alert → user's channels",
+                        "result": _shrink(alerts_test_all(email), 900)})
+        tog = re.search(r"\b(turn on|enable|start|stop|disable|turn off)\b[^.?]{0,24}\b(login|payment|security|watch|watchlist|tracker|gateway|digest|daily)\b[^.?]{0,14}\balerts?\b", low)
+        if tog:
+            _on = tog.group(1) in ("turn on", "enable", "start")
+            _et = "watch" if tog.group(2) == "watchlist" else ("digest" if tog.group(2) == "daily" else tog.group(2))
+            out.append({"tool": "alerts", "label": ("enable " if _on else "disable ") + _et + " alerts",
+                        "result": _shrink(alerts_toggle(email, _et, _on), 300)})
+        if re.search(r"\b(api key|api access|my api|my hook|hook url|gateway (?:key|status|info|url))\b", low):
+            out.append({"tool": "gateway", "label": "API gateway info",
+                        "result": _shrink(gateway_info(email), 600)})
+        if re.search(r"\brotate (?:my )?api key\b", low):
+            out.append({"tool": "gateway", "label": "rotate API key",
+                        "result": _shrink(gateway_issue_key(email), 500)})
+        insk = re.search(r"install (?:the )?skill ([\w\- ]{2,40})", low)
+        if insk:
+            out.append({"tool": "skills", "label": "install skill from marketplace",
+                        "result": _shrink(skill_install(email, insk.group(1).strip()), 500)})
+        shsk = re.search(r"(?:share|publish|list) (?:my )?skill ([\w\- ]{2,40})", low)
+        if shsk:
+            out.append({"tool": "skills", "label": "share skill to marketplace",
+                        "result": _shrink(skill_share(email, shsk.group(1).strip(), True), 400)})
+        if re.search(r"\b(community|marketplace)\b[^.?]{0,14}skills?\b|browse (?:the |community )?skills", low):
+            out.append({"tool": "skills", "label": "skill marketplace",
+                        "result": _shrink(skills_market(), 900)})
 
     # Locked-feature notices: the AI explains what plan unlocks it (honest, no fake results)
     def _locked(feature, plan):
@@ -5112,6 +5795,10 @@ def tracker_hit(slug, ip, ua, referer):
     if len(rec["visits"]) > 500:
         rec["visits"] = rec["visits"][-500:]
     _tracker_save(d)
+    try:
+        _track_alert(rec, entry)
+    except Exception:
+        pass
     return entry
 
 def tracker_ping(slug, vid, body):
@@ -5540,6 +6227,23 @@ class Handler(BaseHTTPRequestHandler):
             tracker_hit(slug, ip, self.headers.get("User-Agent", ""),
                         self.headers.get("Referer", ""))
             self._send_html(tracker_page(slug))
+        elif path.startswith("/hook/"):
+            tok = path[len("/hook/"):].split("?")[0].strip("/")
+            em = hook_owner(tok)
+            if not em:
+                self._send_json({"error": "unknown hook url"}, 404)
+            else:
+                try:
+                    q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                    src = (q.get("source") or ["external app"])[0][:60]
+                    txt = (q.get("text") or q.get("body") or q.get("message") or ["(no text)"])[0]
+                    ttl = (q.get("title") or ["Hook event · " + src])[0]
+                    if not _gw_rate(em):
+                        self._send_json({"error": "rate limit"}, 429)
+                    else:
+                        self._send_json(emit_event(em, "gateway", ttl[:160], str(txt)[:600], src))
+                except Exception as e:
+                    self._send_json({"error": str(e)[:120]}, 500)
         elif path.startswith("/i/"):
             self._send_html(consent_page(path.split("/")[-1]))
         elif path.startswith("/consent-photo/"):
@@ -5784,6 +6488,14 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/skills/delete":
                 self._send_json(skill_delete((body.get("email") or "").strip().lower(),
                                               body.get("name") or ""))
+            elif path == "/api/skills/share":
+                self._send_json(skill_share((body.get("email") or "").strip().lower(),
+                                            body.get("name") or "", bool(body.get("share", True))))
+            elif path == "/api/skills/market":
+                self._send_json(skills_market())
+            elif path == "/api/skills/install":
+                self._send_json(skill_install((body.get("email") or "").strip().lower(),
+                                              body.get("name") or ""))
             elif path == "/api/pay/crypto/invoice":
                 host = (self.headers.get("Host") or "").split(":")[0]
                 site = (key("TRACKER_DOMAIN") or (("https://" + host) if ("." in host or host.startswith("localhost")) else "")).strip()
@@ -5899,6 +6611,17 @@ class Handler(BaseHTTPRequestHandler):
                     u = r.get("data", {}).get("user") or {}
                     uemail = u.get("email") or email
                     touch_user(uemail, verified=True)  # Supabase only issues a session to confirmed emails
+                    try:
+                        _lip = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or (self.client_address[0] if self.client_address else "")
+                        _lgeo = _geo_ip(_lip) or {}
+                        touch_user(uemail, last_ip=_lip)
+                        emit_event(uemail, "login", "OraCool login",
+                                   "IP " + (_lip or "?") + (" · " + _lgeo.get("city") if _lgeo.get("city") else "") +
+                                   " · " + time.strftime("%Y-%m-%d %H:%M UTC"))
+                        if is_blocked(uemail):
+                            notify_admins("security", "Blocked account just logged in", uemail + " · IP " + (_lip or "?"))
+                    except Exception:
+                        pass
                     r["admin"] = is_admin(uemail)
                     r["blocked"] = is_blocked(uemail)
                     r["pro_token"] = check_subscription(uemail)
@@ -5928,6 +6651,11 @@ class Handler(BaseHTTPRequestHandler):
                 email = (body.get("email") or "").strip().lower()
                 if twofa_check(email, body.get("code")):
                     touch_user(email)
+                    try:
+                        touch_user(email, last_ip=(self.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or (self.client_address[0] if self.client_address else ""))
+                        emit_event(email, "login", "OraCool login (2FA)", time.strftime("%Y-%m-%d %H:%M UTC"))
+                    except Exception:
+                        pass
                     self._send_json({"status": 200, "ok": True, "admin": is_admin(email),
                                      "blocked": is_blocked(email),
                                      "pro_token": check_subscription(email)})
@@ -5982,6 +6710,139 @@ class Handler(BaseHTTPRequestHandler):
                                            method="POST",
                                            json_body={"entity_id": body.get("entity_id"),
                                                       **(body.get("data") or {})}))
+            # ---- connectors & alerts platform ----
+            elif path == "/api/alerts/state":
+                em = (body.get("email") or "").strip().lower()
+                if not em:
+                    self._send_json({"error": "Sign in first."})
+                else:
+                    st = alerts_state(em, create=True)
+                    self._send_json({"connectors": [_conn_public(c) for c in (st.get("connectors") or {}).values()],
+                                     "events": st.get("events"), "digest_hour": st.get("digest_hour"),
+                                     "api_key_mask": st.get("api_key_mask") or "",
+                                     "hook_url": "/hook/" + str(st.get("hook_token") or ""),
+                                     "push_ready": _push_available(),
+                                     "push_subs": len(st.get("push_subs") or []),
+                                     "vapid_public": (_vapid_ensure()[1] or ""),
+                                     "delivered": (st.get("delivered") or [])[-8:][::-1],
+                                     "inbox": (st.get("inbox") or [])[-25:][::-1],
+                                     "conn_help": {k: v["help"] for k, v in CONN_TYPES.items()},
+                                     "conn_fields": {k: v["fields"] for k, v in CONN_TYPES.items()},
+                                     "conn_labels": {k: v["label"] for k, v in CONN_TYPES.items()}})
+            elif path == "/api/alerts/connector/save":
+                em = (body.get("email") or "").strip().lower()
+                ctype = (body.get("type") or "").strip().lower()
+                spec = CONN_TYPES.get(ctype)
+                if not spec:
+                    self._send_json({"error": "Unknown connector type: " + str(ctype)})
+                else:
+                    cfg_in = body.get("cfg") or {}
+                    cfg = {}
+                    warn = ""
+                    for f in spec["fields"]:
+                        v = str(cfg_in.get(f) or "").strip()
+                        if not v:
+                            if f in spec.get("optional", []):
+                                continue
+                            if f in spec["secrets"] and body.get("id") and (alerts_state(em) or {}).get("connectors", {}).get(body.get("id"), {}).get("cfg", {}).get(f):
+                                cfg[f] = (alerts_state(em)["connectors"][body["id"]]["cfg"] or {}).get(f)
+                                continue
+                            self._send_json({"error": "Missing field: " + f}); break
+                        cfg[f] = _seal(v) if f in spec["secrets"] else v
+                    else:
+                        if ctype == "telegram":
+                            try:
+                                _, raw, _ = http_fetch("https://api.telegram.org/bot" + _unseal(cfg["bot_token"]) + "/getMe", method="POST", timeout=8, json_body={})
+                                td = json.loads(raw or b"{}")
+                                if td.get("ok"):
+                                    warn = "Bot verified: @" + str((td.get("result") or {}).get("username") or "?")
+                                else:
+                                    warn = "Telegram rejected the token (" + str(td.get("description") or "?")[:80] + ") — saved anyway; fix token if sends fail."
+                            except Exception as e:
+                                warn = "Could not reach Telegram to verify (" + str(e)[:60] + ")."
+                        def fn(st, _id=body.get("id"), _ctype=ctype, _name=body.get("name") or (CONN_TYPES[_ctype]["label"]), _cfg=cfg):
+                            cid = _id if _id in (st.get("connectors") or {}) else "c" + os.urandom(3).hex()
+                            st.setdefault("connectors", {})[cid] = {
+                                "id": cid, "type": _ctype, "name": str(_name)[:40],
+                                "cfg": _cfg, "enabled": True, "created": _now(),
+                                "last_status": {"t": _now(), "ok": True, "err": ""}}
+                            st["connectors"][cid]["last_status"]["err"] = ""
+                            return {"ok": True, "id": cid, "warn": warn, "connector": _conn_public(st["connectors"][cid])}
+                        self._send_json(_alerts_mutate(em, fn))
+            elif path == "/api/alerts/connector/toggle":
+                em = (body.get("email") or "").strip().lower()
+                cid = body.get("id")
+                self._send_json(_alerts_mutate(em, lambda st: {"ok": True, "enabled": (st.get("connectors", {}).get(cid) or {}).update({"enabled": bool(body.get("enabled", True))}) or True} if (st.get("connectors") or {}).get(cid) else {"error": "no such connector"}))
+            elif path == "/api/alerts/connector/delete":
+                em = (body.get("email") or "").strip().lower()
+                cid = body.get("id")
+                def fn(st):
+                    (st.get("connectors") or {}).pop(cid, None)
+                    return {"ok": True, "deleted": cid}
+                self._send_json(_alerts_mutate(em, fn))
+            elif path == "/api/alerts/connector/test":
+                em = (body.get("email") or "").strip().lower()
+                self._send_json(alerts_test_all(em, body.get("id")))
+            elif path == "/api/alerts/settings":
+                em = (body.get("email") or "").strip().lower()
+                evs = body.get("events") or {}
+                def fn(st):
+                    for k, v in evs.items():
+                        if k in st.get("events", {}):
+                            st["events"][k] = bool(v)
+                    if body.get("digest_hour") is not None:
+                        try:
+                            st["digest_hour"] = max(0, min(23, int(body.get("digest_hour"))))
+                        except Exception:
+                            pass
+                    return {"ok": True, "events": st["events"], "digest_hour": st["digest_hour"]}
+                self._send_json(_alerts_mutate(em, fn))
+            elif path == "/api/push/vapid":
+                self._send_json({"public_key": _vapid_ensure()[1] or "", "available": _push_available()})
+            elif path == "/api/push/subscribe":
+                em = (body.get("email") or "").strip().lower()
+                sub = body.get("subscription") or {}
+                if not (em and sub.get("endpoint") and isinstance(sub.get("keys"), dict)):
+                    self._send_json({"error": "need email + subscription {endpoint,keys}"})
+                else:
+                    def fn(st):
+                        subs = [x for x in st.get("push_subs", []) if x.get("endpoint") != sub["endpoint"]]
+                        subs.append({"endpoint": sub["endpoint"], "keys": sub["keys"], "ua": (body.get("ua") or "")[:120], "added": _now()})
+                        st["push_subs"] = subs[-8:]
+                        return {"ok": True, "count": len(st["push_subs"])}
+                    self._send_json(_alerts_mutate(em, fn))
+            elif path == "/api/push/unsubscribe":
+                em = (body.get("email") or "").strip().lower()
+                ep = body.get("endpoint") or ""
+                def fn(st):
+                    st["push_subs"] = [x for x in st.get("push_subs", []) if x.get("endpoint") != ep]
+                    return {"ok": True, "count": len(st["push_subs"])}
+                self._send_json(_alerts_mutate(em, fn))
+            elif path == "/api/gateway/key/rotate":
+                em = (body.get("email") or "").strip().lower()
+                self._send_json(gateway_issue_key(em))
+            elif path == "/api/gateway/v1/ingest":
+                kstr = (self.headers.get("X-OraCool-Key") or body.get("key") or "").strip()
+                if kstr.startswith("Bearer "):
+                    kstr = kstr[7:]
+                owner = gateway_auth(kstr)
+                if not owner:
+                    self._send_json({"error": "invalid api key", "hint": "Devices → Connectors & Alerts → create/rotate your API key."}); return
+                if not _gw_rate(owner):
+                    self._send_json({"error": "rate limit — 120 events/min"}); return
+                title = body.get("title") or ("Event from " + str(body.get("source") or "external app"))
+                text = body.get("body") or body.get("text") or body.get("message") or json.dumps({k: v for k, v in body.items() if k not in ("key",)})[:500]
+                etype = "gateway"
+                self._send_json(emit_event(owner, etype, str(title)[:160], str(text)[:600], body.get("source")))
+            elif path == "/api/gateway/v1/events":
+                kstr = (self.headers.get("X-OraCool-Key") or body.get("key") or "").strip()
+                if kstr.startswith("Bearer "):
+                    kstr = kstr[7:]
+                owner = gateway_auth(kstr)
+                if not owner:
+                    self._send_json({"error": "invalid api key"}); return
+                st = alerts_state(owner) or {}
+                self._send_json({"events": (st.get("inbox") or [])[-50:][::-1]})
             # ---- chat
             elif path == "/api/chat":
                 self._handle_chat(body)
@@ -6432,6 +7293,10 @@ def main():
         pass
     try:  # durable case/evidence mirror to Supabase (survives Render redeploys)
         threading.Thread(target=_cases_flush_loop, daemon=True).start()
+    except Exception:
+        pass
+    try:  # 24/7 alerts platform: outbox delivery, digests, Supabase kv mirror
+        threading.Thread(target=_alerts_loops, daemon=True).start()
     except Exception:
         pass
     server = ThreadingHTTPServer((HOST, PORT), Handler)

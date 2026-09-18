@@ -227,3 +227,16 @@ Cascade (video): **HiAPI → CVRON free WAN-22** (auto frame-generation + animat
 - **Passwords: never readable, now resettable.** Signups are bcrypt-hashed — no one, not even you or me, can "see" them (and a feature that could would be a crime, so it will never exist). What admins CAN do: `reset password of x@y.com` (fresh strong temp password) or `... to MyNewPw123!`, plus the `/api/admin/reset-password` button endpoint. Every reset writes to the audit log; old password dies instantly (verified: new accepted / old rejected).
 - **Admin tab is self-finding:** if your session predates the admin flag, the app silently re-verifies with the server 1.4s after load and reveals the Admin tab itself.
 - Test leftovers purged: board is now only real accounts; **total revenue ₦0 — that is the truth until first payments.**
+
+## Patch 7 (2026-09-18) — 24/7 CONNECTORS, ALERTS & API GATEWAY
+* New tab sections replace the old Drive-folder widget: **Devices → Connectors & Alerts**.
+* **Event engine (server background thread, 15 s tick):** login / payment / security / watchlist / tracker / gateway / daily-digest events per account, persisted outbox with 3× retries — missed sends catch up after Render sleep.
+* **Outbound connectors:** Telegram bot, WhatsApp (Meta Cloud API), Discord webhook, Slack incoming webhook, ANY custom webhook (HMAC-SHA256 `X-OraCool-Signature`), email (needs RESEND_API_KEY on host). All tokens **AES-256 sealed at rest** (same vault cipher); the UI and chat only ever show masked values.
+* **Inbound API gateway:** every user gets a personal hook URL `GET /hook/<token>?source=&text=` (Zaper/IFTTT/uptime robots just GET it) and an API key for `POST /api/gateway/v1/ingest` (`X-OraCool-Key`) + `GET-style /api/gateway/v1/events`. 120 events/min per key. Key shown ONCE, rotatable.
+* **Browser push:** VAPID keys auto-generate on first boot if `pywebpush` + `cryptography` are installed (they are in requirements.txt now); sw.js handles push + click-to-focus. Without them the in-app alert inbox still notifies while the PWA is open — connectors carry everything when closed.
+* **Daily digest:** per-account UTC hour, includes live board figures for admins.
+* **Skill marketplace:** `share skill <name>` publishes (author masked `d***@gmail.com`), `browse community skills`, `install skill <name>` copies into your account — no server code touched.
+* **Chat control:** "connect my telegram", "send me a test alert", "turn off login alerts", "rotate my api key", "browse community skills", "install skill x" — all run server-side instantly.
+* **Login telemetry on every login path** (password + 2FA) records last_ip; login event carries IP + city.
+* Bluetooth radar now states the truth when the browser sandbox blocks the adapter (e.g. embedded previews) instead of pretending.
+* Storage: `data/alerts.json` + outbox, mirrored to Supabase `case_store` row `k='alerts'` (no new SQL needed). Secrets only ever on server disk, never in the repo or zip.
