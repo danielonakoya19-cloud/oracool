@@ -211,7 +211,8 @@ def touch_user(email, **extra):
         return
     email = email.strip().lower()
     users = load_users()
-    rec = users.get(email) or {"created": time.strftime("%Y-%m-%d %H:%M:%S")}
+    rec = users.get(email) or supabase_get_flag(email) or {"created": time.strftime("%Y-%m-%d %H:%M:%S")}
+    rec["email"] = email
     rec["last_seen"] = time.strftime("%Y-%m-%d %H:%M:%S")
     rec.update(extra)
     users[email] = rec
@@ -237,7 +238,8 @@ def block_user(email, blocked, reason="", by=""):
     if not email:
         return {"error": "Email required."}
     users = load_users()
-    rec = users.get(email) or {"created": time.strftime("%Y-%m-%d %H:%M:%S")}
+    rec = users.get(email) or supabase_get_flag(email) or {"created": time.strftime("%Y-%m-%d %H:%M:%S")}
+    rec["email"] = email
     rec["blocked"] = bool(blocked)
     rec["block_reason"] = reason if blocked else ""
     rec["blocked_by"] = by if blocked else ""
@@ -320,10 +322,14 @@ def supabase_store_subscriber(rec):
         http_fetch(url.rstrip("/") + "/rest/v1/subscribers", method="POST",
                    headers={"apikey": svc, "Authorization": "Bearer " + svc,
                             "Prefer": "return=minimal"},
-                   json_body={"email": rec.get("email"), "tier": "pro",
+                   json_body={"email": str(rec.get("email") or "").strip().lower(),
+                              "tier": rec.get("plan") or rec.get("tier") or "pro",
+                              "plan": rec.get("plan") or rec.get("tier") or "pro",
                               "reference": rec.get("reference"),
-                              "paid_at": rec.get("paid_at"),
-                              "expires_at": rec.get("expires_at")},
+                              "amount_ngn": rec.get("amount_ngn"), "amount_usd": rec.get("amount_usd"),
+                              "paid_at": rec.get("paid_at"), "expires_at": rec.get("expires_at"),
+                              "channel": rec.get("channel"), "days": rec.get("days"),
+                              "by": rec.get("by")},
                    timeout=10)
         return True
     except Exception:
@@ -384,13 +390,20 @@ def supabase_upsert_flag(rec):
     url = key("SUPABASE_URL")
     if not url or not key("SUPABASE_SERVICE_KEY"):
         return False
-    body = {"email": rec.get("email"),
+    email = str(rec.get("email") or "").strip().lower()
+    if not email:
+        return False
+    body = {"email": email,
             "created": rec.get("created", ""),
             "last_seen": rec.get("last_seen", ""),
             "blocked": bool(rec.get("blocked")),
             "block_reason": rec.get("block_reason") or "",
             "blocked_by": rec.get("blocked_by") or "",
-            "blocked_at": rec.get("blocked_at") or ""}
+            "blocked_at": rec.get("blocked_at") or "",
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    for field in ("last_ip", "verified", "email_verification_required"):
+        if field in rec:
+            body[field] = rec[field]
     try:
         http_fetch(url.rstrip("/") + "/rest/v1/user_flags", method="POST",
                    headers=dict(_supabase_headers(), **{"Prefer": "resolution=merge-duplicates"}),

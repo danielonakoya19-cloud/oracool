@@ -31,7 +31,7 @@ The secret environment file and keys.json are NOT in the deployment ZIP. Do not 
 
 ## Supabase and existing users
 
-**Required: the configured Supabase project returned `PGRST205` (missing `public.case_store`) during the live check.** Open Supabase → SQL Editor and run **`CHAT-STORAGE-SETUP.sql`** once. This creates the private backend-only table for conversation and encrypted brand-account mirrors. Do this before expecting chat recovery across Render restarts.
+**Required: the configured Supabase project returned `PGRST205` (missing `public.case_store`) during the live check.** Open Supabase → SQL Editor and run **`SUPABASE-COMPLETE-SETUP.sql`** once (recommended: includes all three tables and missing columns). This creates the private backend-only table for conversation and encrypted brand-account mirrors. Do this before expecting chat recovery across Render restarts.
 - The new backend uses server-side account creation with email confirmation satisfied; no global Supabase setting change is required for this signup form.
 - If other clients call Supabase public signup, disable Confirm email in Supabase's Email provider settings too.
 - Existing unconfirmed users may need manual confirmation by the project operator. Do not create duplicate accounts or reset everyone’s passwords.
@@ -65,3 +65,12 @@ The Gmail account has NOT been connected by this patch. Its normal password was 
 Regression tests mock signup/payment/social providers and do not create real users, charge customers, or publish posts. Live Agnes video generation was tested separately. Gmail/Facebook/Telegram need real credentials and have not been end-to-end tested against an owned account.
 
 No unrestricted “obey anything” mode was added. Admin privileges remain scoped to supported, authorized actions; credentials, account isolation and explicit publishing confirmation remain enforced.
+
+
+## Complete SQL follow-up
+
+Use `SUPABASE-COMPLETE-SETUP.sql` for the complete current schema; `SUPABASE-SETUP.sql` now contains the same complete script for compatibility. Run the whole file in Supabase SQL Editor, then deploy the latest backend commit. It does not create accounts/passwords, configure OAuth/SMTP, or change AI policy. Do not give database service-role credentials to users.
+
+The matching backend fixes include the email in persisted user flags, preserve existing cloud suspension state when loading an account, and save the actual subscription tier and payment fields instead of always recording Pro. Existing misrecorded subscription data is not guessed or rewritten.
+
+SQL was exercised in a local PostgreSQL-compatible PGlite engine on a fresh database and the old OraCool schema, including repeat runs, record preservation, permissions and upsert checks. It has not been executed against the live Supabase project.

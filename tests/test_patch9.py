@@ -110,6 +110,25 @@ class Patch9Tests(unittest.TestCase):
         self.assertEqual(body['mode'],'text');self.assertEqual(body['seconds'],'5')
         self.assertIn('/agnesapi?',fetch.call_args_list[1].args[0])
         self.assertEqual(r['urls'],['https://example.com/video.mp4'])
+    def test_touch_user_mirrors_email_and_preserves_remote_suspension(self):
+        with patch.object(s,'supabase_get_flag',return_value={'email':'saved@example.com','blocked':True}),patch.object(s,'supabase_upsert_flag') as upsert:
+            s.touch_user('Saved@Example.com',last_ip='192.0.2.1')
+        rec=upsert.call_args.args[0]
+        self.assertEqual(rec['email'],'saved@example.com')
+        self.assertTrue(rec['blocked'])
+        self.assertEqual(rec['last_ip'],'192.0.2.1')
+    def test_subscriber_mirror_preserves_enterprise_and_amount(self):
+        self.cloud()
+        with patch.object(s,'http_fetch',return_value=(201,b'',{})) as fetch:
+            self.assertTrue(s.supabase_store_subscriber({'email':'buyer@example.com','plan':'enterprise','tier':'enterprise','amount_usd':500,'amount_ngn':750000,'reference':'test-payment','channel':'test'}))
+        body=fetch.call_args.kwargs['json_body']
+        self.assertEqual(body['plan'],'enterprise');self.assertEqual(body['tier'],'enterprise')
+        self.assertEqual(body['amount_usd'],500);self.assertEqual(body['amount_ngn'],750000)
+    def test_user_flags_reject_missing_identity(self):
+        self.cloud()
+        with patch.object(s,'http_fetch') as fetch:
+            self.assertFalse(s.supabase_upsert_flag({'blocked':True}))
+            fetch.assert_not_called()
     def test_jobs_own_account_only(self):
         with patch.object(s,'_MEDIA_JOBS',{'j':{'email':'a@example.com','status':'done','kind':'video','result':{'ok':True}}}):
             self.assertIn('error',s.media_job_status('b@example.com','j'))

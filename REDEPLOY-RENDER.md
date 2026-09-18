@@ -290,3 +290,5 @@ Build command MUST install requirements for encryption, push and QR codes.
 Do not import environment variables a second time: edit existing rows and add only missing names.
 
 **Live Patch 9 check:** `public.case_store` is missing in the configured Supabase project. Run `CHAT-STORAGE-SETUP.sql` in its SQL Editor before relying on durable chat history.
+
+For the complete current schema, run **SUPABASE-COMPLETE-SETUP.sql** (supersedes the earlier partial scripts). Then deploy the matching latest backend persistence fixes. Admin security checks remain enabled.
