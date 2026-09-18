@@ -7614,6 +7614,14 @@ _AGENT_BLOCK_TAGS = ("tool_calls", "tool_call", "function_calls", "invoke",
                      "tool_use", "antml:invoke", "antml:function_calls")
 
 
+def _decode_agent_angles(text):
+    """Normalize escaped angle brackets, including double-escaped provider output."""
+    t = str(text or "")
+    pattern = r"&(?:amp;)*(lt|gt|\#0*60|\#0*62|\#x0*3c|\#x0*3e);"
+    return re.sub(pattern, lambda m: "<" if m.group(1).lower() in ("lt", "#60", "#x3c")
+                  or re.fullmatch(r"\#(?:0*60|x0*3c)", m.group(1), re.I) else ">", t, flags=re.I)
+
+
 def _strip_agent_markup(text):
     """Delete any agent/tool-call markup a model leaks into its prose
     (<tool_call><arg_key>…</arg_key><arg_value>…</arg_value></invoke>). Models
@@ -7621,7 +7629,7 @@ def _strip_agent_markup(text):
     see it — and the calls themselves are executed server-side instead."""
     if not text:
         return text
-    t = str(text)
+    t = _decode_agent_angles(text)
     if "<" not in t:
         return t
     for tag in _AGENT_BLOCK_TAGS:
@@ -7639,31 +7647,25 @@ def _strip_agent_markup(text):
 
 def _markup_commands(captured):
     """Recover the real instruction from intercepted tool-call markup."""
+    captured = _decode_agent_angles(captured)
+    # Only the named command is executable: identity/intent/provider metadata
+    # must never become additional instructions or override the signed-in user.
     cmds = []
-    for m in re.finditer(r"<\s*arg_value\s*>(.*?)<\s*/\s*arg_value\s*>", captured or "", re.S | re.I):
+    for m in re.finditer(r"<\s*arg_key\s*>\s*command\s*</\s*arg_key\s*>\s*"
+                         r"<\s*arg_value\s*>(.*?)</\s*arg_value\s*>", captured, re.S | re.I):
         v = " ".join(re.sub(r"<[^>]+>", " ", m.group(1)).split())
         if v:
             cmds.append(v[:300])
-    if not cmds:
-        m = re.search(r"<\s*(?:invoke|tool_call)\b[^>]*>(.*?)<\s*/\s*(?:invoke|tool_call)\s*>",
-                      captured or "", re.S | re.I)
-        if m:
-            v = " ".join(re.sub(r"<[^>]+>", " ", m.group(1)).split())
-            if v:
-                cmds.append(v[:300])
     return cmds[:4]
 
 
 class _MarkupGuard:
-    """Streaming shield. Keeps <tool_call>/<invoke>/<arg_*> markup away from the
-    browser even when the provider splits tags across deltas, and keeps the
-    intercepted text so the real call can be executed server-side."""
-
-    OPENERS = ("<tool_call", "<tool_calls", "<function_calls", "<invoke",
-               "<antml:invoke", "<antml:function_calls")
-    CLOSERS = ("</tool_call>", "</tool_calls>", "</function_calls>", "</invoke>",
-               "</antml:invoke>", "</antml:function_calls>")
-    HOLD = 28
+    """Filter raw/escaped agent blocks even across arbitrary stream boundaries."""
+    HOLD = 128
+    OPEN_RE = re.compile(r"<\s*(?:tool_calls?|function_calls?|invoke|tool_use|"
+                         r"antml:invoke|antml:function_calls|think|thinking|reasoning)\b[^>]*>", re.I)
+    CLOSE_RE = re.compile(r"<\s*/\s*(?:tool_calls?|function_calls?|invoke|tool_use|"
+                          r"antml:invoke|antml:function_calls|think|thinking|reasoning)\s*>", re.I)
 
     def __init__(self):
         self.buf = ""
@@ -7671,54 +7673,53 @@ class _MarkupGuard:
         self.dropping = False
 
     def _keep(self, s):
-        self.captured += s
-        if len(self.captured) > 24000:
-            self.captured = self.captured[-24000:]
+        self.captured = (self.captured + s)[-24000:]
 
     def feed(self, delta):
+        self.buf = _decode_agent_angles(self.buf + (delta or ""))
         out = []
-        self.buf += delta or ""
         while self.buf:
             if self.dropping:
-                low = self.buf.lower()
-                best, closer = None, ""
-                for c in self.CLOSERS:
-                    j = low.find(c)
-                    if j >= 0 and (best is None or j < best):
-                        best, closer = j, c
-                if best is None:
-                    self._keep(self.buf)
-                    self.buf = ""
-                    break
-                self._keep(self.buf[:best])
-                self.buf = self.buf[best + len(closer):]
-                self.dropping = False
-                continue
-            low = self.buf.lower()
-            best, opener = None, ""
-            for o in self.OPENERS:
-                j = low.find(o)
-                if j >= 0 and (best is None or j < best):
-                    best, opener = j, o
-            if best is None:
+                m = self.CLOSE_RE.search(self.buf)
+                if m:
+                    self._keep(self.buf[:m.end()])
+                    self.buf = self.buf[m.end():]
+                    self.dropping = False
+                    continue
                 if len(self.buf) > self.HOLD:
-                    out.append(self.buf[:-self.HOLD])
+                    self._keep(self.buf[:-self.HOLD])
                     self.buf = self.buf[-self.HOLD:]
                 break
-            out.append(self.buf[:best])
-            self._keep(self.buf[best:])
-            self.buf = ""
-            self.dropping = True
-        joined = _strip_agent_markup("".join(out))
-        return [joined] if joined else []
+            m = self.OPEN_RE.search(self.buf)
+            if m:
+                out.append(self.buf[:m.start()])
+                self._keep(self.buf[m.start():m.end()])
+                self.buf = self.buf[m.end():]
+                self.dropping = True
+                continue
+            # Keep incomplete tag/entity prefixes, however long the tag gets.
+            safe = max(0, len(self.buf) - self.HOLD)
+            for marker in ("<", "&"):
+                j = self.buf.rfind(marker)
+                if j >= 0 and ((marker == "<" and ">" not in self.buf[j:]) or
+                               (marker == "&" and ";" not in self.buf[j:])):
+                    safe = min(safe, j)
+            if safe:
+                out.append(self.buf[:safe])
+                self.buf = self.buf[safe:]
+            break
+        # Preserve whitespace between streamed prose chunks.
+        return ["".join(out)] if out else []
 
     def tail(self):
-        t = self.buf
-        self.buf = ""
+        t, self.buf = self.buf, ""
         if self.dropping:
             self._keep(t)
             return ""
-        return _strip_agent_markup(t)
+        clean = _strip_agent_markup(t)
+        if not clean:
+            return ""
+        return t if clean == t.strip() else clean
 
 
 def chat_finish(text, tools, cores, media, conv_id="", conv_em="", note=None):

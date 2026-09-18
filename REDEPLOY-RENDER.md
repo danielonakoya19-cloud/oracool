@@ -28,12 +28,11 @@ Everything is already built and pushed to GitHub — you only click and paste.
 
 1. Open your new service → **Environment** tab
 2. Scroll to **Environment Variables** → click **"Add from .env"**
-3. Select & copy **ALL 43 lines** from the file **`RENDER_ENV.txt`** (this workspace)
+3. Select & copy **all current lines** from the file **`RENDER_ENV.txt`** (this workspace)
 4. Paste into the box → **Save Changes**
 5. Render restarts automatically (~1 min)
 
-> If you can't copy from the file, the same 42 lines are printed in the chat
-> message that came with this guide — copy them from there.
+> Keep this file private. Never commit it or paste its contents into a public chat.
 
 ---
 
@@ -279,3 +278,14 @@ Cascade (video): **HiAPI → CVRON free WAN-22** (auto frame-generation + animat
   the configured feed (Finnhub) does not cover the Nigerian Exchange instead of showing a fake 0.00.
 * `qrcode` added to requirements (pure-python SVG QR, no Pillow). Email is still NOT a free relay —
   outbound email needs RESEND_API_KEY; **inbound mail watch works without any server key.**
+
+
+## Escaped tool-markup follow-up
+
+- Handles HTML-escaped and double-escaped tool blocks as well as literal tags.
+- Streaming guard retains split closing tags and preserves prose spacing.
+- Only a named `command` is recovered; provider metadata/user IDs are not commands.
+- Offline regression suite: `python tests/test_markup.py`.
+- Enterprise remains $500 per 30-day billing period; Professional is the internal `ultra` tier.
+
+This follow-up must be deployed before the live site changes. The downloadable ZIP excludes secrets.

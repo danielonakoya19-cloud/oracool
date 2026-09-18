@@ -948,7 +948,8 @@ function scrollChat(){ chat.scrollTop=chat.scrollHeight; try{ updateJump(); }cat
 function _cleanReply(t){
   // never show agent/tool-call markup or internal telemetry to a user
   if(!t) return t||'';
-  let s=String(t);
+  let s=String(t).replace(/&(?:amp;)*(lt|gt|#0*60|#0*62|#x0*3c|#x0*3e);/gi,
+    (_,v)=> /^(lt|#0*60|#x0*3c)$/i.test(v)?'<':'>');
   if(s.indexOf('<')<0) return s;
   s=s.replace(/<\s*(tool_calls?|function_calls?|invoke|tool_use|antml:invoke|antml:function_calls)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi,'');
   s=s.replace(/<\s*(tool_calls?|function_calls?|invoke|tool_use|antml:invoke)\b[^>]*>[\s\S]*$/gi,'');
