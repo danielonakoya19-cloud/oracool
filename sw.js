@@ -2,6 +2,7 @@ self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => self.clients.claim());
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  if (new URL(e.request.url).pathname.startsWith('/api/')) return;
   e.respondWith(
     fetch(e.request).then(r => {
       const c = caches.open('oracool-v2').then(c => { c.put(e.request, r.clone()); return r; });

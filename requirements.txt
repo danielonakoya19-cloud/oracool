@@ -1,10 +1,4 @@
-# OraCool AI uses ONLY the Python standard library.
-# No pip packages are required. This file exists so hosts
-# that auto-run `pip install -r requirements.txt` succeed.
-
-# Optional — real browser push (VAPID) + server-side push signing.
-# The server detects these at runtime; without them every feature above still
-# works, alerts just deliver via in-app inbox + your other connectors.
+# OraCool deployment dependencies: push delivery, encrypted admin credentials, and crypto QR codes.
 pywebpush>=2.0
 cryptography>=42
 qrcode>=7.4        # crypto payment QR (pure-python SVG, no Pillow needed)

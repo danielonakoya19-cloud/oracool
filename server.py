@@ -80,7 +80,10 @@ def _load_keys():
                  "FCS_API_KEY", "FCS_PUBLIC_API_KEY", "DOMSCAN_API_KEY",
                  "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
                  "HA_URL", "HA_TOKEN",
-                 "JWT_SECRET", "ENCRYPTION_KEY", "ENCRYPTION_IV"):
+                 "JWT_SECRET", "ENCRYPTION_KEY", "ENCRYPTION_IV",
+                 "ATLOS_MERCHANT_ID", "ATLOS_API_SECRET", "ATLOS_BASE", "CRYPTO_WALLET_EVM",
+                 "AGNES_API_KEY", "AGNES_BASE", "AGNES_MODEL", "AGNES_IMAGE_MODEL",
+                 "AGNES_VIDEO_MODEL", "HIA_VIDEO_AUDIO_MODEL"):
         env = os.environ.get(name)
         if not env:
             continue
@@ -100,7 +103,7 @@ def _load_keys():
             KEYS[name] = env
 
 def key(name):
-    v = KEYS.get(name)
+    v = KEYS.get(name, os.environ.get(name))
     return (v or "").strip() if isinstance(v, str) else v
 
 # ---------------------------------------------------------------- HTTP helper
@@ -502,73 +505,39 @@ def is_verified(email):
 
 
 def auth_signup(email, password, name=""):
-    """Create the account. Non-admin emails receive a REAL verification email
-    from Supabase (public signup endpoint — Supabase sends it, we never store
-    more of the password than the hash). Admin/creator emails are auto-confirmed
-    so the owners can never be locked out by an email-template problem."""
+    """Password signup without an email-code gate; passwords stay in Supabase."""
     email = (email or "").strip().lower()
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         return {"error": "Enter a valid email address."}
     errs = password_strength(password)
     if errs:
         return {"error": "Password needs: " + ", ".join(errs) + "."}
-    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
-    if not url or not svc:
-        return {"error": "Supabase is not configured on the server."}
-    display = (name or "").strip()[:60]
+    # Never allow somebody to claim creator privileges by typing a reserved email.
     if is_admin(email):
-        try:
-            http_fetch(url.rstrip("/") + "/auth/v1/admin/users", method="POST",
-                       headers={"apikey": svc, "Authorization": "Bearer " + svc,
-                                "Content-Type": "application/json"},
-                       json_body={"email": email, "password": password,
-                                  "email_confirm": True,
-                                  "data": {"display_name": display or "Admin"}}, timeout=25)
-        except urllib.error.HTTPError as e:
-            try:
-                d = json.loads(e.read().decode("utf-8", "replace"))
-            except Exception:
-                d = {}
-            if e.code == 422:
-                return {"error": "That email is already registered — please sign in."}
-            return {"error": "Signup failed: " + str(d.get("msg") or ("error " + str(e.code)))[:200]}
-        except Exception as e:
-            return {"error": "Signup failed: " + str(e)}
-        r = supabase_auth("/auth/v1/token?grant_type=password", method="POST",
-                          json_body={"email": email, "password": password})
-        if r.get("status") == 200:
-            touch_user(email, verified=True)
-            return {"status": 200, "data": r["data"], "admin": True,
-                    "blocked": is_blocked(email), "pro_token": check_subscription(email)}
-        return {"error": "Admin account created — please sign in now."}
-    # public signup → Supabase emails the verification link (needs 'Confirm email' ON,
-    # which is the default). If confirmation is disabled, Supabase logs us straight in.
-    r = supabase_auth("/auth/v1/signup", method="POST",
-                      json_body={"email": email, "password": password,
-                                 "data": {"display_name": display or email.split("@")[0]}})
-    if r.get("status") not in (200, 201):
-        d = r.get("data") or {}
-        msg = ""
-        if isinstance(d, dict):
-            msg = d.get("msg") or d.get("error_description") or d.get("code") or ""
-        else:
-            msg = str(d)[:160]
-        if r.get("status") == 422:
-            return {"error": "That email is already registered — please sign in."}
-        if r.get("status") == 429:
-            return {"error": "Too many signup emails right now (Supabase free tier limit). "
-                             "Wait an hour and tap Resend."}
-        return {"error": "Signup failed: " + str(msg)[:200]}
-    data = r.get("data") or {}
-    if isinstance(data, dict) and data.get("access_token"):
-        # 'Confirm email' is OFF on the Supabase project → log the user straight in
-        touch_user(email, verified=True)
-        return {"status": 200, "data": data, "admin": False,
+        return {"error": "This is a reserved administrator address. Sign in to the existing account; public signup cannot create admins."}
+    url, svc = key("SUPABASE_URL"), key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return {"error": "Signup is not configured. The operator must set Supabase server credentials."}
+    try:
+        http_fetch(url.rstrip("/") + "/auth/v1/admin/users", method="POST",
+                   headers={"apikey": svc, "Authorization": "Bearer " + svc,
+                            "Content-Type": "application/json"},
+                   json_body={"email": email, "password": password, "email_confirm": True,
+                              "user_metadata": {"display_name": (name or email.split("@")[0])[:60],
+                                                "signup_mode": "password_only"}}, timeout=25)
+    except urllib.error.HTTPError as e:
+        if e.code in (400, 422):
+            return {"error": "Could not create this account. If already registered, sign in or reset your password."}
+        return {"error": "Signup service unavailable. Please try again later."}
+    except Exception:
+        return {"error": "Signup service unavailable. Please try again later."}
+    r = supabase_auth("/auth/v1/token?grant_type=password", method="POST",
+                      json_body={"email": email, "password": password})
+    if r.get("status") == 200 and (r.get("data") or {}).get("access_token"):
+        touch_user(email, email_verification_required=False)
+        return {"status": 200, "data": r["data"], "admin": False,
                 "blocked": is_blocked(email), "pro_token": check_subscription(email)}
-    touch_user(email, verified=False)
-    return {"verify_sent": True, "mode": "code", "email": email,
-            "message": "We emailed a verification code to " + email
-                       + ". Enter the code to activate your account."}
+    return {"error": "Account created. Please sign in with your email and password."}
 
 
 def auth_confirm(token_hash):
@@ -2060,17 +2029,18 @@ CVRON = "https://cvron.alwaysdata.net"
 
 PRIVACY_HTML = """<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>OraCool AI — No-Retention & Privacy Policy</title>
+<title>OraCool AI — Privacy & Data Storage</title>
 <style>body{background:#020d1e;color:#cfe9ff;font-family:'Segoe UI',system-ui,sans-serif;max-width:820px;margin:40px auto;padding:0 20px;line-height:1.7}
 h1{color:#5ef0ff;letter-spacing:3px;font-size:22px}h2{color:#ffc24b;font-size:15px;letter-spacing:2px;margin-top:26px}
 code{background:rgba(0,229,255,.08);padding:1px 6px;border-radius:5px}li{margin:6px 0}small{color:#6fa0b8}</style></head><body>
-<h1>◈ ORACOOL AI — NO-RETENTION &amp; PRIVACY POLICY</h1><p><small>Version 1.0 · Effective on deploy · Contact: danielonakoya19@gmail.com</small></p>
+<h1>◈ ORACOOL AI — PRIVACY &amp; DATA STORAGE</h1><p><small>Version 2.0 · Effective on deploy · Contact: danielonakoya19@gmail.com</small></p>
 <h2>1. DATA RETENTION</h2><ul>
+<li><b>Chats and media:</b> signed-in chat history is stored on the server and mirrored to the operator-controlled Supabase database when configured. The browser also caches recent messages. Generated media and gallery records are stored on server disk; download important files and use a persistent disk for redeployment. Connected account credentials are encrypted at rest. Admin mailbox checks read unread counts and message headers, not message bodies.</li>
 <li><b>Queries:</b> investigative queries are executed by the OraCool server at query time. Raw query text is retained only in the audit trail metadata (endpoint name, actor, timestamp) — the <i>content</i> of OSINT lookups is not persisted unless the investigator explicitly saves it into a Case as evidence.</li>
 <li><b>Case files &amp; evidence:</b> stored in the operator's own deployment database (Supabase project controlled by the OraCool operator). Never shared with, sold to, or used to train any third party.</li>
-<li><b>Deletion on demand:</b> users may delete a case or artifact at any time; deletion is immediate and permanent on the platform. Accounts can be removed by the operator on verified request.</li></ul>
+<li><b>Deletion on demand:</b> users may delete a case or artifact at any time; deletion removes the active platform record; provider copies and database backups may have separate retention policies. Accounts can be removed by the operator on verified request.</li></ul>
 <h2>2. AI MODEL TRAINING</h2><ul>
-<li>OraCool <b>legally guarantees</b> that user queries and collected evidence are <b>never used to train public AI models</b>. Third-party inference is performed under zero-retention provider settings (e.g. <code>store=false</code> / enterprise zero-data-retention agreements) wherever the provider supports it; where a provider cannot guarantee it, prompts carry no raw personal data beyond what the query itself requires.</li></ul>
+<li>Prompts and tool results required for a request may be sent to the configured AI provider. Provider retention and training terms vary; OraCool does not claim universal zero retention. Do not submit passwords or API tokens in chat. External demo links have their own privacy policies and do not automatically sync results to OraCool.</li></ul>
 <h2>3. ATTRIBUTION (OPSEC)</h2><ul>
 <li>All OSINT, dark-web index and monitoring requests are issued <b>server-side</b> from the platform's own infrastructure. The investigator's personal IP address, device and home network are never exposed to the sources being queried.</li>
 <li>OraCool only reads public search indexes and public databases. It never connects to .onion sites directly, never uses stolen credentials, never purchases illicit data, and never performs active scanning of third-party systems.</li></ul>
@@ -2170,50 +2140,77 @@ def _agnes_image(prompt):
         return {"error": str(e)[:140]}
 
 
-def _agnes_video(prompt):
-    """Agnes free video engine (POST /videos, mode t2v; polls when async)."""
+def _agnes_video(prompt, duration=None):
+    """Agnes Flash uses mode=text, string seconds and async metadata.url output."""
     k = key("AGNES_API_KEY")
     if not k:
         return {"error": "no key"}
+    model = key("AGNES_VIDEO_MODEL") or "agnes-video-2.5-flash"
+    base = (key("AGNES_BASE") or AGNES_BASE).rstrip("/")
+    root = base[:-3] if base.endswith("/v1") else base
     hdr = {"Authorization": "Bearer " + k, "Content-Type": "application/json"}
+    def video_url(d):
+        if not isinstance(d, dict):
+            return ""
+        candidates = [d.get("url"), d.get("video_url"), (d.get("metadata") or {}).get("url")]
+        data = d.get("data")
+        if isinstance(data, list):
+            candidates.extend(video_url(x) for x in data if isinstance(x, dict))
+        elif isinstance(data, dict):
+            candidates.append(video_url(data))
+        return next((u for u in candidates if isinstance(u, str) and u.startswith("https://")), "")
     try:
-        _, raw, _ = http_fetch(AGNES_BASE + "/videos", method="POST", timeout=200, headers=hdr,
-                               json_body={"model": KEYS.get("AGNES_VIDEO_MODEL", "agnes-video-2.5-flash"),
-                                          "mode": "t2v", "prompt": prompt})
+        seconds = str(max(4, min(12, int(duration or 5))))
+        _, raw, _ = http_fetch(base + "/videos", method="POST", timeout=45, headers=hdr,
+                               json_body={"model": model, "mode": "text", "prompt": prompt,
+                                          "size": "720P", "aspect_ratio": "16:9", "seconds": seconds, "n": 1})
         d = json.loads(raw)
-        u = d.get("url") or d.get("video_url") or ""
-        if not u and d.get("data"):
-            u = (d["data"][0] or {}).get("url", "")
-        tid = d.get("id") or d.get("task_id") or ""
-        t0 = time.time()
-        while not u and tid and time.time() - t0 < 150:
+        url = video_url(d)
+        nested = d.get("data") if isinstance(d.get("data"), dict) else {}
+        tid = d.get("id") or d.get("video_id") or d.get("task_id") or nested.get("id") or nested.get("video_id") or nested.get("task_id")
+        if url:
+            return {"ok": True, "urls": [url]}
+        if not tid:
+            return {"error": str(d.get("message") or d.get("error") or "Provider did not return a video task ID.")[:180]}
+        print("Video job accepted by Agnes; waiting for provider output.")
+        poll_url = root + "/agnesapi?" + urllib.parse.urlencode({"video_id": tid, "model_name": model})
+        deadline = time.monotonic() + 360
+        while time.monotonic() < deadline:
+            time.sleep(15)
             try:
-                _, raw2, _ = http_fetch(AGNES_BASE + "/videos/" + str(tid), timeout=30, headers=hdr)
-                d2 = json.loads(raw2)
-                u = d2.get("url") or (d2.get("data") or [{}])[0].get("url", "") or ""
-                if d2.get("status") in ("failed", "error"):
-                    return {"error": str(d2.get("error") or "generation failed")[:140]}
-            except Exception:
-                pass
-            if not u:
-                time.sleep(6)
-        if u:
-            return {"ok": True, "urls": [u]}
-        msg = (d.get("error") or {}).get("message") if isinstance(d.get("error"), dict) else str(d.get("error") or d.get("message") or "no video url yet")
-        return {"error": str(msg)[:140]}
+                _, raw, _ = http_fetch(poll_url, timeout=25, headers=hdr)
+                d = json.loads(raw)
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    poll_url = base + "/videos/" + urllib.parse.quote(str(tid), safe="")
+                    continue
+                if e.code in (429, 500, 502, 503, 504):
+                    continue
+                raise
+            url = video_url(d)
+            if url:
+                print("Video generation completed by Agnes.")
+                return {"ok": True, "urls": [url]}
+            nested = d.get("data") if isinstance(d.get("data"), dict) else {}
+            status = str(d.get("status") or nested.get("status") or "").lower()
+            if status in ("failed", "error", "cancelled", "canceled"):
+                return {"error": str(d.get("error") or d.get("message") or "Provider generation failed.")[:180]}
+        return {"error": "Agnes video is still queued after six minutes. Provider task: " + str(tid)[:100]}
     except urllib.error.HTTPError as e:
         try:
-            msg = json.loads(e.read().decode("utf-8", "replace")).get("error", {}).get("message") or str(e.code)
+            d = json.loads(e.read().decode("utf-8", "replace"))
+            err = d.get("error")
+            msg = (err.get("message") if isinstance(err, dict) else err) or d.get("message") or ("HTTP " + str(e.code))
         except Exception:
             msg = "HTTP " + str(e.code)
-        return {"error": str(msg)[:140]}
+        return {"error": str(msg)[:180]}
     except Exception as e:
-        return {"error": str(e)[:140]}
+        return {"error": "Video provider request failed (" + type(e).__name__ + ")."}
 
 
 def gen_image(prompt, aspect_ratio="1:1"):
     """Text-to-image cascade: NexaAPI (creator's primary) → HiAPI → TokenMix →
-    Pollinations FLUX → CVRON flux. Free tiers make image creation ALWAYS work;
+    Pollinations FLUX → CVRON flux. Provider capacity and free quotas vary;
     every provider failure is surfaced honestly in `note`."""
     prompt = (prompt or "").strip()
     if not prompt:
@@ -2257,7 +2254,7 @@ def gen_image(prompt, aspect_ratio="1:1"):
                 "prompt": prompt, "images": tm.get("urls", [])}
     if tm.get("error"):
         failures.append("TokenMix: " + str(tm["error"])[:140])
-    # 4) Pollinations free HD FLUX — always available
+    # 4) Pollinations fallback — availability and quotas vary
     pl = _pollinations_image(prompt, aspect_ratio)
     if pl.get("ok"):
         out = {"ok": True, "provider": "oracool-free (FLUX)", "model": "flux",
@@ -2288,7 +2285,7 @@ def gen_video(prompt, duration=None, want_audio=False):
     failures = []
     # 0) Agnes free video (t2v) — skipped first when audio was requested (silent model)
     if not want_audio:
-        ag = _agnes_video(prompt)
+        ag = _agnes_video(prompt, duration)
         if ag.get("ok"):
             return {"ok": True, "provider": "agnes-free", "model": KEYS.get("AGNES_VIDEO_MODEL", "agnes-video-2.5-flash"),
                     "prompt": prompt, "videos": ag["urls"], "audio": False,
@@ -2321,7 +2318,7 @@ def gen_video(prompt, duration=None, want_audio=False):
     else:
         failures.append("HiAPI: key not configured")
     if want_audio:
-        ag2 = _agnes_video(prompt)
+        ag2 = _agnes_video(prompt, duration)
         if ag2.get("ok"):
             return {"ok": True, "provider": "agnes-free", "model": KEYS.get("AGNES_VIDEO_MODEL", "agnes-video-2.5-flash"),
                     "prompt": prompt, "videos": ag2["urls"], "audio": False,
@@ -3679,15 +3676,15 @@ def get_config():
                   for pid, p in PLANS.items()],
         "tiers": list(TIER_RANK.keys()),
         "nasa_ready": bool(key("NASA_API_KEY")),
-        "image_ready": True,  # free HD engine always available; HiAPI/TokenMix upgrade quality
+        "image_ready": True,  # capability, not a provider uptime guarantee
         "media_providers": {"hiapi": bool(key("HIA_API_KEY")), "tokenmix": bool(key("TOKENMIX_API_KEY")),
                              "free_hd_engine": True},
         "video_ready": True,
         "cvron_ready": True,
-        "email_verification": bool(key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY")),
+        "email_verification": False,
         "darkweb_ready": True,
         "darkweb_open": True,
-        "crypto_ready": bool(key("ATLOS_API_SECRET") and key("ATLOS_MERCHANT_ID")),
+        "crypto_ready": bool(crypto_wallet() or (key("ATLOS_API_SECRET") and key("ATLOS_MERCHANT_ID"))),
         "news_ready": True,
         "agnes_ready": bool(key("AGNES_API_KEY")),
         "generator_ready": True,
@@ -3695,7 +3692,8 @@ def get_config():
         "upload_media": True,
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
-        "verify_mode": "code",
+        "verify_mode": "none",
+        "build": "patch9-password-history-config",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -3910,7 +3908,7 @@ def supabase_kv_get(k):
             return v if isinstance(v, dict) else None
     except Exception:
         return None
-    return None
+    return {}
 
 
 def _alerts_all():
@@ -4311,6 +4309,7 @@ def _alerts_loops():
             _mail_tick += 1
             if _mail_tick % 20 == 0:
                 mail_alert_tick()
+                brand_mail_tick()
         except Exception:
             pass
         try:
@@ -4865,6 +4864,10 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
 
     # Creator/admin board — the AI runs the console itself, server-side
     if email and is_admin(email):
+        if re.search(r"(?:oracool|ora-cool|brand).{0,35}(?:inbox|mail|social|page|accounts?)|(?:social|brand) accounts?", low):
+            out.append({"tool": "admin", "label": "OraCool-owned accounts",
+                        "result": _shrink(brand_inspect(email), 2200)})
+
         bm = re.search(r"(?:block|ban|suspend)\s+(?:the\s+)?(?:user|account)?\s*([^\s@]+@[^\s@]+\.[^\s@]+)", low)
         um = re.search(r"(?:unblock|unban|reinstate|allow)\s+(?:the\s+)?(?:user|account)?\s*([^\s@]+@[^\s@]+\.[^\s@]+)", low)
         gm = re.search(r"grant\s+(starter|pro|ultra|professional|enterprise)(?:\s+plan)?\s+(?:to|for)\s+([^\s@]+@[^\s@]+\.[^\s@]+)(?:\s+for\s+(\d+)\s*days?)?", low)
@@ -5546,7 +5549,7 @@ def crypto_invoice(email, plan="pro", site=""):
     if plan == "professional":
         plan = "ultra"
     if plan not in PLANS or PLANS[plan].get("custom"):
-        return {"error": "Pick Starter, Pro or Professional to pay with crypto."}
+        return {"error": "Pick Starter, Pro, Professional or Enterprise to pay with crypto."}
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         return {"error": "I need the email that should receive the plan."}
     usd = PLANS[plan]["price_usd"]
@@ -5582,7 +5585,24 @@ def crypto_invoice(email, plan="pro", site=""):
                 "note": ("Two ways to pay: (1) send $" + str(usd) + " worth of USDT/USDC/ETH to the address above, "
                          "then press 'I have paid — check now', or (2) open the ATLOS page — it shows the exact "
                          "coin amount and unlocks the plan by itself the moment the network confirms.")}
-    return {"error": "ATLOS could not create the invoice: " + str(inv.get("error") or inv)[:200]}
+    addr = crypto_wallet()
+    if addr:
+        with _crypto_lock:
+            d = _crypto_orders()
+            d[ref] = {"email": email, "plan": plan, "created": int(time.time()),
+                      "granted": False, "manual_review": True, "invoice": None, "pay_url": ""}
+            with open(_crypto_orders_file(), "w") as f:
+                json.dump(d, f, indent=1)
+        return {"ok": True, "ref": ref, "amount_usd": usd, "plan": plan,
+                "wallet": addr, "wallet_net": "Ethereum mainnet (ERC-20)", "pay_url": "",
+                "qr_svg_b64": crypto_qr_svg_b64(addr), "manual_review": True,
+                "network_note": "ATLOS is unavailable. Direct transfers require manual admin review. "
+                                "Use Ethereum mainnet only; do not send BTC to this address. "
+                                "Keep your transaction hash and order reference. No automatic unlock.",
+                "gateway_error": "ATLOS is not configured or could not create an invoice."}
+    return {"error": "Crypto checkout is unavailable. The operator must set ATLOS_MERCHANT_ID "
+                     "and ATLOS_API_SECRET, or configure CRYPTO_WALLET_EVM for manual payment review. "
+                     "Use Paystack in the meantime."}
 
 
 def crypto_grant(ref, src="atlos"):
@@ -5630,6 +5650,8 @@ def crypto_status(ref):
     _onch = crypto_onchain_seen(ref)
     _msg = ("Still waiting. The receiving address is shown below — send the amount, then press "
             "'I have paid — check now' (or use the ATLOS page, which unlocks by itself on confirmation).")
+    if o.get("manual_review"):
+        _msg = "Direct-wallet payment needs admin review. Keep your transaction hash and quote order " + ref + ". Checking the wallet does not automatically activate a plan."
     if _onch.get("seen"):
         _msg = ("A transfer into the wallet was detected on-chain after this order was created. An admin "
                 "confirms it in one click (admin: 'confirm crypto " + ref + "'); ATLOS payments unlock "
@@ -6426,7 +6448,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch9-password-history-config",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -6445,6 +6467,17 @@ class Handler(BaseHTTPRequestHandler):
             self._paystack_webhook()
             return
         body = self._read_json()
+        body.pop("_verified_email", None)
+        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/")) or path in ("/api/image", "/api/video")
+        if protected:
+            em = request_identity(self, body)
+            if not em:
+                self._send_json({"error": "Sign in to access your account.", "auth_required": True}, 401)
+                return
+            if is_blocked(em):
+                self._send_json({"error": "Account suspended."}, 403)
+                return
+            body["email"] = body["_verified_email"] = em
         try:
             # ---- professional audit trail: every investigative lookup is logged (who/what/when)
             if path.startswith(("/api/osint/", "/api/pro/", "/api/evidence/", "/api/case/",
@@ -6744,6 +6777,12 @@ class Handler(BaseHTTPRequestHandler):
                         except Exception:
                             pass
                     self._send_json(_ir)
+            elif path == "/api/media/job/start":
+                kind = "video" if body.get("kind") == "video" else "image"
+                if self._require_tier(body, "ultra" if kind == "video" else "pro"):
+                    self._send_json(media_job_start(body["email"], kind, body))
+            elif path == "/api/media/job/status":
+                self._send_json(media_job_status(body["email"], str(body.get("id") or "")))
             elif path == "/api/video":
                 if self._require_tier(body, "ultra"):
                     _vr = gen_video(body.get("prompt"), body.get("duration"),
@@ -6820,9 +6859,9 @@ class Handler(BaseHTTPRequestHandler):
                     msg = ((d.get("error_description") or d.get("msg")) if isinstance(d, dict)
                            else str(d)).lower()
                     if "not confirmed" in msg or "confirm" in msg or "verification" in msg:
-                        self._send_json({"error": "Confirm your email first — a verification code was sent to "
-                                                 + email + ". Enter the code below, or tap Send a new code.",
-                                         "verify_required": True, "email": email})
+                        self._send_json({"error": "This older account is still unconfirmed in Supabase. "
+                                                 "Ask the operator to confirm the existing account in Supabase; "
+                                                 "do not create a duplicate account. New signups no longer need email codes."})
                     else:
                         if not (isinstance(r.get("data"), dict) and
                                (r["data"].get("msg") or r["data"].get("error_description"))):
@@ -6860,6 +6899,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(passkey_challenge())
             elif path == "/api/auth/passkey/login":
                 self._send_json(passkey_login(body.get("credentialId")))
+            elif path == "/api/auth/refresh":
+                rt = str(body.get("refresh_token") or "")
+                if not rt:
+                    self._send_json({"error": "Sign in again."}, 401)
+                else:
+                    r = supabase_auth("/auth/v1/token?grant_type=refresh_token", method="POST",
+                                      json_body={"refresh_token": rt})
+                    if r.get("status") == 200:
+                        em = ((r.get("data") or {}).get("user") or {}).get("email")
+                        r.update(admin=is_admin(em), blocked=is_blocked(em), pro_token=check_subscription(em))
+                    self._send_json(r)
             elif path == "/api/auth/me":
                 token = body.get("access_token")
                 if not token:
@@ -7035,7 +7085,7 @@ class Handler(BaseHTTPRequestHandler):
             # ---- chat sessions (history sidebar) + media library
             elif path == "/api/chat/sessions":
                 self._send_json({"sessions": conv_list(_body_email(self, body)),
-                                 "email": _body_email(self, body)})
+                                 "email": _body_email(self, body), "storage": dict(_CONV_SYNC)})
             elif path == "/api/chat/session/new":
                 self._send_json(conv_new(_body_email(self, body), body.get("title") or "New chat"))
             elif path == "/api/chat/session/get":
@@ -7051,6 +7101,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"items": _mi, "count": len(_mi)})
             elif path == "/api/media/delete":
                 self._send_json(media_delete(_body_email(self, body), str(body.get("id") or "")))
+            elif path.startswith("/api/admin/brand/"):
+                actor = request_identity(self, body, require_supabase=True)
+                if not actor or not is_admin(actor) or is_blocked(actor):
+                    self._send_json({"error": "Sign in as an administrator to manage OraCool accounts."}, 403)
+                elif path.endswith("/list"):
+                    self._send_json({"accounts": brand_public()})
+                elif path.endswith("/connect"):
+                    self._send_json(brand_connect(actor, body))
+                elif path.endswith("/check"):
+                    self._send_json(brand_inspect(actor, str(body.get("id") or "")))
+                elif path.endswith("/publish"):
+                    self._send_json(brand_publish(actor, body))
+                elif path.endswith("/disconnect"):
+                    with _BRAND_LOCK:
+                        d = _brand_data()
+                        d.pop(str(body.get("id") or ""), None)
+                        _brand_write(d)
+                    audit_log(actor, "brand.disconnect", str(body.get("id") or ""))
+                    self._send_json({"ok": True})
+                else:
+                    self._send_json({"error": "Unknown account action."}, 404)
             elif path == "/api/admin/logs":
                 if _require_admin(self, body):
                     self._send_json({"lines": platform_logs(body.get("lines") or 160, body.get("q") or ""),
@@ -7846,6 +7917,50 @@ def media_delete(email, mid):
     return {"ok": True, "deleted": mid}
 
 
+# Background media jobs: bounded concurrency, explicit provider errors.
+_MEDIA_JOBS = {}
+_MEDIA_JOB_LOCK = threading.RLock()
+
+
+def media_job_start(email, kind, body):
+    prompt = str(body.get("prompt") or "").strip()[:4000]
+    if len(prompt) < 3:
+        return {"error": "Describe the scene first."}
+    with _MEDIA_JOB_LOCK:
+        now = time.time()
+        for jid, j in list(_MEDIA_JOBS.items()):
+            if now - j["created"] > 7200 and j["status"] != "running":
+                del _MEDIA_JOBS[jid]
+        active = [j for j in _MEDIA_JOBS.values() if j["status"] == "running"]
+        if any(j["email"] == email for j in active):
+            return {"error": "Your previous generation is still running."}
+        if len(active) >= 3:
+            return {"error": "Generation is busy. Please retry shortly."}
+        jid = os.urandom(12).hex()
+        _MEDIA_JOBS[jid] = {"email": email, "status": "running", "created": now, "kind": kind}
+    def run():
+        try:
+            r = (gen_video(prompt, body.get("duration"), bool(body.get("with_audio"))) if kind == "video"
+                 else gen_image(prompt, body.get("aspect_ratio", "1:1")))
+            if r.get("ok"):
+                r["library"] = media_record(email, kind, prompt, r.get("videos" if kind == "video" else "images") or [],
+                                             r.get("provider", ""), r.get("model", ""))
+        except Exception:
+            r = {"error": "Generation failed. Try again or use one of the external demos."}
+        with _MEDIA_JOB_LOCK:
+            _MEDIA_JOBS[jid].update(status="done" if r.get("ok") else "failed", result=r)
+    threading.Thread(target=run, daemon=True).start()
+    return {"ok": True, "id": jid, "status": "running"}
+
+
+def media_job_status(email, jid):
+    with _MEDIA_JOB_LOCK:
+        j = _MEDIA_JOBS.get(jid)
+        if not j or j["email"] != email:
+            return {"error": "Job not found. If the server restarted, check your gallery or start again."}
+        return {"id": jid, "status": j["status"], "kind": j["kind"], "result": j.get("result")}
+
+
 # --------------------------------------------------- chat sessions (sidebar)
 _CONV_LOCK = threading.RLock()
 
@@ -7854,26 +7969,48 @@ def _conv_file():
     return os.path.join(DATA_DIR, "conversations.json")
 
 
+_CONV_SYNC = {"cloud_ok": None, "error": ""}
+
+
+def _conv_cache(d):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    tmp = _conv_file() + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=1)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, _conv_file())
+
+
 def _conv_all():
     try:
         with open(_conv_file()) as f:
             d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except Exception:
-        return {}
+        if isinstance(d, dict):
+            return d
+    except (OSError, ValueError):
+        pass
+    if key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY"):
+        remote = supabase_kv_get("conversations")
+        if not isinstance(remote, dict):
+            _CONV_SYNC.update(cloud_ok=False, error="Cloud history storage is unavailable. Ask the operator to run CHAT-STORAGE-SETUP.sql in Supabase and check the server credentials.")
+            # Never overwrite a temporarily unreachable cloud archive with {}.
+            raise RuntimeError(_CONV_SYNC["error"])
+        _conv_cache(remote)
+        _CONV_SYNC.update(cloud_ok=True, error="")
+        return remote
+    return {}
 
 
 def _conv_write(d):
-    try:
-        with open(_conv_file(), "w") as f:
-            json.dump(d, f, indent=1)
-    except Exception:
-        pass
-    try:
-        if key("SUPABASE_URL"):
-            supabase_kv_put("conversations", d)
-    except Exception:
-        pass
+    _conv_cache(d)
+    if key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY"):
+        ok = supabase_kv_put("conversations", d)
+        _CONV_SYNC.update(cloud_ok=bool(ok), error="" if ok else "Cloud sync failed; this copy is only on the server disk.")
+        if not ok:
+            print("Chat history: cloud mirror failed; retained local copy.")
+    else:
+        _CONV_SYNC.update(cloud_ok=False, error="Cloud history is not configured; use a persistent server disk.")
 
 
 def conv_list(email):
@@ -8269,15 +8406,214 @@ def crypto_onchain_seen(ref):
     return {"checked": True, "seen": bool(transfers), "transfers": transfers[:5], "wallet": addr}
 
 
-def _body_email(handler, body):
-    """Who is asking: admin token first, then the email the client sent."""
+# Admin-owned brand connections. Secrets never enter the LLM or public state.
+_BRAND_LOCK = threading.RLock()
+_BRAND_MAIL_SEEN = None
+
+
+def _brand_fernet():
+    from cryptography.fernet import Fernet
+    secret = str(key("ENCRYPTION_KEY") or "")
+    if len(secret) < 16:
+        raise ValueError("Configure a stable ENCRYPTION_KEY before connecting accounts.")
+    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(("oracool-brand-v1:" + secret).encode()).digest()))
+
+
+def _brand_data():
     try:
-        payload = handler._auth(body)
-        if payload and payload.get("sub"):
-            return str(payload["sub"]).strip().lower()
+        with open(os.path.join(DATA_DIR, "brand_accounts.json")) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        if key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY"):
+            d = supabase_kv_get("brand_accounts")
+            if not isinstance(d, dict):
+                raise ValueError("Account storage unavailable. Run CHAT-STORAGE-SETUP.sql in Supabase and check the server credentials.")
+            return d
+        return {}
+
+
+def _brand_write(d):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    path = os.path.join(DATA_DIR, "brand_accounts.json")
+    with open(path + ".tmp", "w") as f:
+        json.dump(d, f)
+    os.replace(path + ".tmp", path)
+    return supabase_kv_put("brand_accounts", d) if key("SUPABASE_URL") else False
+
+
+def brand_public():
+    with _BRAND_LOCK:
+        return [{k: v for k, v in item.items() if k not in ("secret",)}
+                for item in _brand_data().values()]
+
+
+def _brand_probe(kind, target, secret):
+    try:
+        if kind == "gmail":
+            if target.lower() != "oracoolai19@gmail.com":
+                return {"error": "This connector is reserved for OraCool's designated Gmail inbox."}
+            if not re.fullmatch(r"[a-zA-Z]{16}", secret.replace(" ", "")):
+                return {"error": "Use a Google app password, not the normal Gmail password."}
+            r = mail_check({"email": target, "app_password": secret.replace(" ", ""), "imap_host": "imap.gmail.com"})
+            if r.get("error"):
+                return {"error": "Gmail connection failed. Enable 2-Step Verification and use a new Google app password."}
+            return {"ok": True, "name": target, "mail": r}
+        if kind == "facebook":
+            if not target.isdigit():
+                return {"error": "Enter the numeric Facebook Page ID."}
+            _, raw, _ = http_fetch("https://graph.facebook.com/v23.0/me?fields=id,name,category,link",
+                                  headers={"Authorization": "Bearer " + secret}, timeout=15)
+            d = json.loads(raw)
+            if str(d.get("id")) != target or not d.get("category"):
+                return {"error": "Use a Page access token for exactly this Page, not a personal-user token."}
+            return {"ok": True, "name": d.get("name"), "url": "https://www.facebook.com/" + target}
+        if kind == "telegram":
+            if not re.fullmatch(r"\d+:[\w-]{20,}", secret) or not re.fullmatch(r"-?\d+|@[A-Za-z0-9_]{5,}", target):
+                return {"error": "Enter a valid bot token and your channel/chat ID."}
+            base = "https://api.telegram.org/bot" + secret
+            _, raw, _ = http_fetch(base + "/getMe", timeout=15)
+            d = json.loads(raw)
+            if not d.get("ok"):
+                return {"error": "Telegram rejected this bot token."}
+            _, raw2, _ = http_fetch(base + "/getChat", method="POST", json_body={"chat_id": target}, timeout=15)
+            chat = json.loads(raw2)
+            if not chat.get("ok"):
+                return {"error": "The bot cannot access this channel/chat. Add it to your own channel first."}
+            return {"ok": True, "name": (chat.get("result") or {}).get("title") or (d.get("result") or {}).get("username"),
+                    "bot": (d.get("result") or {}).get("username")}
+        return {"error": "Supported connections: Gmail, Facebook Page, Telegram bot/channel. Other platforms need their official API setup."}
     except Exception:
-        pass
-    return str(body.get("email") or "").strip().lower()
+        # Provider exceptions can contain tokens in request URLs. Never return them.
+        return {"error": "Provider connection failed. Check permissions, IDs and token validity."}
+
+
+def brand_connect(actor, body):
+    if not is_admin(actor):
+        return {"error": "Admin access required."}
+    if body.get("owned") is not True:
+        return {"error": "Confirm that this account belongs to OraCool and you control it."}
+    kind = str(body.get("kind") or "")
+    target = str(body.get("target") or "").strip()
+    secret = str(body.get("credential") or "").strip()
+    if not secret:
+        return {"error": "Enter the app password or official platform token in the secure form."}
+    try:
+        fernet = _brand_fernet()
+    except Exception:
+        return {"error": "Secure credential storage is unavailable. Configure ENCRYPTION_KEY and cryptography first."}
+    probe = _brand_probe(kind, target, secret)
+    if not probe.get("ok"):
+        return probe
+    with _BRAND_LOCK:
+        d = _brand_data()
+        ident = hashlib.sha256((kind + ":" + target).encode()).hexdigest()[:16]
+        d[ident] = {"id": ident, "kind": kind, "target": target, "name": probe.get("name"),
+                    "url": probe.get("url", ""), "connected_by": actor, "connected_at": _now(),
+                    "secret": fernet.encrypt(secret.encode()).decode()}
+        cloud = _brand_write(d)
+    audit_log(actor, "brand.connect", kind + ":" + target)
+    return {"ok": True, "accounts": brand_public(), "cloud_saved": cloud,
+            "note": "Connection verified. Credentials are encrypted and not exposed to the AI."}
+
+
+def brand_inspect(actor, ident=""):
+    if not is_admin(actor):
+        return {"error": "Admin access required."}
+    with _BRAND_LOCK:
+        items = list(_brand_data().values())
+    results = []
+    for item in items:
+        if ident and item["id"] != ident:
+            continue
+        try:
+            secret = _brand_fernet().decrypt(item["secret"].encode()).decode()
+            r = _brand_probe(item["kind"], item["target"], secret)
+        except Exception:
+            r = {"error": "Cannot decrypt credential. Restore the original encryption key or reconnect."}
+        results.append({"id": item["id"], "kind": item["kind"], "target": item["target"], "result": r})
+    return {"accounts": results, "note": "No connected accounts yet. Use Admin → OraCool-owned accounts." if not items else
+            "Mailbox access is read-only headers/unread counts. Public posts require explicit confirmation in Admin."}
+
+
+def brand_publish(actor, body):
+    if not is_admin(actor):
+        return {"error": "Admin access required."}
+    if body.get("confirmed") is not True:
+        return {"error": "Review the exact text and destination and confirm before publishing."}
+    text = str(body.get("text") or "").strip()[:3000]
+    with _BRAND_LOCK:
+        item = _brand_data().get(str(body.get("id") or ""))
+    if not item or not text or item["kind"] not in ("facebook", "telegram"):
+        return {"error": "Choose a connected social account and enter the post text."}
+    try:
+        secret = _brand_fernet().decrypt(item["secret"].encode()).decode()
+        if item["kind"] == "facebook":
+            _, raw, _ = http_fetch("https://graph.facebook.com/v23.0/" + item["target"] + "/feed", method="POST",
+                                  headers={"Authorization": "Bearer " + secret}, json_body={"message": text}, timeout=25)
+            d = json.loads(raw)
+            ok = bool(d.get("id"))
+        else:
+            _, raw, _ = http_fetch("https://api.telegram.org/bot" + secret + "/sendMessage", method="POST",
+                                  json_body={"chat_id": item["target"], "text": text, "disable_web_page_preview": True}, timeout=25)
+            d = json.loads(raw)
+            ok = bool(d.get("ok"))
+        if not ok:
+            return {"error": "Provider rejected the post. Check publishing permissions."}
+        audit_log(actor, "brand.publish", item["kind"] + ":" + item["target"])
+        return {"ok": True, "message": "Published to the selected connected account."}
+    except Exception:
+        return {"error": "Publish could not be confirmed. Check the page before retrying to avoid duplicates."}
+
+
+def brand_mail_tick():
+    global _BRAND_MAIL_SEEN
+    with _BRAND_LOCK:
+        items = [x for x in _brand_data().values() if x.get("kind") == "gmail"]
+    if not items:
+        return
+    actor = next(iter(admin_emails()), "")
+    r = brand_inspect(actor, items[0]["id"])
+    result = ((r.get("accounts") or [{}])[0].get("result") or {})
+    mail = result.get("mail") or {}
+    if result.get("ok"):
+        count = int(mail.get("unread") or 0)
+        latest = json.dumps(mail.get("latest") or [], sort_keys=True)
+        marker = hashlib.sha256(latest.encode()).hexdigest()
+        if _BRAND_MAIL_SEEN is not None and marker != _BRAND_MAIL_SEEN and count:
+            notify_admins("mail", "OraCool inbox update", str(count) + " unread messages. Ask: check OraCool inbox.")
+        _BRAND_MAIL_SEEN = marker
+
+
+_AUTH_CACHE = {}
+_AUTH_CACHE_LOCK = threading.Lock()
+
+
+def request_identity(handler, body, require_supabase=False):
+    token = str(body.get("access_token") or "")
+    if token:
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        with _AUTH_CACHE_LOCK:
+            cached = _AUTH_CACHE.get(digest)
+        if cached and cached[0] > time.time():
+            return cached[1]
+        r = supabase_auth("/auth/v1/user", access_token=token)
+        if r.get("status") == 200:
+            em = str((r.get("data") or {}).get("email") or "").strip().lower()
+            if em:
+                with _AUTH_CACHE_LOCK:
+                    if len(_AUTH_CACHE) > 1000:
+                        _AUTH_CACHE.clear()
+                    _AUTH_CACHE[digest] = (time.time() + 45, em)
+                return em
+    if not require_supabase:
+        p = handler._auth(body)
+        if p and p.get("sub"):
+            return str(p["sub"]).strip().lower()
+    return ""
+
+
+def _body_email(handler, body):
+    return body.get("_verified_email") or request_identity(handler, body)
 
 
 

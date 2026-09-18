@@ -8,4 +8,9 @@ bin/cloudflared
 # ---- OS junk ----
 .DS_Store
 Thumbs.db
+
 RENDER_ENV.txt
+
+.env
+
+.env.*

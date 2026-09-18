@@ -14,7 +14,7 @@ Everything is already built and pushed to GitHub — you only click and paste.
 4. Render auto-detects **Python**. Fill in:
    - **Name:** `oracool-ai` (this makes your URL `oracool-ai.onrender.com` — or pick `oracool`)
    - **Runtime:** Python
-   - **Build Command:** leave empty (or `pip install -r requirements.txt`)
+   - **Build Command:** `pip install -r requirements.txt`
    - **Start Command:** `python3 server.py`
    - **Plan:** Free
 5. Click **Create Web Service** (don't worry about env vars yet — paste them next)
@@ -42,18 +42,9 @@ Everything is already built and pushed to GitHub — you only click and paste.
 2. Left sidebar → **SQL Editor** → **New query**
 3. Paste the contents of **`SUPABASE-SETUP.sql`** (this workspace) → **Run**
    (it creates `subscribers` and `user_flags` tables — safe, `if not exists`)
-4. **Email verification (signup flow)** — Authentication → **URL Configuration**:
-   - **Site URL** = your Render URL (e.g. `https://oracool-ai.onrender.com`)
-   - Under **Redirect URLs**, Add URL → `https://oracool-ai.onrender.com/**` (also add
-     `http://localhost:8000/**` while testing)
-5. Confirm **Authentication → Sign In / Providers → Email** is ENABLED and
-   **Confirm email** is ON. New signups then get a real verification email; they can't
-   enter until they enter the code. Admin emails auto-skip verification.
-6. **Show the code inside the email (recommended):** Authentication → **Email Templates →
-   "Confirm signup"** → edit the HTML body and add this line where you want it:
-   `Your OraCool activation code is: <b style="font-size:24px;letter-spacing:6px">{{ .Token }}</b>`
-   OraCool verifies that numeric code in-app (AI verifies it — no link clicking needed).
-   Without this edit, users can still paste the email link instead — the app accepts both.
+4. **Password-only signup (Patch 9):** the backend creates ordinary users with the confirmation gate disabled, then signs them in. No email code is sent. Set the Supabase Auth Site URL/Redirect URLs to your Render domain for OAuth and password recovery.
+5. In Supabase **Authentication → Sign In / Providers → Email**, keep email/password sign-in enabled. Turn **Confirm email** OFF if you also use Supabase's public signup endpoint elsewhere.
+6. Existing unconfirmed accounts may still need an operator to confirm the existing user in Supabase. Do not recreate accounts or change existing passwords. Public signup cannot claim the reserved admin addresses; existing admins sign in normally.
 7. **Optional — branded tracking links:** buy/point any domain (e.g. `go.yourname.com` CNAME
    to your Render service, add it as a custom domain in Render), then set env var
    `TRACKER_DOMAIN=go.yourname.com`. Tracking links become `go.yourname.com/waptrick.com`.
@@ -289,3 +280,13 @@ Cascade (video): **HiAPI → CVRON free WAN-22** (auto frame-generation + animat
 - Enterprise remains $500 per 30-day billing period; Professional is the internal `ultra` tier.
 
 This follow-up must be deployed before the live site changes. The downloadable ZIP excludes secrets.
+
+
+## Patch 9 — password-only signup, durable chat restore, working video API
+
+See `PATCH9-DEPLOY.md` for the exact deployment and private-connection steps.
+Health build marker: `patch9-password-history-config`.
+Build command MUST install requirements for encryption, push and QR codes.
+Do not import environment variables a second time: edit existing rows and add only missing names.
+
+**Live Patch 9 check:** `public.case_store` is missing in the configured Supabase project. Run `CHAT-STORAGE-SETUP.sql` in its SQL Editor before relying on durable chat history.

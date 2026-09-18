@@ -4,7 +4,7 @@ services:
   - type: web
     name: oracool-ai
     runtime: python
-    buildCommand: ""          # no build step needed (stdlib only)
+    buildCommand: pip install -r requirements.txt
     startCommand: python3 server.py
     envVars:
       - key: PYTHON_VERSION
