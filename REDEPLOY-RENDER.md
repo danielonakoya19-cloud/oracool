@@ -194,3 +194,28 @@ Cascade (video): **HiAPI → CVRON free WAN-22** (auto frame-generation + animat
 - **Trading desk moves**: auto-refresh every 10s while open (live repricing), the equity curve now
   includes the live mark so it visibly trends.
 - **News**: "news <topic>" — live sourced headlines on every plan.
+
+
+---
+## Pre-deploy patch (2026-09-18): Agnes brain, crypto LIVE, admin live DB
+
+- **AGNES_API_KEY wired as primary brain + media engine** (free OpenAI-compatible gateway,
+  `apihub.agnes-ai.com/v1`, model `agnes-2.5-flash`, 512K ctx). Chat verified answering through it.
+  Images now generate through **Agnes FIRST** (`agnes-image-2.1-flash` — produced live PNGs in tests);
+  videos try **Agnes t2v** first (free tier is rate-limited — the cascade falls through to HiAPI →
+  CVRON silently-honest chain, never fakes audio). Groq/OpenAI remain automatic fallbacks.
+- **ATLOS crypto is LIVE end-to-end**: merchant ID corrected to **`UCU7AOLYKD`** (letter L — the earlier
+  `0` digit version was rejected by ATLOS). Test invoice created: `https://atlos.io/payment/…` with
+  status-polling active. Postback URL auto-derived from the serving host.
+- **Kairos passthrough**: doc-verify now ACTUALLY calls api.kairos.com with App ID `2ff711fe` + API key
+  and reports the provider's answer verbatim (currently HTTP 403 — the dashboard key belongs to the
+  Kairos IDV QR-pairing flow; server REST access needs the paid/contract credentials). No fake verdicts.
+- **Admin AI = real-time backend access**: `inspect user <email>` / `user table` / `database stats` now
+  stream a merged live record: Supabase auth profile (id/created/last sign-in/verified/ban), effective
+  tier, payments, cases + evidence counts, trackers + visits, skills, paper-trading — plus the same
+  block/unblock/grant/revoke/delete commands. Route `/api/admin/record` (admin-token only).
+- **generate-random.org linked to the AI** ("generate anything"): live JSON API for passwords/uuids/
+  tokens/numbers/hashes/phones/emails/addresses/iban/colors/… + 200-generator catalog search.
+  Chat: "generate a random password/uuid/…" works; endpoint `/api/generate/random`.
+- **RENDER_ENV.txt = 49 lines** (adds AGNES_API_KEY, AGNES_MODEL, KAIROS_APP_ID; fixes ATLOS id +
+  BRAIN_PROVIDER).

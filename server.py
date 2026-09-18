@@ -2110,6 +2110,82 @@ def _cvron_video(prompt, attempts=2):
     return {"error": "cvron wan22: " + last_err}
 
 
+AGNES_BASE = "https://apihub.agnes-ai.com/v1"
+
+
+def _agnes_image(prompt):
+    """Agnes free image engine (OpenAI-compatible /images/generations)."""
+    k = key("AGNES_API_KEY")
+    if not k:
+        return {"error": "no key"}
+    try:
+        _, raw, _ = http_fetch(AGNES_BASE + "/images/generations", method="POST", timeout=120,
+                               headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
+                               json_body={"model": KEYS.get("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash"),
+                                          "prompt": prompt, "n": 1, "size": "1024x1024",
+                                          "response_format": "url"})
+        d = json.loads(raw)
+        urls = []
+        for it in (d.get("data") or []):
+            if it.get("url"):
+                urls.append(it["url"])
+            elif it.get("b64_json"):
+                urls.append("data:image/png;base64," + it["b64_json"])
+        if urls:
+            return {"ok": True, "urls": urls}
+        msg = (d.get("error") or {}).get("message") if isinstance(d.get("error"), dict) else str(d.get("error") or d.get("message") or "empty response")
+        return {"error": str(msg)[:140]}
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.loads(e.read().decode("utf-8", "replace")).get("error", {}).get("message") or str(e.code)
+        except Exception:
+            msg = "HTTP " + str(e.code)
+        return {"error": str(msg)[:140]}
+    except Exception as e:
+        return {"error": str(e)[:140]}
+
+
+def _agnes_video(prompt):
+    """Agnes free video engine (POST /videos, mode t2v; polls when async)."""
+    k = key("AGNES_API_KEY")
+    if not k:
+        return {"error": "no key"}
+    hdr = {"Authorization": "Bearer " + k, "Content-Type": "application/json"}
+    try:
+        _, raw, _ = http_fetch(AGNES_BASE + "/videos", method="POST", timeout=200, headers=hdr,
+                               json_body={"model": KEYS.get("AGNES_VIDEO_MODEL", "agnes-video-2.5-flash"),
+                                          "mode": "t2v", "prompt": prompt})
+        d = json.loads(raw)
+        u = d.get("url") or d.get("video_url") or ""
+        if not u and d.get("data"):
+            u = (d["data"][0] or {}).get("url", "")
+        tid = d.get("id") or d.get("task_id") or ""
+        t0 = time.time()
+        while not u and tid and time.time() - t0 < 150:
+            try:
+                _, raw2, _ = http_fetch(AGNES_BASE + "/videos/" + str(tid), timeout=30, headers=hdr)
+                d2 = json.loads(raw2)
+                u = d2.get("url") or (d2.get("data") or [{}])[0].get("url", "") or ""
+                if d2.get("status") in ("failed", "error"):
+                    return {"error": str(d2.get("error") or "generation failed")[:140]}
+            except Exception:
+                pass
+            if not u:
+                time.sleep(6)
+        if u:
+            return {"ok": True, "urls": [u]}
+        msg = (d.get("error") or {}).get("message") if isinstance(d.get("error"), dict) else str(d.get("error") or d.get("message") or "no video url yet")
+        return {"error": str(msg)[:140]}
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.loads(e.read().decode("utf-8", "replace")).get("error", {}).get("message") or str(e.code)
+        except Exception:
+            msg = "HTTP " + str(e.code)
+        return {"error": str(msg)[:140]}
+    except Exception as e:
+        return {"error": str(e)[:140]}
+
+
 def gen_image(prompt, aspect_ratio="1:1"):
     """Text-to-image cascade: NexaAPI (creator's primary) → HiAPI → TokenMix →
     Pollinations FLUX → CVRON flux. Free tiers make image creation ALWAYS work;
@@ -2120,6 +2196,13 @@ def gen_image(prompt, aspect_ratio="1:1"):
     if len(prompt) < 3:
         return {"error": "Prompt too short."}
     failures = []
+    # 0) Agnes free multimodal gateway — currently the most reliably live image engine
+    ag = _agnes_image(prompt)
+    if ag.get("ok"):
+        return {"ok": True, "provider": "agnes-free", "model": KEYS.get("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash"),
+                "prompt": prompt, "images": ag["urls"]}
+    if ag.get("error") and ag["error"] != "no key":
+        failures.append("Agnes: " + str(ag["error"])[:120])
     # 1) NexaAPI (sk- key; needs balance)
     nx = _nexa_image(prompt, aspect_ratio)
     if nx.get("ok"):
@@ -2178,6 +2261,15 @@ def gen_video(prompt, duration=None, want_audio=False):
         return {"error": "Prompt too short."}
     want_audio = bool(want_audio)
     failures = []
+    # 0) Agnes free video (t2v) — skipped first when audio was requested (silent model)
+    if not want_audio:
+        ag = _agnes_video(prompt)
+        if ag.get("ok"):
+            return {"ok": True, "provider": "agnes-free", "model": KEYS.get("AGNES_VIDEO_MODEL", "agnes-video-2.5-flash"),
+                    "prompt": prompt, "videos": ag["urls"], "audio": False,
+                    "note": "Free Agnes engine — silent clip. Ask with 'sound' to route to an audio model once HiAPI has credits."}
+        if ag.get("error") and ag["error"] != "no key":
+            failures.append("Agnes: " + str(ag["error"])[:130])
     k = key("HIA_API_KEY")
     if k:
         if want_audio:
@@ -2203,6 +2295,15 @@ def gen_video(prompt, duration=None, want_audio=False):
             failures.append("HiAPI: " + (err or "no task id"))
     else:
         failures.append("HiAPI: key not configured")
+    if want_audio:
+        ag2 = _agnes_video(prompt)
+        if ag2.get("ok"):
+            return {"ok": True, "provider": "agnes-free", "model": KEYS.get("AGNES_VIDEO_MODEL", "agnes-video-2.5-flash"),
+                    "prompt": prompt, "videos": ag2["urls"], "audio": False,
+                    "note": "SOUND UNAVAILABLE right now: the audio model (Veo 3.1 via HiAPI) has no credits — "
+                            "this Agnes free render is silent. Top up HiAPI for talking video."}
+        if ag2.get("error") and ag2["error"] != "no key":
+            failures.append("Agnes: " + str(ag2["error"])[:130])
     cv = _cvron_video(prompt)
     if cv.get("ok"):
         out = {"ok": True, "provider": "cvron-free (WAN-22)", "model": "wan22-img2video",
@@ -2839,6 +2940,33 @@ DOC_PROVIDERS = {"seon": ("SEON_API_KEY",), "kinegram": ("KINEGRAM_KEY", "KINEGR
                  "kairos": ("KAIROS_KEY", "KAIROS_API_KEY")}
 
 
+def _kairos_call(epath, body):
+    """Try Kairos server REST with JSON-body auth (their classic API shape)."""
+    app_id = key("KAIROS_APP_ID")
+    app_key = key("KAIROS_API_KEY") or key("KAIROS_KEY")
+    if not app_key:
+        return {"error": "no key"}
+    payload = dict(body)
+    if app_id:
+        payload["app_id"] = app_id
+    payload["app_key"] = app_key
+    try:
+        _, raw, _ = http_fetch("https://api.kairos.com/" + epath, method="POST", timeout=30,
+                               headers={"Content-Type": "application/json"}, json_body=payload)
+        d = json.loads(raw)
+        if str(d.get("codes") or d.get("message") or "").find("successful") >= 0 or d.get("faces"):
+            return {"ok": True, "data": d}
+        return {"error": str(d.get("message") or d.get("codes") or d)[:160]}
+    except urllib.error.HTTPError as e:
+        try:
+            d = json.loads(e.read().decode("utf-8", "replace"))
+            return {"error": str(d.get("message") or d)[:160]}
+        except Exception:
+            return {"error": "HTTP " + str(e.code)}
+    except Exception as e:
+        return {"error": str(e)[:160]}
+
+
 def doc_verification_state():
     configured = [n for n, ks in DOC_PROVIDERS.items() if any(key(k) for k in ks)]
     return {"configured": bool(configured), "providers": configured}
@@ -2868,10 +2996,27 @@ def verify_document(dtype, data):
     if cfg["configured"]:
         out["provider"] = cfg["providers"][0]
         out["result"] = "provider_key_present"
-        out["note"] = ("Provider key configured (" + out["provider"] + "). Finish the provider's "
-                       "documented endpoint mapping for your contract, and results flow through "
-                       "this response shape — each check can then be preserved into a Case with a "
-                       "SHA-256 fingerprint automatically.")
+        # If Kairos is the configured provider, ACTUALLY call their API with the
+        # app credentials — never pretend. Whatever Kairos answers is passed through.
+        if out["provider"] == "kairos" and data and re.match(r"https?://\S+", data):
+            kr = _kairos_call("face/detect", {"url": data.strip()})
+            if kr.get("ok"):
+                out["result"] = "kairos_face_detected"
+                out["kairos"] = kr.get("data")
+                out["note"] = ("Kairos detected a face in the supplied image (technical signal only — "
+                               "NOT an authenticity verdict). Preserve this check into a case for custody.")
+            else:
+                out["result"] = "kairos_attempt_failed"
+                out["kairos_error"] = kr.get("error")
+                out["note"] = ("Kairos key is configured but their endpoint refused the call: "
+                               + str(kr.get("error"))[:160] + " — the dashboard credential set (App ID + "
+                               "API Key) may belong to the QR/IDV pairing flow rather than server REST. "
+                               "OraCool reports this honestly and never fabricates a verification result.")
+        else:
+            out["note"] = ("Provider key configured (" + out["provider"] + "). Finish the provider's "
+                           "documented endpoint mapping for your contract, and results flow through "
+                           "this response shape — each check can then be preserved into a Case with a "
+                           "SHA-256 fingerprint automatically.")
     else:
         out["note"] = ("No verification provider configured. To activate real checks, contract with "
                        "SEON, Kinegram or Kairos and set its key (SEON_API_KEY / KINEGRAM_KEY / "
@@ -3468,7 +3613,8 @@ def get_config():
                         "NASA_API_KEY", "HIA_API_KEY", "PIXAZO_KEY", "SHORTAPI_KEY",
                         "TOKENMIX_API_KEY", "FCS_API_KEY", "DOMSCAN_API_KEY",
                         "GOOGLE_CLIENT_ID", "HA_URL",
-                        "KAIROS_API_KEY", "ATLOS_MERCHANT_ID", "ATLOS_API_SECRET"]),
+                        "KAIROS_API_KEY", "ATLOS_MERCHANT_ID", "ATLOS_API_SECRET",
+                        "AGNES_API_KEY", "KAIROS_APP_ID"]),
         "paystack_public_key": key("PAYSTACK_PUBLIC_KEY") if not key("PAYSTACK_TEST") else key("PAYSTACK_TEST_PUBLIC"),
         "paystack_test": bool(key("PAYSTACK_TEST")),
         "paystack_currency": (KEYS.get("PAYSTACK_CURRENCY") or "NGN").upper(),
@@ -3505,6 +3651,8 @@ def get_config():
         "darkweb_open": True,
         "crypto_ready": bool(key("ATLOS_API_SECRET") and key("ATLOS_MERCHANT_ID")),
         "news_ready": True,
+        "agnes_ready": bool(key("AGNES_API_KEY")),
+        "generator_ready": True,
         "skills_ready": True,
         "upload_media": True,
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
@@ -3772,7 +3920,7 @@ def _shrink(obj, limit=1200):
         txt = str(obj)
     return txt[:limit]
 
-def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None):
+def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto_site=""):
     """Detect intent in the user's message and RUN the matching live tool(s)."""
     t = (text or "").strip()
     if not t:
@@ -3959,6 +4107,25 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None):
             except Exception:
                 pass
 
+    # Universal generator — "generate a random password / uuid / anything"
+    gm2 = re.search(r"generate\s+(?:me\s+)?(?:a\s+|some\s+)?(?:random\s+)?([a-z \-]{3,40})?", low)
+    if gm2 and re.search(r"\brandom\b|\bgenerate\b", low) and \
+       any(k in low for k in ("password", "uuid", "token", "number", "name", "hash", "phone", "email",
+                              "address", "credit card", "iban", "color", "hex", "date", "emoji",
+                              "username", "company", "barcode", "dice", "word", "key", "anything")):
+        out.append({"tool": "generate", "label": "generate · " + (gm2.group(1) or "random").strip()[:24],
+                    "result": _shrink(generate_random(gm2.group(1) or low), 1200)})
+
+    # Crypto payment straight from chat: "pay for pro with crypto"
+    if email and "crypto" in low and re.search(r"pay|invoice|upgrade|unlock|subscribe", low):
+        pl = "pro"
+        for cand in ("starter", "pro", "ultra", "professional", "enterprise"):
+            if cand in low:
+                pl = cand
+                break
+        out.append({"tool": "crypto", "label": "crypto · " + pl,
+                    "result": _shrink(crypto_invoice(email, pl, crypto_site), 500)})
+
     # Live news — free, global, sourced (Google News RSS)
     if re.search(r"\b(news|headlines|latest updates|what happened|current events)\b", low):
         q = re.sub(r"(?i)\b(news|headlines|latest|updates|what|happened|current|events|today|give|me|show|any|about|the|a)\b", " ", low)
@@ -4022,6 +4189,13 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None):
         if dm2:
             out.append({"tool": "admin", "label": "DELETE user",
                         "result": _shrink(admin_delete_user(dm2.group(1).lower().strip(" .,;:\"'"), email), 450)})
+        im2 = re.search(r"(?:inspect|look up|show (?:me )?(?:the )?(?:live )?(?:backend )?(?:record|data|profile)|what do we have on|full(?: backend)? (?:record|data)(?: for| on)?)\s+(?:user\s+|account\s+|profile\s+|record\s+)?([^\s@]+@[^\s@]+\.[^\s@]+)", low)
+        if im2:
+            out.append({"tool": "admin", "label": "user record",
+                        "result": _shrink(admin_user_record(im2.group(1)), 2400)})
+        if re.search(r"(?:user table|database (?:stats|users)|all user records|export users)", low):
+            out.append({"tool": "admin", "label": "users table (live)",
+                        "result": _shrink(admin_users_payload(), 2600)})
         if re.search(r"list (?:all )?(?:the )?users|how many users|my (?:users|customers|subscribers)|who signed up", low):
             out.append({"tool": "admin", "label": "user board", "result": _shrink(admin_users_payload(), 2200)})
         if re.search(r"\b(revenue|mrr|income|earnings|sales report)\b", low):
@@ -4197,6 +4371,58 @@ def analyze_file(name, mime, data_b64):
 
 
 
+# ---------------------------------------------------------------- universal generator
+# generate-random.org exposes a public JSON API (verified live) plus a full
+# generator catalog we can deep-link into — "generate anything" support.
+GENRANDOM_KINDS = {"passwords": "passwords", "password": "passwords", "uuid": "uuids", "uuids": "uuids",
+                   "token": "tokens", "tokens": "tokens", "api-key": "api-keys", "api key": "api-keys",
+                   "number": "numbers", "numbers": "numbers", "dice": "dice-rolls",
+                   "hash": "hashes", "sha": "hashes", "phone": "phone-numbers",
+                   "phone number": "phone-numbers", "email": "emails", "emails": "emails",
+                   "address": "addresses", "addresses": "addresses", "credit card": "credit-cards",
+                   "iban": "iban", "name": "names", "names": "names", "color": "colors",
+                   "colors": "colors", "hex": "hex", "binary": "binary", "date": "dates",
+                   "dates": "dates", "emoji": "emojis", "emojis": "emojis", "word": "words",
+                   "company": "company-names", "username": "usernames", "barcode": "barcodes"}
+
+
+def generate_random(query=""):
+    """Universal generator: live JSON from generate-random.org, catalog fallback."""
+    q = (query or "").strip().lower()
+    kind = ""
+    for k in sorted(GENRANDOM_KINDS, key=len, reverse=True):
+        if k in q:
+            kind = GENRANDOM_KINDS[k]
+            break
+    def _search_links():
+        try:
+            _, raw, _ = http_fetch("https://generate-random.org/api/search?q=" + urllib.parse.quote(q or "generator"),
+                                   timeout=20, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+            j = json.loads(raw)
+            rs = ((j.get("data") or j).get("results")) or []
+            return {"query": q,
+                    "generator_links": [{"title": r.get("title", ""), "url": "https://generate-random.org" + (r.get("url") or "")}
+                                        for r in rs[:6]],
+                    "note": "generate-random.org catalog — every kind of random data (200+ generators). "
+                            "Open a link or name the kind and I'll pull live results directly."}
+        except Exception as e:
+            return {"error": "generate-random.org unreachable: " + str(e)[:120]}
+    if kind:
+        try:
+            _, raw, _ = http_fetch("https://generate-random.org/api/v1/generate/" + kind + "?count=3",
+                                   timeout=20, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+            j = json.loads(raw)
+            if j.get("success"):
+                return {"kind": kind, "generated": j.get("data"), "count": len(j.get("data") or []),
+                        "source": "generate-random.org API",
+                        "security_note": "For real security use (API keys, passwords for accounts), "
+                                         "generate locally on your device — never paste secrets fetched over the web."
+                                         if kind in ("passwords", "tokens", "api-keys", "hashes") else ""}
+        except Exception:
+            pass
+    return _search_links()
+
+
 # ---------------------------------------------------------------- live news
 def osint_news(query=""):
     """Live headlines from Google News RSS — free, global, source-named."""
@@ -4358,6 +4584,59 @@ def admin_delete_user(email, by=""):
         pass
     return {"ok": True, "email": email, "removed": [r for r in removed],
             "note": "User and every trace of their data deleted, permanently."}
+
+
+def admin_user_record(email):
+    """Admin-only live read across EVERY production store for one account —
+    auth profile, payments, flags, cases+evidence, trackers, skills, trading."""
+    email = (email or "").strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return {"error": "Enter a valid email address."}
+    rec = {"email": email, "as_of": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())}
+    try:
+        u = _supa_admin_user(email)
+        rec["auth"] = None if not u else {"id": u.get("id"), "created_at": u.get("created_at"),
+                                          "last_sign_in_at": u.get("last_sign_in_at"),
+                                          "email_confirmed_at": bool(u.get("email_confirmed_at")),
+                                          "banned_until": u.get("banned_until")}
+    except Exception as e:
+        rec["auth"] = {"error": str(e)[:100]}
+    rec["effective_tier"] = check_tier(email)
+    try:
+        rec["blocked"] = is_blocked(email)
+    except Exception:
+        rec["blocked"] = False
+    try:
+        rec["payments"] = [s for s in load_subscribers() if (s.get("email") or "").lower() == email][-8:]
+    except Exception:
+        rec["payments"] = []
+    try:
+        d = _cases_load()
+        cases = []
+        for c in (d.get("cases") or {}).values():
+            if (c.get("owner") or "").lower() == email:
+                cases.append({"name": c.get("name"), "status": c.get("status"),
+                              "evidence": len(c.get("artifacts") or []), "created": c.get("created")})
+        rec["cases"] = cases
+    except Exception:
+        rec["cases"] = []
+    try:
+        tk = [v for v in _tracker_load().values() if (v.get("creator") or "").lower() == email]
+        rec["trackers"] = [{"slug": v.get("slug"), "target": v.get("target"), "visits": len(v.get("visits") or [])}
+                           for v in tk]
+    except Exception:
+        rec["trackers"] = []
+    try:
+        rec["skills"] = [s.get("name") for s in skills_load(email)]
+    except Exception:
+        rec["skills"] = []
+    try:
+        acc = _load_accounts().get(email) or {}
+        rec["paper_trading"] = {"cash": acc.get("cash"), "trades": len(acc.get("trades") or [])} if acc else None
+    except Exception:
+        rec["paper_trading"] = None
+    rec["note"] = "Live read straight from the backend stores — identical source as the Admin board."
+    return rec
 
 
 # ---------------------------------------------------------------- crypto payments (ATLOS)
@@ -5479,6 +5758,11 @@ class Handler(BaseHTTPRequestHandler):
                 if payload:
                     self._send_json(admin_set_pro(body.get("email"), body.get("tier"),
                                                   body.get("days"), payload.get("sub", "")))
+            elif path == "/api/admin/record":
+                if _require_admin(self, body):
+                    self._send_json(admin_user_record(body.get("email")))
+            elif path == "/api/generate/random":
+                self._send_json(generate_random(body.get("query") or ""))
             elif path == "/api/admin/delete":
                 payload = _require_admin(self, body)
                 if payload:
@@ -5710,6 +5994,9 @@ class Handler(BaseHTTPRequestHandler):
         if provider == "groq":
             k = key("GROQ_API_KEY")
             return k, "https://api.groq.com/openai/v1", model or KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), provider
+        if provider == "agnes":
+            k = key("AGNES_API_KEY")
+            return k, AGNES_BASE, model or KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), provider
         if provider == "openai":
             k = key("OPENAI_API_KEY")
             return k, "https://api.openai.com/v1", model or "gpt-4o-mini", provider
@@ -5717,12 +6004,16 @@ class Handler(BaseHTTPRequestHandler):
         # working credits); OpenAI is only the fallback so an exhausted OpenAI
         # key never blocks chat.
         auto_provider = KEYS.get("BRAIN_PROVIDER", "groq")
+        if auto_provider == "agnes" and key("AGNES_API_KEY"):
+            return key("AGNES_API_KEY"), AGNES_BASE, model or KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), provider
         if auto_provider == "groq" and key("GROQ_API_KEY"):
             return key("GROQ_API_KEY"), "https://api.groq.com/openai/v1", model or KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), provider
         if auto_provider == "openai" and key("OPENAI_API_KEY"):
             return key("OPENAI_API_KEY"), "https://api.openai.com/v1", model or "gpt-4o-mini", provider
         if key("GROQ_API_KEY"):
             return key("GROQ_API_KEY"), "https://api.groq.com/openai/v1", model or KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), provider
+        if key("AGNES_API_KEY"):
+            return key("AGNES_API_KEY"), AGNES_BASE, model or KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), provider
         if key("OPENAI_API_KEY"):
             return key("OPENAI_API_KEY"), "https://api.openai.com/v1", model or "gpt-4o-mini", provider
         return "", "", model or "gpt-4o-mini", provider
@@ -5769,10 +6060,14 @@ class Handler(BaseHTTPRequestHandler):
                     break
             if last_user:
                 try:
+                    _host = (self.headers.get("Host") or "").split(":")[0]
+                    _site = (key("TRACKER_DOMAIN") or (("https://" + _host) if "." in _host else "")).strip()
+                    if _site and not _site.startswith("http"):
+                        _site = "https://" + _site
                     tool_runs = auto_tools(last_user, tier,
                                            ha_url=body.get("ha_url"),
                                            ha_token=body.get("ha_token"),
-                                           email=chat_email)
+                                           email=chat_email, crypto_site=_site)
                 except Exception as e:
                     tool_runs = [{"tool": "error", "label": "auto-tools", "result": str(e)[:200]}]
         tool_ctx = tool_context(tool_runs)
@@ -5895,6 +6190,13 @@ class Handler(BaseHTTPRequestHandler):
                         url = base_url + "/chat/completions"
                         payload["model"] = model
                         continue
+                    if provider == "auto" and key("AGNES_API_KEY") and "agnes-ai" not in base_url:
+                        api_key = key("AGNES_API_KEY")
+                        base_url = AGNES_BASE
+                        model = KEYS.get("AGNES_MODEL", "agnes-2.5-flash")
+                        url = base_url + "/chat/completions"
+                        payload["model"] = model
+                        continue
                     if acc_full:
                         self._send_json({"content": acc_full, "tools": tool_summary,
                                          "cores": core_names, "media": chat_media,
@@ -5950,6 +6252,13 @@ class Handler(BaseHTTPRequestHandler):
                     api_key = key("GROQ_API_KEY")
                     base_url = "https://api.groq.com/openai/v1"
                     model = KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL)
+                    url = base_url + "/chat/completions"
+                    payload["model"] = model
+                    continue
+                if provider == "auto" and key("AGNES_API_KEY") and "agnes-ai" not in base_url and not acc_stream:
+                    api_key = key("AGNES_API_KEY")
+                    base_url = AGNES_BASE
+                    model = KEYS.get("AGNES_MODEL", "agnes-2.5-flash")
                     url = base_url + "/chat/completions"
                     payload["model"] = model
                     continue
