@@ -292,3 +292,10 @@ Do not import environment variables a second time: edit existing rows and add on
 **Live Patch 9 check:** `public.case_store` is missing in the configured Supabase project. Run `CHAT-STORAGE-SETUP.sql` in its SQL Editor before relying on durable chat history.
 
 For the complete current schema, run **SUPABASE-COMPLETE-SETUP.sql** (supersedes the earlier partial scripts). Then deploy the matching latest backend persistence fixes. Admin security checks remain enabled.
+
+
+## Patch 10 — hands-free voice and real phone alarms
+
+Read `PHONE-CALLS-SETUP.md`. Your completed SQL setup is sufficient; no new SQL is needed.
+Health marker: `patch10-voice-phone-alarms`. Real phone calls are disabled until Twilio, verified recipients, provider credit and always-on hosting are configured. Keep exactly one active scheduler replica.
+Browser voice requires an explicit Start action and microphone permission. It does not keep listening while the phone is locked/the app is hidden.

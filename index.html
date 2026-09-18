@@ -589,19 +589,20 @@ const $ = (s, el=document) => el.querySelector(s);
 
 /* ---------- state ---------- */
 const DEFAULTS = { userName:'sir', provider:'auto', brainMode:'smart', apiKey:'', baseUrl:'', model:'',
-  hibpKey:'', haUrl:'', haToken:'', ttsOn:true, voiceName:'', wake:false, poSSID:'', proactive:true };
+  hibpKey:'', haUrl:'', haToken:'', ttsOn:true, voiceName:'', wake:false, poSSID:'', proactive:false, proactiveConsent:false, voiceLanguage:'en-NG' };
 let settings = {...DEFAULTS};
 let storageOK = true;
 try { localStorage.setItem('__t','1'); localStorage.removeItem('__t'); }
 catch(e){ storageOK = false; }
 function loadSettings(){ try{ if(storageOK){ const s = localStorage.getItem('oracool'); if(s) settings = {...DEFAULTS, ...JSON.parse(s)}; } }catch(e){} }
 function saveSettings(){ try{ if(storageOK) localStorage.setItem('oracool', JSON.stringify(settings)); }catch(e){} }
-function applyProactive(){ proactiveOn = settings.proactive!==false; }
+function applyProactive(){ proactiveOn = settings.proactiveConsent===true; }
 
 /* ---------- session auto-lock (idle security) ---------- */
 let lastActAt = Date.now();
 ['pointerdown','keydown','wheel','touchstart'].forEach(ev=>{ try{ window.addEventListener(ev, ()=>{ lastActAt=Date.now(); }, {passive:true}); }catch(e){} });
 function showLockScreen(){
+  if(window.OraVoice)window.OraVoice.stop('Microphone off — session locked');
   if(document.getElementById('lockScreen')) return;
   const d=document.createElement('div'); d.id='lockScreen';
   d.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(2,10,20,.97);backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:center;padding:18px';
@@ -759,7 +760,7 @@ function updateAdminUI(){
   const t=$('#adminTab'); if(!t) return;
   t.style.display = (session && session.admin) ? '' : 'none';
 }
-function clearSession(){ session = null; saveSession(); renderAcctChip(); }
+function clearSession(){ if(window.OraVoice)window.OraVoice.stop(); session = null; saveSession(); renderAcctChip(); }
 async function verifyAdminTab(){
   try{
     if(session && !session.admin){
@@ -926,6 +927,7 @@ function speechClean(t){
   return s;
 }
 function speak(text){
+  if(window.OraVoice){window.OraVoice.say(text);return;}
   if(!settings.ttsOn || !('speechSynthesis' in window)) return;
   try{
     speechSynthesis.cancel();
@@ -1211,10 +1213,10 @@ function runDeviceCommand(text){
 }
 
 /* ---------- proactive engine (talks before the user asks) ---------- */
-let proactiveOn = true, lastUserAt = Date.now();
+let proactiveOn = false, lastUserAt = Date.now();
 const PROACTIVE = {
-  morning: name => `${name}, good morning. I've already scanned the markets, weather and your systems — shall I run your briefing?`,
-  afternoon: name => `${name}, quick check while we're quiet: markets moved ${Math.random()<.5?'up':'down'} overnight. Want the numbers?`,
+  morning: name => `${name}, good morning. Would you like me to check the weather or help plan your day?`,
+  afternoon: name => `${name}, would you like to continue our last topic, or check something new?`,
   evening: name => `${name}, end of day. Want me to summarize today's markets and weather?`,
   night: name => `Working late, ${name}. I'm right here — ask me anything, or shall I show today's space picture?`,
 };
@@ -1241,6 +1243,7 @@ function proactivePick(){
 }
 const PROACTIVE_IDLE_MS = 30*60*1000;   // talk only after 30 min of inactivity
 function proactiveLoop(){
+  if(window.OraVoice) return; // opt-in voice controller owns proactive speech
   if(!proactiveOn || busy || speaking || listening) return;
   if(Date.now()-lastUserAt < PROACTIVE_IDLE_MS) return;
   const msg = proactivePick();
@@ -1278,14 +1281,18 @@ async function send(text){
   const files=pendingFiles.slice(); pendingFiles=[]; renderFileChips();
   if(!text && !files.length) return;
   if(busy) return;
+  if(!files.length && window.OraReminders && await window.OraReminders.handle(text)){if(window.OraVoice)window.OraVoice.resume();return;}
   if(!files.length){
     const dc=runDeviceCommand(text);
     if(dc.handled){ addUser(text); const m=dc.reply; if(m){ addAI(m); speak(m); } return; }
     if(await trySaveDoc(text)){ addUser(text); return; }
   }
   busy=true; $('#sendBtn').disabled=true;
+  const turnSpeaker=window.OraVoice?window.OraVoice.newTurn():null;
+  const chatAbort=new AbortController();
+  if(window.OraVoice)window.OraVoice.setAbort(()=>chatAbort.abort());
   setOrbStatus('thinking');
-  $('#input').value=''; $('#input').focus();
+  $('#input').value=''; if(!window.OraVoice?.enabled)$('#input').focus();
   let display=text, content=text;
   if(files.length){
     display=(text||'Please analyze the attached file')+' 📎 '+files.map(f=>f.name).join(', ');
@@ -1308,14 +1315,14 @@ async function send(text){
   try{
     let acc='';
     const _sid=await ensureSession();
-    const payload={messages:msgs, stream:true, provider:settings.provider||'auto', max_tokens:900, session_id:_sid||''};
+    const payload={messages:msgs, stream:true, provider:settings.provider||'auto', max_tokens:(window.OraVoice?.enabled?450:900), voice_mode:!!window.OraVoice?.enabled, session_id:_sid||''};
     await ensureFreshLogin();
     if(session&&session.access_token) payload.access_token=session.access_token;
     const _em=myEmail(); if(_em) payload.email=_em; if(proToken) payload.token=proToken;
     if(settings.haUrl && settings.haToken){ payload.ha_url=settings.haUrl; payload.ha_token=settings.haToken; }
     if(settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
     else if(settings.brainMode==='fast' && srv && srv.brain && srv.brain.fast_model){ payload.provider='groq'; payload.model=srv.brain.fast_model; }
-    const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:chatAbort.signal});
     if(!resp.ok){ let j=null; try{j=await resp.json();}catch(e){} throw new Error((j&&j.error)||('AI provider error '+resp.status)); }
     const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf=''; let finished=false; let streamMedia=[];
     outer: while(true){
@@ -1333,7 +1340,7 @@ async function send(text){
               if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); }
               if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
               if(j.__media && j.__media.length){ streamMedia=streamMedia.concat(j.__media); }
-              const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; body.textContent=(acc.indexOf('<')>=0?_cleanReply(acc):acc); scrollChat(); }
+              const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; body.textContent=_cleanReply(acc); if(turnSpeaker)turnSpeaker.feed(_cleanReply(acc)); scrollChat(); }
             }catch(e){}
           }
         }
@@ -1352,15 +1359,19 @@ async function send(text){
     }
     history.push({role:'assistant',content:acc}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
     try{ loadSessions(); }catch(e){}
-    speak(acc);
+    if(turnSpeaker)turnSpeaker.finish(_cleanReply(acc));else speak(acc);
   }catch(e){
+    if(turnSpeaker)turnSpeaker.cancel();
+    if(e.name==='AbortError'){body.textContent+=(body.textContent?'\n':'')+'Reply interrupted.';}else{
     body.textContent='';
     const m=e.message||String(e);
     if(/api key|AI provider error 400|no credits|insufficient|429/i.test(m))
       addErr('⚠️ Brain issue: '+(/no credits|insufficient|429/i.test(m)?'your AI provider has no credits/billing. Add credits or switch provider in Settings.':m));
     else addErr('⚠️ '+m);
+    }
   }
-  busy=false; $('#sendBtn').disabled=false; scrollChat(); setOrbStatus('online');
+  if(window.OraVoice)window.OraVoice.setAbort(null);
+  busy=false; $('#sendBtn').disabled=false; scrollChat(); setOrbStatus('online'); if(window.OraVoice)window.OraVoice.resume();
 }
 $('#sendBtn').onclick=()=>send($('#input').value);
 $('#input').addEventListener('keydown',e=>{ if(e.key==='Enter')send($('#input').value); });
@@ -1410,6 +1421,7 @@ let wakePaused=false;    // temporarily paused while OraCool speaks
 let spotRec=null;
 
 function setWakeArmed(on){
+  if(on && window.OraVoice?.enabled)window.OraVoice.stop();
   wakeArmed=on;
   if(on){ wakeMode='off'; startSpot(); }
   else { wakeMode='off'; stopSpot(); }
@@ -2817,7 +2829,7 @@ function renderSettings(){
       <option value="fast" ${settings.brainMode!=='smart'?'selected':''}>⚡ Turbo — fastest replies</option>
       <option value="smart" ${settings.brainMode==='smart'?'selected':''}>🧠 Smart — deeper reasoning</option>
     </select>
-    <div class="hint">Turbo uses ${srv&&srv.brain?srv.brain.fast_model:'a fast model'} (~2× faster). Smart uses ${srv&&srv.brain?srv.brain.default_model:'the full model'}. Switch anytime.</div>
+    <div class="hint">Turbo uses ${srv&&srv.brain?srv.brain.fast_model:'a configured fast model'}. Response times depend on provider load and requested tools. Smart uses ${srv&&srv.brain?srv.brain.default_model:'the full model'}. Switch anytime.</div>
     <div class="hint">${k.OPENAI_API_KEY?'OpenAI key loaded, but currently has <b>no credits</b> (429). ':''}${k.GROQ_API_KEY?'Groq key loaded ✓':'Groq key missing.'}</div>
     <label class="lbl">Override API key <span class="muted">(optional — uses server keys if blank)</span></label>
     <input type="password" id="sKey" value="${escapeHtml(settings.apiKey)}" placeholder="sk-…">
@@ -2843,9 +2855,9 @@ function renderSettings(){
     <label class="lbl">Voice output</label>
     <div style="display:flex; align-items:center; gap:10px; margin-top:6px"><div class="switch ${settings.ttsOn?'on':''}" id="sTts"></div><span class="muted">Speak replies aloud</span></div>
     <label class="lbl">Proactive intelligence</label>
-    <div style="display:flex; align-items:center; gap:10px; margin-top:6px"><div class="switch ${settings.proactive!==false?'on':''}" id="sPro"></div><span class="muted">Talk to you before you ask (predicts what you need)</span></div>
+    <div style="display:flex; align-items:center; gap:10px; margin-top:6px"><div class="switch ${settings.proactive!==false?'on':''}" id="sPro"></div><span class="muted">Offer grounded suggestions in conversation mode (opt-in, with quiet hours)</span></div>
     <label class="lbl">Wake word</label>
-    <div style="display:flex; align-items:center; gap:10px; margin-top:6px"><div class="switch ${wakeArmed?'on':''}" id="sWake"></div><span class="muted">"Hey OraCool" always listening</span></div>
+    <div style="display:flex; align-items:center; gap:10px; margin-top:6px"><div class="switch ${wakeArmed?'on':''}" id="sWake"></div><span class="muted">"Hey OraCool" while this page is active</span></div>
     <div class="hint">Wake word needs Chrome/Edge + mic permission. While armed, saying "Hey OraCool" triggers a chime, then it listens for your command.</div>
     <label class="lbl">Voice</label>
     <select id="sVoice"><option value="">System default</option>${voices.map(v=>`<option value="${escapeHtml(v.name)}" ${v.name===settings.voiceName?'selected':''}>${escapeHtml(v.name)} (${escapeHtml(v.lang||'')})</option>`).join('')}</select>
@@ -2859,7 +2871,7 @@ function renderSettings(){
     ${tierGte('starter')? `<div class="okbox">◈ ${planLabel()} plan active.</div>`:'<div class="warnbox">You are on the FREE tier — paid plans unlock the ladder progressively.</div>'}
     <div class="row"><button class="btn ${tierGte('starter')?'ghost':'gold'}" id="sUpgrade">${tierGte('starter')?'Manage plan':'⚡ Upgrade'}</button>${tierGte('starter')?'<button class="btn ghost" id="sLogout">Sign out of plan</button>':''}</div>`;
   $('#sTts').onclick=()=>{ settings.ttsOn=!settings.ttsOn; $('#sTts').classList.toggle('on',settings.ttsOn); };
-  $('#sPro').onclick=()=>{ settings.proactive=settings.proactive===false; $('#sPro').classList.toggle('on',settings.proactive); saveSettings(); applyProactive(); };
+  $('#sPro').onclick=()=>{ settings.proactiveConsent=settings.proactiveConsent!==true;settings.proactive=settings.proactiveConsent; $('#sPro').classList.toggle('on',settings.proactive); if($('#hfProactive'))$('#hfProactive').checked=settings.proactiveConsent;saveSettings(); applyProactive(); };
   $('#sWake').onclick=()=>{ setWakeArmed(!wakeArmed); };
   const _lkn=$('#sLockNow'); if(_lkn) _lkn.onclick=()=>showLockScreen();
   const _lla=$('#sLockAlways'); if(_lla) _lla.onclick=()=>{ settings.lockAlways=!settings.lockAlways; _lla.classList.toggle('on',settings.lockAlways); saveSettings(); addAI(settings.lockAlways?'Chat lock enabled — this app will demand your password or Face ID every time it opens.':'Chat lock turned off.'); };
@@ -3647,5 +3659,6 @@ if('serviceWorker' in navigator){ try{ navigator.serviceWorker.register('/sw.js'
 let deferredInstall=null;
 window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); deferredInstall=e; const b=$('#installBtn'); if(b){ b.style.display=''; b.onclick=async()=>{ deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall=null; b.style.display='none'; }; } });
 </script>
+<script src="/voice-reminders.js"></script>
 </body>
 </html>

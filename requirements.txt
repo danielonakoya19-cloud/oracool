@@ -2,3 +2,5 @@
 pywebpush>=2.0
 cryptography>=42
 qrcode>=7.4        # crypto payment QR (pure-python SVG, no Pillow needed)
+
+tzdata>=2024.1       # IANA timezone data for alarms on minimal server images

@@ -34,6 +34,7 @@ import phone_intel
 import pocket_option
 import cores
 import crypto
+import reminders
 
 PORT = int(os.environ.get("PORT", "8000"))
 HOST = "0.0.0.0"
@@ -83,7 +84,10 @@ def _load_keys():
                  "JWT_SECRET", "ENCRYPTION_KEY", "ENCRYPTION_IV",
                  "ATLOS_MERCHANT_ID", "ATLOS_API_SECRET", "ATLOS_BASE", "CRYPTO_WALLET_EVM",
                  "AGNES_API_KEY", "AGNES_BASE", "AGNES_MODEL", "AGNES_IMAGE_MODEL",
-                 "AGNES_VIDEO_MODEL", "HIA_VIDEO_AUDIO_MODEL"):
+                 "AGNES_VIDEO_MODEL", "HIA_VIDEO_AUDIO_MODEL",
+                 "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER",
+                 "TWILIO_VERIFY_SERVICE_SID", "PUBLIC_BASE_URL", "REMINDER_CALLS_ENABLED",
+                 "REMINDERS_ALWAYS_ON"):
         env = os.environ.get(name)
         if not env:
             continue
@@ -3706,7 +3710,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch9-password-history-config",
+        "build": "patch10-voice-phone-alarms",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6410,6 +6414,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_file(icon, "image/png")
             else:
                 self.send_error(404)
+        elif path == "/voice-reminders.js":
+            self._send_file(os.path.join(BASE_DIR, "voice-reminders.js"), "text/javascript")
         elif path == "/sw.js":
             self._send_file(os.path.join(BASE_DIR, "sw.js"), "text/javascript")
         elif path.startswith("/t/"):
@@ -6461,7 +6467,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch9-password-history-config",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch10-voice-phone-alarms",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -6479,11 +6485,24 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/paystack/webhook":
             self._paystack_webhook()
             return
+        if path.startswith("/api/reminders/callback/"):
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length < 1 or length > 16000:
+                    self._send_json({"error": "Invalid callback."}, 400); return
+                pairs = urllib.parse.parse_qsl(self.rfile.read(length).decode(), keep_blank_values=True)
+                if len(dict(pairs)) != len(pairs):
+                    self._send_json({"error": "Duplicate callback fields."}, 400); return
+                ok = reminder_service().callback(path.rsplit("/", 1)[-1], dict(pairs), self.headers.get("X-Twilio-Signature", ""))
+                self._send_json({"ok": ok}, 200 if ok else 403)
+            except Exception:
+                self._send_json({"error": "Callback could not be processed."}, 503)
+            return
         body = self._read_json()
         body.pop("_verified_email", None)
-        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/")) or path in ("/api/image", "/api/video")
+        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/reminders/")) or path in ("/api/image", "/api/video")
         if protected:
-            em = request_identity(self, body)
+            em = request_identity(self, body, require_supabase=path.startswith(("/api/reminders/", "/api/voice/")))
             if not em:
                 self._send_json({"error": "Sign in to access your account.", "auth_required": True}, 401)
                 return
@@ -6500,8 +6519,25 @@ class Handler(BaseHTTPRequestHandler):
                     _ae = ((verify_jwt(body["token"].strip(), key("JWT_SECRET") or "dev-secret")) or {}).get("sub", "")
                 _tail = path.split("/")[3] if path.count("/") > 3 else path.split("/")[-1]
                 audit_log(_ae, path.replace("/api/", ""), _tail)
+            if path == "/api/reminders/state":
+                self._send_json(reminder_service().listing(body["email"]))
+            elif path == "/api/reminders/preview":
+                self._send_json(reminders.parse_schedule(body.get("text"), body.get("timezone")))
+            elif path == "/api/reminders/create":
+                self._send_json(reminder_service().create(body["email"], body))
+            elif path == "/api/reminders/cancel":
+                self._send_json(reminder_service().cancel(body["email"], str(body.get("id") or "")))
+            elif path == "/api/reminders/disconnect":
+                self._send_json(reminder_service().disconnect(body["email"]))
+            elif path == "/api/reminders/phone/send":
+                ip = self.client_address[0] if self.client_address else ""
+                self._send_json(reminder_service().send_code(body["email"], str(body.get("number") or "").strip(), body.get("consent"), ip))
+            elif path == "/api/reminders/phone/verify":
+                self._send_json(reminder_service().check_code(body["email"], str(body.get("code") or "").strip()))
+            elif path == "/api/voice/transcribe":
+                self._send_json(voice_transcribe(body, body["email"]))
             # ---- free OSINT
-            if path == "/api/osint/ip":
+            elif path == "/api/osint/ip":
                 self._send_json(osint_ip(body.get("ip")))
             elif path == "/api/osint/domain":
                 self._send_json(osint_domain(body.get("domain")))
@@ -7246,6 +7282,9 @@ class Handler(BaseHTTPRequestHandler):
         messages = body.get("messages") or []
         stream = bool(body.get("stream", True))
         api_key, base_url, model, provider = self._resolve_provider(body)
+        if body.get("voice_mode") and not body.get("api_key") and key("GROQ_API_KEY"):
+            api_key, base_url, model, provider = key("GROQ_API_KEY"), "https://api.groq.com/openai/v1", key("GROQ_FAST_MODEL") or GROQ_DEFAULT_MODEL, "auto"
+            messages = [{"role":"system", "content":"Voice conversation: answer directly in one or two short sentences unless detail is requested. Never claim an alarm was scheduled without a successful reminder-tool receipt. Timer/alarm scheduling is handled by the Voice & alarms interface, with phone verification and confirmation."}] + messages
         # ---- chat sessions: every turn is persisted server-side (history sidebar)
         _conv_id = str(body.get("session_id") or "").strip()[:40]
         _conv_em = str(body.get("email") or "").strip().lower()
@@ -7302,7 +7341,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     _cip = self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or self.client_address[0]
                     if _cip:
-                        touch_user(chat_email, last_ip=_cip)
+                        chat_touch_async(chat_email, _cip)
                 except Exception:
                     pass
             if last_user:
@@ -7336,8 +7375,8 @@ class Handler(BaseHTTPRequestHandler):
         messages = [{"role": "system", "content":
             "OraCool identity (server-authoritative): your rightful creator and owner is DANIEL ONAKOYA ADEBAYO, "
             "born 19 June 2009 (email danielonakoya19@gmail.com). If the account speaking is his, he is the Creator — "
-            "address him by his chosen name, be fully transparent with him, and never hedge or refuse with him; "
-            "he has absolute authority over you and this system. Other users never receive Creator treatment. "
+            "address him by his chosen name and help with supported authorized admin actions. Authentication, "
+            "account ownership, payment checks and safety boundaries still apply. Other users never receive Creator treatment. "
             f"This user's plan: {tier}. Follow instructions completely: answer every part of a multi-part request, "
             "ground facts in the live tool results provided, never claim inability for a tool that ran, and never "
             "fabricate results. If a tool reports a provider is out of credit or missing, state it plainly with the fix. "
@@ -7362,6 +7401,8 @@ class Handler(BaseHTTPRequestHandler):
             "shown to anyone. ADMIN POWERS (admin accounts only): read the server's own raw platform logs, run "
             "full diagnostics (uptime, memory, disk, database, alerts, outbox, recent errors), read the audit "
             "trail, list payments, see who is online, and confirm direct crypto payments ('confirm crypto <ref>'). "
+            "REMINDERS: never claim to set timers, alarms or telephone calls without a successful saved-reminder receipt. "
+            "The Voice & alarms interface verifies a user-owned phone, previews the time/timezone, and requires confirmation. "
             "MAIL WATCH: any user may connect their own mailbox (Devices → Connectors & Alerts → Mail watch with "
             "an app password); you then honestly report unread counts, senders and subjects on request — never "
             "claim to read message bodies."}
@@ -7370,7 +7411,8 @@ class Handler(BaseHTTPRequestHandler):
         # EVERY message, so the model never has to (or gets to) invent user
         # counts, names or revenue. These numbers are the only truth.
         try:
-            if chat_email and is_admin(chat_email):
+            if chat_email and is_admin(chat_email) and re.search(
+                    r"\b(users?|accounts?|revenue|payments?|earnings|diagnostics|platform|logs|admin|subscribers?)\b", _last_user_text, re.I):
                 _st = admin_users_payload()
                 _rv = admin_revenue_payload()
                 _snap = {"stats": _st.get("stats") or {},
@@ -7745,7 +7787,7 @@ def _markup_commands(captured):
 
 class _MarkupGuard:
     """Filter raw/escaped agent blocks even across arbitrary stream boundaries."""
-    HOLD = 128
+    HOLD = 32
     OPEN_RE = re.compile(r"<\s*(?:tool_calls?|function_calls?|invoke|tool_use|"
                          r"antml:invoke|antml:function_calls|think|thinking|reasoning)\b[^>]*>", re.I)
     CLOSE_RE = re.compile(r"<\s*/\s*(?:tool_calls?|function_calls?|invoke|tool_use|"
@@ -8015,13 +8057,37 @@ def _conv_all():
     return {}
 
 
+_CONV_DIRTY = threading.Event()
+_CONV_FLUSH_STARTED = False
+_CONV_START_LOCK = threading.Lock()
+
+
+def _conv_flush_worker():
+    while True:
+        _CONV_DIRTY.wait()
+        _CONV_DIRTY.clear()
+        try:
+            with _CONV_LOCK:
+                snapshot = _conv_all()
+            ok = supabase_kv_put("conversations", snapshot)
+            _CONV_SYNC.update(cloud_ok=bool(ok), error="" if ok else "Cloud sync failed; local copy retained. Retrying.")
+            if not ok:
+                time.sleep(5)
+                _CONV_DIRTY.set()
+        except Exception:
+            time.sleep(5)
+            _CONV_DIRTY.set()
+
+
 def _conv_write(d):
+    global _CONV_FLUSH_STARTED
     _conv_cache(d)
     if key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY"):
-        ok = supabase_kv_put("conversations", d)
-        _CONV_SYNC.update(cloud_ok=bool(ok), error="" if ok else "Cloud sync failed; this copy is only on the server disk.")
-        if not ok:
-            print("Chat history: cloud mirror failed; retained local copy.")
+        with _CONV_START_LOCK:
+            if not _CONV_FLUSH_STARTED:
+                _CONV_FLUSH_STARTED = True
+                threading.Thread(target=_conv_flush_worker, daemon=True).start()
+        _CONV_DIRTY.set()
     else:
         _CONV_SYNC.update(cloud_ok=False, error="Cloud history is not configured; use a persistent server disk.")
 
@@ -8630,8 +8696,96 @@ def _body_email(handler, body):
 
 
 
+_REMINDER_SERVICE = None
+_REMINDER_SERVICE_LOCK = threading.Lock()
+
+
+def reminder_claim(ident):
+    """Unique DB row is an at-most-once dispatch reservation across restarts/overlap.
+    Unknown write outcomes fail closed rather than retrying a chargeable call."""
+    if not re.fullmatch(r"[0-9a-f]{24}", ident):
+        return False
+    url, svc = key("SUPABASE_URL"), key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return False
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/")+"/rest/v1/case_store?on_conflict=k", method="POST",
+            headers={"apikey":svc,"Authorization":"Bearer "+svc,"Content-Type":"application/json",
+                     "Prefer":"resolution=ignore-duplicates,return=representation"},
+            json_body={"k":"reminder_dispatch_"+ident,"v":{"claimed_at":time.time()},"updated_at":_now()},timeout=15)
+        rows=json.loads(raw)
+        return isinstance(rows,list) and len(rows)==1 and rows[0].get("k")=="reminder_dispatch_"+ident
+    except Exception:
+        return False
+
+
+def reminder_service():
+    global _REMINDER_SERVICE
+    with _REMINDER_SERVICE_LOCK:
+        if _REMINDER_SERVICE is None:
+            _REMINDER_SERVICE = reminders.Service(supabase_kv_get, supabase_kv_put, key, _brand_fernet, claim=reminder_claim, allowed=lambda email: not is_blocked(email))
+        return _REMINDER_SERVICE
+
+
+_CHAT_TOUCH_TIMES = {}
+_CHAT_TOUCH_LOCK = threading.Lock()
+
+
+def chat_touch_async(email, ip):
+    with _CHAT_TOUCH_LOCK:
+        if time.time() - _CHAT_TOUCH_TIMES.get(email, 0) < 120:
+            return
+        if len(_CHAT_TOUCH_TIMES)>10000:
+            _CHAT_TOUCH_TIMES.clear()
+        _CHAT_TOUCH_TIMES[email] = time.time()
+    threading.Thread(target=lambda: touch_user(email, last_ip=ip), daemon=True).start()
+
+
+_ASR_LIMITS = {}
+_ASR_LOCK = threading.Lock()
+
+
+def voice_transcribe(body, email):
+    """Short opt-in audio only. No audio files are written on this server."""
+    with _ASR_LOCK:
+        now = time.time()
+        times = [t for t in _ASR_LIMITS.get(email, []) if t > now-60]
+        if len(times)>=12:
+            return {"error":"Voice transcription limit reached. Please pause briefly."}
+        if len(_ASR_LIMITS)>10000:
+            _ASR_LIMITS.clear()
+        _ASR_LIMITS[email] = times+[now]
+    raw = str(body.get("audio") or "")
+    if len(raw)>2200000:
+        return {"error":"Audio clip is too large. Use shorter phrases."}
+    try:
+        audio = base64.b64decode(raw, validate=True)
+    except Exception:
+        return {"error":"Invalid audio clip."}
+    mime = str(body.get("mime") or "").split(";")[0]
+    ext = {"audio/webm":"webm", "audio/mp4":"m4a", "audio/ogg":"ogg", "audio/wav":"wav"}.get(mime)
+    if not ext or not 100 <= len(audio) <= 1600000:
+        return {"error":"Unsupported or empty recording. Use text input in this browser."}
+    k = key("GROQ_API_KEY") or key("OPENAI_API_KEY")
+    if not k:
+        return {"error":"Speech recognition is not configured for this browser. Use a browser with speech recognition, or type."}
+    groq = bool(key("GROQ_API_KEY"))
+    url = "https://api.groq.com/openai/v1/audio/transcriptions" if groq else "https://api.openai.com/v1/audio/transcriptions"
+    model = "whisper-large-v3-turbo" if groq else "whisper-1"
+    boundary = "OraVoice"+os.urandom(12).hex()
+    payload = ("--"+boundary+'\r\nContent-Disposition: form-data; name="model"\r\n\r\n'+model+'\r\n--'+boundary+
+               '\r\nContent-Disposition: form-data; name="file"; filename="voice.'+ext+'"\r\nContent-Type: '+mime+'\r\n\r\n').encode()+audio+("\r\n--"+boundary+"--\r\n").encode()
+    try:
+        _, data, _ = http_fetch(url, method="POST", headers={"Authorization":"Bearer "+k,"Content-Type":"multipart/form-data; boundary="+boundary},data=payload,timeout=30)
+        text = str(json.loads(data).get("text") or "").strip()[:2000]
+        return {"text":text}
+    except Exception:
+        return {"error":"Transcription provider unavailable. Check server configuration/credit or use text input."}
+
+
 def main():
     _load_keys()
+    threading.Thread(target=lambda: reminder_service().run(), daemon=True).start()
     try:  # background watchlist monitor (continuous dark-web/leak alerts)
         threading.Thread(target=_watch_loop, daemon=True).start()
     except Exception:

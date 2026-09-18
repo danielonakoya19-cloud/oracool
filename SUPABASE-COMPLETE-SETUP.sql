@@ -10,12 +10,13 @@
 --   subscribers : paid-plan/admin-grant records
 --   user_flags  : suspension state, login activity, verification metadata
 --   case_store  : private JSON snapshots, keyed by:
---                 main / conversations / alerts / brand_accounts
+--                 main / conversations / alerts / brand_accounts / reminders
 --
 -- Important:
 --   * This does NOT create Auth users or set/change anyone's password.
 --   * It does NOT configure email providers, OAuth, payment keys or model policy.
 --   * It does NOT seed empty snapshots or erase existing conversations.
+--   * Phone dispatch reservations use additional reminder_dispatch_<id> keys.
 --   * Media files remain on server disk; use persistent storage/downloads.
 --   * Backend-only tables: RLS ON; anon/authenticated roles have NO access.
 --   * SUPABASE_SERVICE_KEY belongs on the SERVER, never in browser JavaScript.
