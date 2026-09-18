@@ -240,3 +240,42 @@ Cascade (video): **HiAPI → CVRON free WAN-22** (auto frame-generation + animat
 * **Login telemetry on every login path** (password + 2FA) records last_ip; login event carries IP + city.
 * Bluetooth radar now states the truth when the browser sandbox blocks the adapter (e.g. embedded previews) instead of pretending.
 * Storage: `data/alerts.json` + outbox, mirrored to Supabase `case_store` row `k='alerts'` (no new SQL needed). Secrets only ever on server disk, never in the repo or zip.
+
+## Patch 8 (2026-09-18) — chat UX, media library, mail watch, admin logs, honest coverage
+* **No more leaked tool-call markup.** Some models occasionally print their function-call syntax
+  (`<tool_call><arg_key>…`) as visible text. The server now (a) intercepts that markup mid-stream so it
+  can never reach a user, (b) *executes* the call it contained (market/weather/OSINT/gateway tools),
+  (c) asks the model for a clean prose answer with those results, and (d) strips any residue from
+  non-streamed replies, saved history and the client renderer. Prompt-level rule added as well.
+* **Chat sidebar (☰ Chats)** — every conversation is stored server-side per account
+  (`data/conversations.json`, mirrored to Supabase `case_store` k=`conversations`), with a
+  **+ New chat** button, per-chat titles from the first message, previews, timestamps and delete.
+  Switching chats reloads the full transcript; history follows the account across devices.
+* **Jump-to-latest arrow** — appears bottom-right of the chat when you scroll up into old messages;
+  tap to fly back to the newest message.
+* **Creations gallery (Create tab → 🧰 My creations)** — every image/video generated in chat or the
+  studio is downloaded to `data/media/<user>/` and indexed, so it survives provider link expiry.
+  Served from `/media/...` (`/api/media/list`, `/api/media/delete`).
+* **📧 Mail watch connector (IMAP, read-only)** — users connect their own mailbox with an app password
+  (sealed at rest like all connector secrets). OraCool reports unread counts, senders and subjects
+  ("check my email"), fires **new-mail alerts** to their channels every 5 minutes, and never reads
+  message bodies. Gmail/Outlook/Zoho need an app password — the error message says so plainly.
+* **Crypto checkout now shows the address.** The modal renders the receiving wallet
+  (`CRYPTO_WALLET_EVM`, default your USDT/USDC/ETH address), a scannable QR (SVG, generated locally),
+  tap-to-copy, "I have paid — check now" with a keyless on-chain peek (ethplorer), live status text,
+  plus the ATLOS hosted page (exact coin amount, auto-unlock) and its URL in plain text for browsers
+  that block pop-ups.
+* **Enterprise = $500/month with every feature unlocked** (₦750,000) — no longer "custom quote".
+  Plans tab also gains a 🔐 **Access map** and Cases/Trading/Code tabs are hard-locked with an upgrade
+  panel for tiers below them (strict ladder, nothing above your plan opens).
+* **Admin AI: raw platform logs + diagnostics.** Server stdout is mirrored into `data/platform.log`;
+  admin accounts can ask "show me the platform logs", "run diagnostics", "audit trail", "list payments",
+  "who is online" — and the Admin tab now renders both the raw log tail and the diagnostics block
+  (`/api/admin/logs`, `/api/admin/diagnostics`).
+* **Dead paid-key features removed from the UI**: LeakCheck (invalid key) is gone; the HIBP section no
+  longer shows a dead end when no key exists (free infostealer/leak indexes remain). Shodan,
+  VirusTotal, AbuseIPDB and URLScan are verified live with the server keys and stay.
+* **Honest market coverage**: NGX/African tickers (DANGCEM, GTCO, MTNN…) now resolve and explicitly say
+  the configured feed (Finnhub) does not cover the Nigerian Exchange instead of showing a fake 0.00.
+* `qrcode` added to requirements (pure-python SVG QR, no Pillow). Email is still NOT a free relay —
+  outbound email needs RESEND_API_KEY; **inbound mail watch works without any server key.**

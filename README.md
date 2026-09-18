@@ -321,7 +321,7 @@ secrets), then drop the new values into `keys.json`.
   always get full access.
 
 ## 💳 Five-tier pricing
-- **Free $0 · Starter $20 · PRO $50 · Ultra $100 · Enterprise $500** per month.
+- **Free $0 · Starter $29 · Pro $49 · Professional $149 · Enterprise $500** per month (Enterprise unlocks every feature — nothing is gated).
 - Prices are shown in **US dollars** across the Plans tab and the upgrade modal,
   where the user **picks their plan** (Starter / PRO / Ultra / Enterprise) before
   paying. The ₦ equivalent is shown as a secondary line.

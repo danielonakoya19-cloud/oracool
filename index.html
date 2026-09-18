@@ -88,6 +88,45 @@
   .reactorhead .rtitle{font-size:12px; letter-spacing:3px; color:var(--cyan2); text-transform:uppercase; text-shadow:0 0 10px rgba(0,229,255,.5);}
   .reactorhead .rsub{font-size:10px; color:var(--dim); letter-spacing:1px;}
   .chat{flex:1; overflow-y:auto; padding:14px 18px; display:flex; flex-direction:column; gap:12px; min-height:0;}
+  .chatwrap{position:relative;}
+  /* jump-to-latest arrow — appears when the user scrolls up into old messages */
+  .jumpbtn{position:absolute; right:16px; bottom:104px; z-index:6; width:44px; height:44px; border-radius:50%;
+    border:1px solid rgba(0,229,255,.45); background:linear-gradient(135deg, rgba(8,44,60,.96), rgba(6,24,34,.96));
+    color:var(--cyan); font-size:20px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 6px 22px rgba(0,0,0,.45), 0 0 16px rgba(0,229,255,.18); opacity:0; transform:translateY(10px);
+    pointer-events:none; transition:opacity .18s ease, transform .18s ease;}
+  .jumpbtn.show{opacity:1; transform:translateY(0); pointer-events:auto;}
+  .jumpbtn:hover{border-color:var(--cyan2); color:#fff;}
+  /* chat drawer: history + new chat */
+  .scrim{position:fixed; inset:0; background:rgba(2,8,14,.55); backdrop-filter:blur(2px); z-index:60; opacity:0;
+    pointer-events:none; transition:opacity .2s ease;}
+  .scrim.open{opacity:1; pointer-events:auto;}
+  .drawer{position:fixed; top:0; left:0; bottom:0; width:min(340px,86vw); z-index:61; display:flex; flex-direction:column;
+    background:linear-gradient(180deg, rgba(6,18,27,.99), rgba(4,12,20,.99)); border-right:1px solid rgba(0,229,255,.22);
+    box-shadow:12px 0 40px rgba(0,0,0,.5); transform:translateX(-102%); transition:transform .22s ease;}
+  .drawer.open{transform:translateX(0);}
+  .drawerhead{display:flex; align-items:center; justify-content:space-between; gap:8px; padding:14px 14px 10px;
+    border-bottom:1px solid rgba(0,229,255,.14); letter-spacing:1px;}
+  .sesslist{flex:1; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:6px;}
+  .sess{position:relative; border:1px solid var(--line); border-radius:10px; padding:9px 34px 9px 11px; cursor:pointer;
+    background:rgba(6,20,30,.5); transition:border-color .15s ease, background .15s ease;}
+  .sess:hover{border-color:rgba(0,229,255,.45); background:rgba(8,30,44,.6);}
+  .sess.on{border-color:var(--cyan2); box-shadow:0 0 12px rgba(0,229,255,.16);}
+  .sess .st{font-size:13px; font-weight:600; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .sess .sp{font-size:11px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:2px;}
+  .sess .sm{font-size:10px; color:var(--dim); margin-top:3px;}
+  .sess .sdel{position:absolute; right:6px; top:50%; transform:translateY(-50%); background:transparent; border:0;
+    color:var(--dim); font-size:13px; cursor:pointer; padding:6px; min-width:30px; min-height:30px;}
+  .sess .sdel:hover{color:var(--danger);}
+  .drawerfoot{padding:10px 14px; border-top:1px solid rgba(0,229,255,.12); font-size:10px;}
+  /* creations gallery */
+  .galgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:10px; margin-top:10px;}
+  .gal{margin:0; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:rgba(5,16,24,.6); display:flex; flex-direction:column;}
+  .gal img,.gal video{width:100%; height:104px; object-fit:cover; display:block; background:#04121a;}
+  .gal .galph{height:104px; display:flex; align-items:center; justify-content:center; color:var(--dim); font-size:11px;}
+  .gal figcaption{font-size:10px; color:var(--dim); padding:6px 8px 0; line-height:1.35; height:34px; overflow:hidden;}
+  .gal .galrow{display:flex; gap:4px; padding:6px 8px 8px;}
+  .gal .galrow .btn{min-height:32px; font-size:11px; padding:4px 8px;}
   .bubble{max-width:82%; padding:12px 16px; border-radius:12px; font-size:15px; line-height:1.6; white-space:pre-wrap; word-wrap:break-word;}
   .bubble.ai{align-self:flex-start; color:var(--text); background:linear-gradient(135deg, rgba(8,34,46,.9), rgba(6,22,32,.75));
     border:1px solid var(--line); border-left:3px solid var(--cyan); box-shadow:0 0 18px rgba(0,229,255,.10), inset 0 0 18px rgba(0,229,255,.05); border-radius:4px 14px 14px 14px;}
@@ -421,6 +460,7 @@
       </div>
     </div>
     <div class="hdr-right">
+      <button class="btn ghost" id="menuBtn" title="Chats — history &amp; new chat" style="padding:5px 11px; font-size:11px; min-height:34px">☰ Chats</button>
       <div class="live"><i></i> LIVE</div>
       <div class="wake" id="wakeBadge" title="Wake word: Hey OraCool"><i></i> WAKE</div>
       <div class="tier" id="tierBadge" title="Your plan">FREE</div>
@@ -445,6 +485,7 @@
           </div>
         </div>
         <div class="chat" id="chat"></div>
+        <button class="jumpbtn" id="jumpBtn" title="Jump to the latest message" aria-label="Jump to latest messages">↓</button>
         <canvas id="wave" width="1200" height="44"></canvas>
         <div class="chiprow" id="chips"></div>
         <div id="coreChip" style="display:none;margin:4px 10px 0;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--cyan2)"></div>
@@ -495,6 +536,20 @@
   </main>
 </div>
 
+<!-- chat drawer: history + new chat -->
+<div class="scrim" id="drawerScrim"></div>
+<aside class="drawer" id="chatDrawer" aria-label="Chat history">
+  <div class="drawerhead">
+    <b style="font-size:13px">CHATS</b>
+    <div class="row" style="gap:6px">
+      <button class="btn primary small" id="newChatBtn" style="min-height:34px">+ New chat</button>
+      <button class="btn ghost small" id="drawerClose" style="min-height:34px">×</button>
+    </div>
+  </div>
+  <div class="sesslist" id="sessList"><div class="muted" style="padding:10px">Loading…</div></div>
+  <div class="drawerfoot muted" id="sessFoot">History follows your account — sign in to sync across devices.</div>
+</aside>
+
 <!-- upgrade modal -->
 <div class="modal" id="upgradeModal">
   <div class="modalcard">
@@ -522,7 +577,7 @@
     <div id="cryptoBox" style="display:none; margin-top:8px"></div>
     <div class="hint">No free trials — access unlocks only after payment: <b>Starter $29</b> (₦45,000) · <b>Pro $49</b> (₦75,000) · <b>Professional $149</b> (₦230,000) · <b>Enterprise</b> custom agreement (contact sales).</div>
     <div class="hint" id="payNote">Live charge — Paystack will process your payment securely.</div>
-    <div class="hint" id="entContact" style="display:none">Enterprise is a custom agreement (API access for agencies, team seats &amp; roles, private/on-prem deployment, compliance pack). Email <b>danielonakoya19@gmail.com</b> for a quote — answer within 24h.</div>
+    <div class="hint" id="entContact" style="display:none">Enterprise ($500/month) unlocks <b>every feature with no locks</b> — plus API access, team seats/SSO and white-label. Pay it like any other plan, or email <b>danielonakoya19@gmail.com</b> for invoicing and private deployment.</div>
   </div>
 </div>
 
@@ -743,6 +798,17 @@ function updateTier(){
   const t = myTier();
   if(isPro() && t!=='free'){ b.textContent = t.toUpperCase(); b.className = 'tier pro'; }
   else { b.textContent = 'FREE'; b.className = 'tier'; }
+  // lock badges on the tabs — a plan never shows features above itself
+  try{
+    document.querySelectorAll('.tab[data-p]').forEach(tb=>{
+      if(tb.dataset.lbl===undefined) tb.dataset.lbl=tb.textContent.trim();
+      const need=(typeof TAB_TIER!=='undefined')?TAB_TIER[tb.dataset.p]:null;
+      const locked = need && !tierGte(need);
+      tb.textContent = tb.dataset.lbl + (locked? ' 🔒' : '');
+      tb.title = locked ? ('Locked — unlocks on '+need.toUpperCase()) : (tb.dataset.lbl);
+      tb.style.opacity = locked ? '.72' : '';
+    });
+  }catch(e){}
   // Re-render every tier-aware panel so locks follow the LADDER (each plan gets
   // everything below it plus its own extras — nothing more).
   try{
@@ -878,8 +944,22 @@ const chat=$('#chat');
 const history=[];
 const MAXH=30;
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function scrollChat(){ chat.scrollTop=chat.scrollHeight; }
+function scrollChat(){ chat.scrollTop=chat.scrollHeight; try{ updateJump(); }catch(e){} }
+function _cleanReply(t){
+  // never show agent/tool-call markup or internal telemetry to a user
+  if(!t) return t||'';
+  let s=String(t);
+  if(s.indexOf('<')<0) return s;
+  s=s.replace(/<\s*(tool_calls?|function_calls?|invoke|tool_use|antml:invoke|antml:function_calls)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi,'');
+  s=s.replace(/<\s*(tool_calls?|function_calls?|invoke|tool_use|antml:invoke)\b[^>]*>[\s\S]*$/gi,'');
+  s=s.replace(/<\s*\/?\s*(arg_key|arg_value|parameter|antml:parameter)\b[^>]*>/gi,'');
+  s=s.replace(/<\s*(think|thinking|reasoning)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi,'');
+  s=s.replace(/<\s*\/?\s*(think|thinking|reasoning)\b[^>]*>/gi,'');
+  s=s.replace(/\(?\*{0,2}\(?ran a tool\)?\*{0,2}\)?/g,'');
+  return s.replace(/\n{3,}/g,'\n\n').trim();
+}
 function renderRich(el, text){
+  text=_cleanReply(text);
   let s = escapeHtml(text||'');
   // markdown images ![alt](url)
   s = s.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:10px;margin:8px 0" onerror="this.style.display=\'none\'">');
@@ -939,6 +1019,73 @@ function restoreChat(){
 }
 setInterval(()=>{ if(history.length) saveChat(); }, 4000);
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden) saveChat(); });
+
+/* ---------- chat sessions: server-side history, new chat, drawer ---------- */
+let sessionId=''; try{ sessionId=(storageOK && localStorage.getItem('oracool_session_id'))||''; }catch(e){}
+function setSessionId(id){ sessionId=id||''; try{ if(storageOK){ if(id)localStorage.setItem('oracool_session_id',id); else localStorage.removeItem('oracool_session_id'); } }catch(e){} }
+async function ensureSession(){
+  if(sessionId) return sessionId;
+  try{ const r=await post('/api/chat/session/new',{email:myEmail(), token:proToken||''}); if(r && r.id){ setSessionId(r.id); return r.id; } }catch(e){}
+  setSessionId('local-'+Date.now().toString(36)); return sessionId;
+}
+function _sessRow(c){
+  return `<div class="sess ${c.id===sessionId?'on':''}" data-id="${escapeHtml(c.id)}">
+    <div class="st">${escapeHtml(c.title||'New chat')}</div>
+    <div class="sp">${escapeHtml((c.preview||'').slice(0,64))}</div>
+    <div class="sm">${escapeHtml(String(c.updated||'').slice(0,16))} · ${c.count||0} messages</div>
+    <button class="sdel" data-del="${escapeHtml(c.id)}" title="Delete this chat">🗑</button></div>`;
+}
+async function loadSessions(){
+  const box=$('#sessList'); if(!box) return;
+  if(!myEmail()){ box.innerHTML='<div class="muted" style="padding:10px;font-size:12px">Sign in to keep your chat history across devices — this device still holds your last conversation.</div>'; return; }
+  const r=await post('/api/chat/sessions',{email:myEmail(), token:proToken||''}).catch(()=>({}));
+  const rows=r.sessions||[];
+  box.innerHTML=rows.length?rows.map(_sessRow).join(''):
+    '<div class="muted" style="padding:10px;font-size:12px">No saved chats yet — send a message and it appears here.</div>';
+  box.querySelectorAll('.sess').forEach(el=>{ el.onclick=(e)=>{ if(e.target.closest('.sdel'))return; openSession(el.dataset.id); }; });
+  box.querySelectorAll('.sdel').forEach(b=>{ b.onclick=async(e)=>{ e.stopPropagation();
+    await post('/api/chat/session/delete',{email:myEmail(), token:proToken||'', id:b.dataset.del}).catch(()=>{});
+    if(b.dataset.del===sessionId){ setSessionId(''); chat.innerHTML=''; history.length=0; }
+    loadSessions(); }; });
+  const f=$('#sessFoot'); if(f) f.textContent='Signed in as '+(myEmail()||'—')+' · chats sync with your account';
+}
+async function openSession(id){
+  if(!myEmail()){ addSystemNote('Sign in to load saved chats.'); return; }
+  const r=await post('/api/chat/session/get',{email:myEmail(), token:proToken||'', id}).catch(()=>({}));
+  const msgs=((r.session&&r.session.messages)||[]);
+  chat.innerHTML=''; history.length=0;
+  msgs.forEach(m=>{
+    if(m.role==='user'){ const b=document.createElement('div'); b.className='bubble user'; b.textContent=m.content; chat.appendChild(b); history.push({role:'user',content:m.content}); }
+    else if(m.role==='assistant'){ const b=document.createElement('div'); b.className='bubble ai'; b.innerHTML='<span class="who">ORA-COOL</span>';
+      const bd=document.createElement('div'); renderRich(bd,m.content); b.appendChild(bd); chat.appendChild(b); history.push({role:'assistant',content:m.content}); } });
+  setSessionId(id);
+  const tag=document.createElement('div'); tag.className='tagline'; tag.textContent='⟲ '+(msgs.length?('Loaded “'+((r.session&&r.session.title)||'chat')+'”'):'New chat');
+  chat.prepend(tag);
+  closeDrawer?closeDrawer():0; scrollChat(); updateJump();
+}
+function newChat(){
+  setSessionId(''); chat.innerHTML=''; history.length=0;
+  try{ localStorage.removeItem(chatKey()); }catch(e){}
+  addSystemNote('🆕 <b>New chat</b> started — previous conversations are in ☰ Chats.');
+  ensureSession().then(()=>loadSessions());
+  try{ closeDrawer(); }catch(e){}
+}
+function openDrawer(){ $('#chatDrawer').classList.add('open'); $('#drawerScrim').classList.add('open'); loadSessions(); }
+function closeDrawer(){ $('#chatDrawer').classList.remove('open'); $('#drawerScrim').classList.remove('open'); }
+$('#menuBtn').onclick=openDrawer;
+$('#drawerClose').onclick=closeDrawer;
+$('#drawerScrim').onclick=closeDrawer;
+$('#newChatBtn').onclick=newChat;
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
+
+/* ---------- jump-to-latest arrow ---------- */
+function updateJump(){
+  const j=$('#jumpBtn'); if(!j) return;
+  const far=chat.scrollHeight-chat.scrollTop-chat.clientHeight > 150;
+  j.classList.toggle('show', far);
+}
+chat.addEventListener('scroll', updateJump, {passive:true});
+$('#jumpBtn').onclick=()=>{ chat.scrollTo({top:chat.scrollHeight, behavior:'smooth'}); setTimeout(updateJump,400); };
 
 function addUser(text, histText){
   const b=document.createElement('div'); b.className='bubble user'; b.textContent=text;
@@ -1138,7 +1285,8 @@ async function send(text){
   const msgs=[{role:'system',content:systemPrompt()+(coreExtra?('\n\n'+coreExtra):'')},...history];
   try{
     let acc='';
-    const payload={messages:msgs, stream:true, provider:settings.provider||'auto', max_tokens:900};
+    const _sid=await ensureSession();
+    const payload={messages:msgs, stream:true, provider:settings.provider||'auto', max_tokens:900, session_id:_sid||''};
     const _em=myEmail(); if(_em) payload.email=_em; if(proToken) payload.token=proToken;
     if(settings.haUrl && settings.haToken){ payload.ha_url=settings.haUrl; payload.ha_token=settings.haToken; }
     if(settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
@@ -1161,7 +1309,7 @@ async function send(text){
               if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); }
               if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
               if(j.__media && j.__media.length){ streamMedia=streamMedia.concat(j.__media); }
-              const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; body.textContent=acc; scrollChat(); }
+              const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; body.textContent=(acc.indexOf('<')>=0?_cleanReply(acc):acc); scrollChat(); }
             }catch(e){}
           }
         }
@@ -1179,6 +1327,7 @@ async function send(text){
       });
     }
     history.push({role:'assistant',content:acc}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
+    try{ loadSessions(); }catch(e){}
     speak(acc);
   }catch(e){
     body.textContent='';
@@ -1328,12 +1477,26 @@ function kv(title,pairs){
 }
 
 /* ---------- tabs ---------- */
+const TAB_TIER={cases:'pro', trading:'pro', code:'pro'};
+function tabLockPanel(p, need){
+  const box=$('#p-'+p); if(!box) return;
+  const titles={cases:'🗂 Case Files', trading:'📈 Trading desk', code:'💻 Code console'};
+  box.innerHTML=`<h3 class="ptitle">${titles[p]||p}</h3>
+    <div class="warnbox">🔒 <b>Locked on your ${planLabel()} plan.</b> This section unlocks on the
+    <b>${need.toUpperCase()}</b> plan — and every plan above it inherits it too.
+    <div class="muted" style="margin-top:6px">Strict ladder: each plan includes everything below it and nothing above.</div></div>
+    <button class="btn gold" id="tabUp_${p}" style="margin-top:10px">⚡ Unlock ${need.toUpperCase()}</button>`;
+  const b=$('#tabUp_'+p); if(b) b.onclick=()=>openUpgrade(need);
+}
 document.querySelectorAll('.tab').forEach(t=>{
   t.onclick=()=>{
     if(!t.dataset.p){ if(t.id==='lockTab') showLockScreen(); return; }
+    const need=TAB_TIER[t.dataset.p];
+    const locked=!!(need && !tierGte(need));
     document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
     document.querySelectorAll('.panelbody').forEach(x=>x.classList.remove('active'));
     t.classList.add('active'); $('#p-'+t.dataset.p).classList.add('active');
+    if(locked){ tabLockPanel(t.dataset.p, need); return; }   // plan lock — nothing above your tier opens
     if(t.dataset.p==='status')renderStatus();
     if(t.dataset.p==='cases')renderCases();
     if(t.dataset.p==='devices')renderDevices();
@@ -1388,16 +1551,15 @@ function renderStatus(){
 const INTEL_TOOLS=[
   {id:'ip',label:'IP Recon',free:true,ph:'8.8.8.8',hint:'Geolocation, ISP/ASN, reverse DNS, IPinfo.'},
   {id:'domain',label:'Domain',free:true,ph:'example.com',hint:'WHOIS/RDAP + full DNS records.'},
-  {id:'email',label:'Email Breach',free:true,ph:'name@example.com',hint:'HaveIBeenPwned (add HIBP key in Settings).'},
+  {id:'email',label:'Email Breach',free:true,ph:'name@example.com',hint:'Free infostealer + leak indexes (live, no key needed).'},
   {id:'username',label:'Username',free:true,ph:'johndoe',hint:'Checks ~50 platforms for matching profiles.'},
   {id:'phone',label:'Phone Intel',free:true,ph:'+234 803 123 4567',hint:'Global — 200+ countries. Resolves country, state/region/city & carrier from a number\'s metadata.'},
   {id:'weather',label:'Weather',free:true,ph:'Lagos',hint:'Live conditions & forecast.'},
   {id:'search',label:'Web Search',free:false,req:'starter',ph:'any query',hint:'Deep web search via Tavily.'},
-  {id:'shodan',label:'Shodan Host',free:false,req:'pro',ph:'8.8.8.8',hint:'Open ports, services & host intelligence.'},
+  {id:'shodan',label:'Shodan Host',free:false,req:'pro',ph:'8.8.8.8',hint:'Open ports, services & host intelligence (server key: live).'},
   {id:'virustotal',label:'VirusTotal',free:false,req:'pro',ph:'google.com',hint:'Reputation for domains, IPs, URLs & hashes.'},
   {id:'abuseipdb',label:'AbuseIPDB',free:false,req:'pro',ph:'8.8.8.8',hint:'IP abuse confidence & report history.'},
-  {id:'urlscan',label:'URL Scanner',free:false,req:'pro',ph:'example.com',hint:'Submit a URL for sandbox scanning.'},
-  {id:'leakcheck',label:'LeakCheck',free:false,req:'pro',ph:'email/username',hint:'Breach & leak intelligence (email/user/phone).'},
+  {id:'urlscan',label:'URL Scanner',free:false,req:'pro',ph:'https://example.com',hint:'Sandbox scanning — use a full URL (https://…).'},
   {id:'darkweb',label:'Dark Web',free:true,req:'',ph:'email / username / leak check',hint:'Leak databases + Ahmia Tor hidden-service index (read-only, never opens .onion sites).'},
 ];
 let curIntel='ip';
@@ -2195,6 +2357,8 @@ async function renderAdmin(){
     <div class="statcards" id="aStats" style="margin-top:10px"></div>
     <div class="result" id="aRev" style="margin-top:8px"></div>
     <div class="result" id="aAudit" style="margin-top:8px"></div>
+    <div class="result" id="aLogs" style="margin-top:8px"></div>
+    <div class="result" id="aDiag" style="margin-top:8px"></div>
     <div id="aUsers"><div style="text-align:center;padding:16px"><span class="spinner"></span></div></div>
     <div class="result" id="aOut"></div>`;
   $('#aRefresh').onclick=refreshAdmin;
@@ -2236,6 +2400,20 @@ async function refreshAdmin(){
     const ent=(au.audit||[]);
     auEl.innerHTML=`<div class="ptitle" style="font-size:13px; margin-bottom:6px">🧾 Platform audit trail — every investigative action (last ${ent.length})</div>
       <div style="max-height:180px;overflow:auto">${ent.map(a=>`<div class="logline"><span class="ts">${escapeHtml(a.t)}</span> <b>${escapeHtml(a.who||'?')}</b> → ${escapeHtml(a.action)}${a.detail?' <span class="muted">'+escapeHtml(a.detail)+'</span>':''}</div>`).join('')||'<div class="muted">No entries yet — each OSINT/evidence/media action lands here automatically.</div>'}</div>`;
+  }
+  const lg=await post('/api/admin/logs',{token:tok, lines:70}).catch(()=>({}));
+  const lEl=$('#aLogs');
+  if(lEl){
+    lEl.innerHTML=`<div class="ptitle" style="font-size:13px;margin-bottom:6px">🖥️ Raw platform logs <span class="muted">(server console · data/platform.log)</span></div>
+      <div style="max-height:210px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;line-height:1.5">${(lg.lines||[]).map(l=>`<div class="logline">${escapeHtml(l)}</div>`).join('')||'<div class="muted">No log lines yet.</div>'}</div>`;
+  }
+  const dg=await post('/api/admin/diagnostics',{token:tok}).catch(()=>({}));
+  const dEl=$('#aDiag');
+  if(dEl && !dg.error){
+    const sb=dg.supabase||{};
+    dEl.innerHTML=`<div class="ptitle" style="font-size:13px;margin-bottom:6px">🩺 Diagnostics</div>
+      <div class="muted" style="font-size:11px">uptime ${Math.round((dg.uptime_sec||0)/60)} min · threads ${dg.threads||'?'} · memory ${dg.rss_mb||'?'} MB · disk free ${dg.disk_free_mb||'?'} MB · users ${dg.users||'?'} · cases ${dg.cases||0} · supabase ${sb.reachable?'reachable ✓':'not reachable'} · brain ${escapeHtml(JSON.stringify(dg.brain||{}))} · alerts ${escapeHtml(JSON.stringify(dg.alerts||{}))}</div>
+      ${(dg.recent_errors||[]).length?`<div class="errbox" style="margin-top:6px;font-size:11px">${dg.recent_errors.map(e=>escapeHtml(e)).join('<br>')}</div>`:'<div class="okbox" style="margin-top:6px">No error lines in the recent log.</div>'}`;
   }
   adminCache=r.users||[];
   renderAdminRows(adminCache);
@@ -2609,17 +2787,43 @@ function cryptoPayFlow(){
     box.innerHTML='<span class="spinner"></span> Creating your crypto invoice…';
     const r=await post('/api/pay/crypto/invoice',{email, plan:pendingPlan});
     if(r.error){ box.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
-    if(!r.pay_url){ box.innerHTML='<div class="errbox">The gateway returned no payment link — tell the admin to check the ATLOS merchant config.</div>'; return; }
-    box.innerHTML=`<div class="okbox" style="text-align:left">Pay <b>$${r.amount_usd}</b> in any accepted coin (BTC · USDT · ETH · XMR…). Your plan unlocks automatically when the network confirms.</div>
-      <div class="row" style="margin-top:8px"><button class="btn primary small" style="flex:1;justify-content:center;min-height:44px" id="cOpen">Open secure ATLOS checkout →</button></div>
-      <div class="muted" style="font-size:11px;margin-top:6px">Order <b>${escapeHtml(r.ref)}</b> · <span id="cStat">⏳ waiting for payment…</span></div>`;
-    $('#cOpen').onclick=()=>{ try{ window.open(r.pay_url,'_blank'); }catch(e){ location.href=r.pay_url; } };
-    const poll=setInterval(async()=>{
-      const s=await post('/api/pay/crypto/status',{ref:r.ref}).catch(()=>({}));
-      if(s.paid){ clearInterval(poll); const st=$('#cStat'); if(st) st.innerHTML='<b style="color:var(--ok)">✔ Paid — '+escapeHtml(s.plan||'plan')+' activated.</b>';
-        setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 1400); }
-    }, 15000);
-    setTimeout(()=>clearInterval(poll), 16*60*1000);
+    const amt=r.amount_usd, ref=r.ref||'', wallet=r.wallet||'';
+    const qr = r.qr_svg_b64 ? `<img alt="wallet QR" src="data:image/svg+xml;base64,${r.qr_svg_b64}" style="width:132px;height:132px;background:#fff;border-radius:10px;padding:6px">` : '';
+    box.innerHTML=`<div class="okbox" style="text-align:left">Pay <b>$${amt}</b> for the <b>${escapeHtml((r.plan||'').toUpperCase())}</b> plan — the address is right here, no extra page needed.</div>
+      ${wallet?`<div style="margin-top:10px;display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+        <div style="flex:1;min-width:210px">
+          <div class="muted" style="font-size:11px">Send USDT / USDC / ETH (ERC-20) to:</div>
+          <div id="cAddr" style="font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all;background:rgba(0,229,255,.07);border:1px solid rgba(0,229,255,.3);border-radius:10px;padding:9px;margin-top:4px;cursor:pointer" title="Tap to copy">${escapeHtml(wallet)}</div>
+          <div class="row" style="margin-top:8px;gap:6px">
+            <button class="btn primary" id="cCopy" style="min-height:44px">📋 Copy address</button>
+            <button class="btn gold" id="cPaid" style="min-height:44px">I have paid — check now</button>
+          </div>
+          <div class="muted" style="font-size:11px;margin-top:6px">Amount: <b>$${amt} worth</b> · Network: <b>ERC-20 (Ethereum)</b> — sending anything on another chain can lose funds.</div>
+        </div>
+        <div style="text-align:center">${qr}<div class="muted" style="font-size:10px;margin-top:4px">scan to pay</div></div>
+      </div>`:'<div class="muted" style="margin-top:8px;font-size:12px">Direct wallet address is not configured on the server (CRYPTO_WALLET_EVM) — use the ATLOS page below.</div>'}
+      ${r.pay_url?`<div class="row" style="margin-top:12px"><a class="btn ghost" id="cOpen" href="${escapeHtml(r.pay_url)}" target="_blank" rel="noopener" style="flex:1;justify-content:center;min-height:44px;text-decoration:none">🔗 Prefer ATLOS? Open the hosted checkout (exact coin amount, auto-unlock) ↗</a></div>
+      <div class="muted" style="font-size:10px;margin-top:4px;word-break:break-all" id="cUrl">${escapeHtml(r.pay_url)}</div>`:''}
+      <div class="muted" style="font-size:11px;margin-top:8px">Order <b>${escapeHtml(ref)}</b> · <span id="cStat">⏳ waiting for payment…</span></div>
+      <div class="muted" style="font-size:10px;margin-top:4px">${escapeHtml(r.network_note||'')}</div>`;
+    const addr=$('#cAddr');
+    const copyIt=async()=>{ try{ await navigator.clipboard.writeText(wallet); }catch(e){ const t=document.createElement('textarea'); t.value=wallet; document.body.appendChild(t); t.select(); try{document.execCommand('copy');}catch(e2){} t.remove(); }
+      const st=$('#cStat'); if(st) st.innerHTML='📋 Address copied — send exactly $'+amt+' worth, then press “I have paid”.'; };
+    if(addr) addr.onclick=copyIt;
+    const cp=$('#cCopy'); if(cp) cp.onclick=copyIt;
+    const check=async()=>{
+      const s=await post('/api/pay/crypto/status',{ref}).catch(()=>({}));
+      const st=$('#cStat'); if(!st) return s;
+      if(s.paid){ st.innerHTML='<b style="color:var(--ok)">✔ Paid — '+escapeHtml((s.plan||'plan'))+' activated.</b>'; return s; }
+      if(s.onchain && s.onchain.seen){ st.innerHTML='<b style="color:var(--gold)">🔎 Transfer detected on-chain — confirming, this can take a minute.</b>'; }
+      else st.innerHTML='⏳ '+escapeHtml((s.message||'waiting for payment…').slice(0,220));
+      return s;
+    };
+    const paid=$('#cPaid'); if(paid) paid.onclick=async()=>{ paid.disabled=true; paid.textContent='Checking the chain…'; const s=await check(); paid.disabled=false; paid.textContent='I have paid — check now';
+      if(s && s.paid) setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 1400); };
+    if($('#cOpen')) $('#cOpen').onclick=()=>{ setTimeout(()=>{ try{ const u=$('#cUrl'); if(u) u.style.color='var(--cyan)'; }catch(e){} }, 300); };
+    const poll=setInterval(async()=>{ const s=await check(); if(s && s.paid){ clearInterval(poll); setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 1400); } }, 15000);
+    setTimeout(()=>clearInterval(poll), 20*60*1000);
   };
 }
 let pendingPlan='pro';
@@ -2627,7 +2831,7 @@ const PLAN_BENEFITS={
   starter:['Unlimited chat with live free tools','Extended memory · wake word','Live web search (Tavily)','NASA APOD / EPIC / NEO','Smart-home voice control'],
   pro:['Everything in Starter','Deep OSINT — Shodan · VirusTotal · AbuseIPDB · URLScan · LeakCheck','Dark-web &amp; leak monitoring (breach DBs + hidden-service indexes)','🗂 Case Files: SHA-256 evidence vault + chain-of-custody log','Entity extraction (wallets · PGP · emails · IPs · handles) + BTC/ETH tracing','AI image creation · Mars rovers + NASA library · trading desk'],
   ultra:['Everything in Pro','📡 Continuous monitoring alerts + audit-log exports','AI video generation (HiAPI premium + free engine)','GitHub console · full trading automation'],
-  enterprise:['Everything in Professional','API access for agencies &amp; security teams','Custom AI models on your data · white-label branding','Team seats, SSO/roles, private or on-prem deployment','Dedicated support &amp; SLA — custom agreement']
+  enterprise:['Everything in Professional','ALL features unlocked — nothing is locked or gated','API access for agencies &amp; security teams','Custom AI models on your data · white-label branding','Team seats, SSO/roles, private or on-prem deployment','Dedicated support &amp; SLA — flat $500/month']
 };
 function openUpgrade(plan){
   try{ cryptoPayFlow(); }catch(e){}
@@ -2743,8 +2947,29 @@ function renderCreate(){
       <button class="btn primary" id="crImg" ${canImg?'':'disabled'}>🖼 Generate Image${canImg?'':' · PRO'}</button>
       <button class="btn gold" id="crVid" ${canVid?'':'disabled'}>🎬 Generate Video${canVid?'':' · ULTRA'}</button>
     </div>
-    <div class="result" id="crOut"><div class="muted">${canImg||canVid?'Ready — OraCool picks the best available engine automatically: NexaAPI / HiAPI / TokenMix when funded, free FLUX for images and free WAN-22 animation for video. Images ~5–30s, video 1–4 min.':'Image creation unlocks on the PRO plan; video on ULTRA. You are on '+planLabel()+'.'}</div></div>`;
+    <div class="result" id="crOut"><div class="muted">${canImg||canVid?'Ready — OraCool picks the best available engine automatically: NexaAPI / HiAPI / TokenMix when funded, free FLUX for images and free WAN-22 animation for video. Images ~5–30s, video 1–4 min.':'Image creation unlocks on the PRO plan; video on ULTRA. You are on '+planLabel()+'.'}</div></div>
+    <div id="crGal"></div>`;
   const out=()=>$('#crOut');
+  const loadGal=async()=>{
+    const g=$('#crGal'); if(!g) return;
+    if(!myEmail()){ g.innerHTML='<div class="muted" style="margin-top:14px;font-size:12px">Sign in to keep a gallery of everything you create — images and videos are stored on your account.</div>'; return; }
+    const r=await post('/api/media/list',{email:myEmail(), token:proToken||''}).catch(()=>({}));
+    const items=r.items||[];
+    g.innerHTML=`<div class="tag" style="margin-top:18px">🧰 My creations <span class="muted">(${items.length})</span></div>`+
+      (items.length?`<div class="galgrid">${items.map(m=>{
+        const src=escapeHtml(m.local||m.url||'');
+        return `<figure class="gal">
+          ${m.kind==='video'?`<video src="${src}" controls preload="metadata" playsinline></video>`
+            :`<img src="${src}" loading="lazy" alt="${escapeHtml((m.prompt||'').slice(0,40))}">`}
+          <figcaption title="${escapeHtml(m.prompt||'')}">${escapeHtml((m.prompt||'untitled').slice(0,70))}</figcaption>
+          <div class="galrow">
+            <a class="btn ghost" href="${src}" target="_blank" rel="noopener" download>Open</a>
+            <button class="btn ghost galdel" data-id="${escapeHtml(m.id)}">Delete</button>
+          </div></figure>`; }).join('')}</div>
+        <div class="hint">Stored on your account (survives provider link expiry) — the newest first. Videos render here too.</div>`
+      :'<div class="muted" style="margin-top:6px;font-size:12px">Nothing yet — generate an image or a video and it is saved here automatically.</div>');
+    g.querySelectorAll('.galdel').forEach(b=>{ b.onclick=async()=>{ await post('/api/media/delete',{email:myEmail(), token:proToken||'', id:b.dataset.id}); loadGal(); }; });
+  };
   const media=(urls, kind)=>{
     if(kind==='video') return urls.map(u=>`<video controls src="${escapeHtml(u)}" style="width:100%;border-radius:10px;margin-top:8px"></video>`).join('');
     return urls.map(u=>`<img src="${escapeHtml(u)}" style="width:100%;border-radius:10px;margin-top:8px" onerror="this.outerHTML='<a class=&quot;btn ghost&quot; href=&quot;${escapeHtml(u)}&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;>Open image ↗</a>'">`).join('');
@@ -2752,16 +2977,20 @@ function renderCreate(){
   $('#crImg').onclick=async()=>{
     const p=$('#crPrompt').value.trim(); if(p.length<3){ out().innerHTML='<div class="errbox">Describe the image in a few words first.</div>'; return; }
     out().innerHTML=SPIN+' <span class="muted">Painting your image…</span>';
+    const _g0=$('#crGal'); if(_g0) _g0.innerHTML='';
     const r=await post('/api/image',{prompt:p, aspect_ratio:$('#crRatio').value, token:proToken, email:myEmail()});
     if(r.error||r.locked){ spFail(out(),r); return; }
     out().innerHTML=`<div class="ptitle">🖼 Generated image</div><div class="muted">${escapeHtml(r.model||'')}</div>${media(r.images||[],'img')}`;
+    loadGal();
   };
+  loadGal();
   $('#crVid').onclick=async()=>{
     const p=$('#crPrompt').value.trim(); if(p.length<3){ out().innerHTML='<div class="errbox">Describe the video in a few words first.</div>'; return; }
     out().innerHTML=SPIN+' <span class="muted">Rendering your video (this takes a while)…</span>';
     const r=await post('/api/video',{prompt:p, token:proToken, email:myEmail()});
     if(r.error||r.locked){ spFail(out(),r); return; }
     out().innerHTML=`<div class="ptitle">🎬 Generated video</div><div class="muted">${escapeHtml(r.model||'')}</div>${media(r.videos||[],'video')}`;
+    loadGal();
   };
 }
 
@@ -3044,7 +3273,7 @@ async function renderPlans(){
     starter:'Everything in Free · live web search · 100-msg memory · wake word',
     pro:'Everything in Starter · deep OSINT (Shodan/VirusTotal/AbuseIPDB/URLScan/LeakCheck) · dark-web intel · AI images · Mars + NASA library · trading desk',
     ultra:'Everything in PRO · AI video generation · GitHub console · full automation',
-    enterprise:'Everything in Ultra · custom AI models · white-label · SSO · audit logs · unlimited seats'
+    enterprise:'Everything in Professional · EVERY feature unlocked (nothing gated) · API access · custom AI models · white-label · SSO/roles · audit exports · dedicated support — flat $500/mo'
   };
   const cards=[{id:'free',label:'Free',price_usd:0,price_ngn:0,days:0},...plans].map(p=>{
     const cur=p.id===myTier;
@@ -3092,6 +3321,22 @@ async function renderPlans(){
       <thead><tr>${hdr.map(x=>`<th style="padding:6px 4px;border-bottom:1px solid var(--line);text-align:center;color:var(--cyan2)">${x}</th>`).join('')}</tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
+    ${(()=>{ const LADDER=[
+        ['Chat · voice · PWA · smart home','free'],
+        ['Core intel: IP · domain · email · username · phone · weather','free'],
+        ['Markets (crypto, US equities, FRED) · paper trading','free'],
+        ['Dark-web passive index (read-only, never opens .onion)','free'],
+        ['Connectors &amp; Alerts + API gateway + browser push','free'],
+        ['📧 Mail watch — your own inbox (app password)','free'],
+        ['Live web search (Tavily)','starter'],
+        ['Deep OSINT: Shodan · VirusTotal · AbuseIPDB · URLScan','pro'],
+        ['🗂 Case Files: SHA-256 evidence vault + chain of custody','pro'],
+        ['AI image creation · Mars rovers · NASA library','pro'],
+        ['AI video generation','ultra'],
+        ['GitHub console · full automation','ultra'],
+        ['Everything unlocked · API access · white-label · SSO','enterprise']];
+      return `<div class="ptitle" style="font-size:13px;margin:16px 0 6px">🔐 Your access map — anything above your plan stays locked</div>
+        <div style="display:flex;flex-direction:column;gap:4px">${LADDER.map(([f,t])=>`<div class="logline">${tierGte(t)?'<span style="color:var(--ok)">✔ unlocked</span>':'<span style="color:var(--warn)">🔒 '+t.toUpperCase()+'</span>'} <span class="muted">·</span> ${f}<span class="muted"> — ${tierGte(t)?'included in '+planLabel():'locked on '+planLabel()}</span></div>`).join('')}</div>`; })()}
     <div class="note">✅ = live in this build · ❌ = not in this plan. Strict ladder: every paid plan includes ALL features of the plans below it — and nothing above. There are no free PRO trials. Image creation uses premium engines when funded, with OraCool's free HD engine as fallback; video requires HiAPI credit. ${escapeHtml(r.note||'')} Payments are processed securely by Paystack and unlock instantly.</div>`;
   $('#p-plans').querySelectorAll('[data-plan]').forEach(b=>{ b.onclick=()=>{ openUpgrade(b.dataset.plan); }; });
 }

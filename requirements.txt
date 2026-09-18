@@ -7,3 +7,4 @@
 # works, alerts just deliver via in-app inbox + your other connectors.
 pywebpush>=2.0
 cryptography>=42
+qrcode>=7.4        # crypto payment QR (pure-python SVG, no Pillow needed)

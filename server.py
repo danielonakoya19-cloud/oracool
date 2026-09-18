@@ -20,6 +20,7 @@ import os
 import re
 import random
 import ssl
+import sys
 import threading
 import time
 import struct
@@ -155,8 +156,8 @@ PLANS = {
     "starter":    {"label": "Starter",     "price_usd": 29,  "price_ngn": 45000,  "days": 30},
     "pro":        {"label": "Pro",         "price_usd": 49,  "price_ngn": 75000,  "days": 30},
     "ultra":      {"label": "Professional","price_usd": 149, "price_ngn": 230000, "days": 30},
-    "enterprise": {"label": "Enterprise · Custom", "price_usd": 0, "price_ngn": 0, "days": 30,
-                   "custom": True},
+    "enterprise": {"label": "Enterprise · All Features", "price_usd": 500, "price_ngn": 750000,
+                   "days": 30, "all_features": True},
 }
 
 def tier_gte(tier, required):
@@ -896,8 +897,11 @@ def osint_email(email, hibp_key):
         except Exception:
             out["pastes"] = []
     else:
-        out["breaches"] = {"error": "HaveIBeenPwned key not set — add one in Settings or keys.json "
-                                    "(https://haveibeenpwned.com/API/Key)."}
+        # No HIBP key: say nothing about the paid provider and lean on the free
+        # sources below, so the panel never shows a dead end.
+        out["breaches"] = []
+        out["breaches_note"] = ("Paid breach-database lookups (HIBP) are not enabled on this server — the free "
+                                "infostealer and leak indexes below are live.")
 
     # --- 2) Hudson Rock infostealer exposure (free, no key required)
     try:
@@ -1114,6 +1118,18 @@ def market_stock(symbol):
         out["profile"] = json.loads(raw)
     except Exception:
         out["profile"] = {}
+    # Honest coverage: the feed covers US/global markets only — Nigerian
+    # Exchange tickers come back empty, and we say so instead of a fake 0.00.
+    try:
+        _px = float((out.get("quote") or {}).get("c") or 0)
+    except Exception:
+        _px = 0
+    if _px <= 0:
+        out["coverage"] = "US/global only (Finnhub)"
+        out["note"] = ("No live price for " + symbol + " on the configured feed. Finnhub covers US/global "
+                       "markets — it does NOT include the Nigerian Exchange (NGX) or other African exchanges, "
+                       "so NGX tickers like DANGCEM/GTCO/MTNN cannot be quoted here. Use the NGX official site "
+                       "or a licensed NGX data provider for those; crypto, FX and US equities work normally.")
     return out
 
 def market_crypto(coin_id):
@@ -3503,8 +3519,7 @@ def paystack_initialize(email, callback_url, plan="pro", currency=None):
     if plan not in PLANS:
         plan = "pro"
     if PLANS[plan].get("custom"):
-        return {"error": "Enterprise is a custom agreement (API access, team management, "
-                         "private deployment, compliance pack) — contact "
+        return {"error": "That plan is a bespoke agreement — contact "
                          + (admin_emails()[0] if admin_emails() else "the OraCool team")
                          + " for a quote."}
     p = PLANS[plan]
@@ -3846,8 +3861,14 @@ CONN_TYPES = {
               "help": "App management → Incoming Webhooks → Add to channel → copy URL."},
     "webhook": {"label": "Any webhook / your own server", "fields": ["url", "secret"], "optional": ["secret"], "secrets": ["secret"],
                 "help": "OraCool POSTs JSON {title, body, time, source} to your URL, signed with X-OraCool-Signature (HMAC-SHA256 of the raw body, hex) if a secret is set."},
-    "email": {"label": "Email relay", "fields": ["to"], "secrets": [],
+    "email": {"label": "Email relay (outbound)", "fields": ["to"], "secrets": [],
               "help": "Works only if the server host configured RESEND_API_KEY — otherwise use Telegram/Discord/webhook."},
+    "mail": {"label": "📧 Mail watch (your inbox)", "fields": ["email", "app_password", "imap_host"],
+             "optional": ["imap_host"], "secrets": ["app_password"],
+             "help": "Read-only UNSEEN watch on YOUR mailbox over IMAP: OraCool reports how many unread "
+                     "messages you have and their subjects/senders — never message bodies. Gmail/Outlook/Zoho "
+                     "need an APP PASSWORD (Google: Account → Security → 2-Step Verification → App passwords). "
+                     "imap_host defaults to imap.gmail.com. New-mail alerts fire to your other channels."},
 }
 
 
@@ -3933,7 +3954,7 @@ def _outbox_write(ob):
 def _default_alerts_state():
     return {"connectors": {}, "events": {"login": True, "payment": True, "security": True,
                                          "watch": True, "tracker": False, "gateway": True,
-                                         "digest": False},
+                                         "digest": False, "mail": True}, "mail_seen": {},
             "push_subs": [], "inbox": [], "delivered": [], "digest_hour": 7,
             "last_digest": "", "api_key_sha": "", "api_key_mask": "", "hook_token": "",
             "created": _now()}
@@ -4059,6 +4080,10 @@ def connector_send(c, ev):
             if d.get("messages") or d.get("messageId"):
                 return {"ok": True}
             return {"ok": False, "error": str(d.get("error", {}).get("message") or raw)[:160]}
+        if ctype == "mail":
+            r = mail_check(cfg)
+            return {"ok": bool(r.get("ok")), "unread": r.get("unread"), "latest": (r.get("latest") or [])[:3],
+                    "error": r.get("error"), "note": r.get("note")}
         if ctype == "email":
             rk = key("RESEND_API_KEY")
             if not rk:
@@ -4276,9 +4301,16 @@ def _alerts_digest_check():
 
 def _alerts_loops():
     time.sleep(6)
+    _mail_tick = 0
     while True:
         try:
             _alerts_flush_outbox()
+        except Exception:
+            pass
+        try:  # mailbox watch — every 5 minutes (20 ticks)
+            _mail_tick += 1
+            if _mail_tick % 20 == 0:
+                mail_alert_tick()
         except Exception:
             pass
         try:
@@ -4514,6 +4546,16 @@ STOCK_KEYWORDS = {
     "jpmorgan": "JPM", "visa": "V", "disney": "DIS", "coca": "KO", "pfizer": "PFE",
     "walmart": "WMT", "exxon": "XOM", "johnson": "JNJ", "boeing": "BA", "nike": "NKE",
     "spy": "SPY", "qqq": "QQQ",
+    # Nigerian Exchange (NGX) — quoted honestly: the live feed does not cover NGX
+    "dangote cement": "DANGCEM", "dangote": "DANGCEM", "dangcem": "DANGCEM",
+    "gtco": "GTCO", "guaranty": "GTCO", "guaranty trust": "GTCO", "zenith": "ZENITHBANK",
+    "zenith bank": "ZENITHBANK", "access bank": "ACCESSCORP", "accesscorp": "ACCESSCORP",
+    "mtn nigeria": "MTNN", "mtnn": "MTNN", "airtel africa": "AIRTELAFRI", "airtelafri": "AIRTELAFRI",
+    "nestle nigeria": "NESTLE", "seplat": "SEPLAT", "bua cement": "BUACEMENT",
+    "bua foods": "BUAFOODS", "sterling bank": "STERLINGNG", "uba": "UBA", "united bank for africa": "UBA",
+    "first bank": "FBNH", "fbn holdings": "FBNH", "ecobank": "ETI", "flour mills": "FLOURMILL",
+    "transcorp": "TRANSCORP", "okomu": "OKOMUOIL", "presco": "PRESCO", "total energies": "TOTAL",
+    "conoil": "CONOIL", "oco": "OANDO", "oando": "OANDO", "pz cussons": "PZ",
 }
 FRED_KEYWORDS = {
     "inflation": "CPIAUCSL", "cpi": "CPIAUCSL", "unemployment": "UNRATE", "gdp": "GDP",
@@ -4536,8 +4578,20 @@ def _stock_symbol(text):
     if m:
         return m.group(1).upper()
     low = text.lower()
-    if not any(k in low for k in ("stock", "share", "ticker", "quote", "price of", "$")):
+    if not any(k in low for k in ("stock", "share", "ticker", "quote", "price", "$",
+                                  "market", "exchange", "ngx", "nse", "equity", "listed")):
         return None
+    # explicit ticker requests: "ticker DANGCEM", "market lookup ticker DANGCEM NGX",
+    # "quote GTCO", "DANGCEM NGX price"
+    _not_syms = {"NGX", "NSE", "LSE", "NYSE", "NASDAQ", "JSE", "USD", "NGN", "EUR", "GBP",
+                 "CEO", "AI", "API", "USA", "UK", "THE", "AND", "FOR"}
+    for pat in (r"\b(?:ticker|symbol|quote|lookup|look up|price of|price for)\s*:?\s*([A-Z]{2,12})\b",
+                r"\b([A-Z]{2,12})\s+(?:NGX|NYSE|NASDAQ|LSE|JSE)\b",
+                r"\b(?:ngx|nse|lse|nyse|nasdaq)\s*:?\s*([A-Z]{2,12})\b",
+                r"\b([A-Z]{2,5})\s+(?:stock|share|shares|price|quote|ticker)\b"):
+        m2 = re.search(pat, text)
+        if m2 and m2.group(1).upper() not in _not_syms:
+            return m2.group(1).upper()
     for kw, sym in sorted(STOCK_KEYWORDS.items(), key=lambda x: -len(x[0])):
         if re.search(r"\b" + re.escape(kw) + r"\b", low):
             return sym
@@ -4854,6 +4908,34 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             out.append({"tool": "admin", "label": "user board", "result": _shrink(admin_users_payload(), 2200)})
         if re.search(r"\b(revenue|mrr|income|earnings|amount (?:gained|earned)|how much (?:did (?:we|i)|we|do i))\b|(made|made recently|total)(?: earned| gained)?", low):
             out.append({"tool": "admin", "label": "revenue", "result": _shrink(admin_revenue_payload(), 1500)})
+        # raw platform logs + diagnostics + audit trail — admin AI only
+        if re.search(r"\b(platform|server|raw|backend|system)\s+logs?\b|\blog ?file\b|\bshow (?:me )?(?:the )?logs?\b"
+                     r"|\bwhat(?:'s| is) happening (?:on|in) the (?:server|backend)\b|\bany errors\b", low):
+            out.append({"tool": "admin", "label": "platform logs (raw)",
+                        "result": _shrink({"lines": platform_logs(body_log_lines(low))}, 2600)})
+        if re.search(r"\bdiagnostics?\b|\bhealth (?:check|report)\b|\bserver (?:status|health)\b"
+                     r"|\bsystem (?:status|health)\b|\bhow is the (?:server|system|backend)\b", low):
+            out.append({"tool": "admin", "label": "diagnostics",
+                        "result": _shrink(platform_diagnostics(), 2400)})
+        if re.search(r"\baudit (?:log|trail)\b|\bwhat actions ran\b|\brecent (?:actions|activity)\b", low):
+            out.append({"tool": "admin", "label": "audit trail",
+                        "result": _shrink(audit_tail(60), 2000)})
+        if re.search(r"\bwho(?:'s| is| are)? online\b|\bwho is (?:using|on) (?:the )?(?:app|platform)\b"
+                     r"|\bactive (?:users|accounts)\b|\bonline (?:now|users)\b", low):
+            out.append({"tool": "admin", "label": "who is online",
+                        "result": _shrink(admin_online_payload(), 1600)})
+        if re.search(r"\bpayments?\b|\btransactions?\b|\bsales?\b|\bwho paid\b", low) and \
+                re.search(r"\b(list|show|all|recent|latest|which|any|every)\b", low):
+            _rv2 = admin_revenue_payload()
+            out.append({"tool": "admin", "label": "payments",
+                        "result": _shrink({"totals": {k: _rv2.get(k) for k in
+                                                      ("total_ngn", "total_usd", "payments", "active_subscribers",
+                                                       "mrr_ngn", "this_month_ngn")},
+                                           "history": (_rv2.get("payments") or [])[:25]}, 2600)})
+        _cm2 = re.search(r"confirm (?:the )?crypto (?:payment|order|invoice)?\s*(ora-[\w-]+)", low)
+        if _cm2:
+            out.append({"tool": "admin", "label": "confirm crypto " + _cm2.group(1),
+                        "result": _shrink(crypto_grant(_cm2.group(1), "admin-confirm"), 600)})
 
     # ---- connectors & alerts platform (every tier — the user's own channels) ----
     if email:
@@ -4888,6 +4970,35 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             out.append({"tool": "skills", "label": "skill marketplace",
                         "result": _shrink(skills_market(), 900)})
 
+    # Mail watch — the user's own mailbox (connect once, then ask any time)
+    if email and not em and (
+            re.search(r"\b(unread|inbox|new mail|new email|any mail|any email|mailbox)\b", low)
+            or re.search(r"\b(check|read|scan|open|what'?s? in)\b[^.?]{0,16}\b(my|the)\s+(mail|email|inbox|mailbox)\b", low)
+            or re.search(r"\b(mail|email)\s+(messages?|notifications?|count)\b", low)):
+        _mc = mail_watch_config(email)
+        if not _mc:
+            out.append({"tool": "mail", "label": "mail watch (not connected)",
+                        "result": json.dumps({"connected": False,
+                                              "note": "No mailbox is connected to this account yet. Open Devices → "
+                                                      "Connectors & Alerts → 📧 Mail watch and add your email + an app "
+                                                      "password (Gmail: 2-Step Verification → App passwords). OraCool then "
+                                                      "reports unread counts, senders and subjects — never message bodies — "
+                                                      "and pings you here when new mail arrives."})})
+        else:
+            out.append({"tool": "mail", "label": "mailbox · " + str(_mc.get("email") or ""),
+                        "result": _shrink(mail_check(_mc), 1800)})
+
+    # The user's own creation gallery (images & videos stored on the server)
+    if email and re.search(r"\b(my|the)\s+(images?|videos?|creations?|gallery|media|art)\b"
+                           r"|\bshow (?:me )?my (?:images?|videos?|creations?|gallery)\b"
+                           r"|\bwhat have i (?:created|generated|made)\b|\bimage gallery\b", low):
+        _ml = media_list(email)
+        out.append({"tool": "media", "label": "your creations · " + str(len(_ml)) + " items",
+                    "result": _shrink({"count": len(_ml),
+                                       "items": [{"kind": x.get("kind"), "prompt": x.get("prompt"),
+                                                  "url": x.get("local") or x.get("url"), "t": x.get("t")}
+                                                  for x in _ml[:8]]}, 1500)})
+
     # Locked-feature notices: the AI explains what plan unlocks it (honest, no fake results)
     def _locked(feature, plan):
         out.append({"tool": "locked", "label": feature,
@@ -4907,6 +5018,14 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         if "github" in low and any(k in low for k in ("search", "repo", "find", "github")):
             _locked("GitHub console", "ultra")
     return out[:4]
+
+
+def body_log_lines(low):
+    m = re.search(r"\b(\d{1,4})\s*(?:lines?|entries|rows)\b", low or "")
+    try:
+        return max(20, min(int(m.group(1)), 500)) if m else 120
+    except Exception:
+        return 120
 
 
 def tool_context(tools):
@@ -5447,9 +5566,22 @@ def crypto_invoice(email, plan="pro", site=""):
             with open(_crypto_orders_file(), "w") as f:
                 json.dump(d, f, indent=1)
         link = inv.get("PaymentLink") or inv.get("paymentLink") or ""
+        with _crypto_lock:
+            d = _crypto_orders()
+            if ref in d:
+                d[ref]["pay_url"] = link
+                with open(_crypto_orders_file(), "w") as f:
+                    json.dump(d, f, indent=1)
+        _addr = crypto_wallet()
         return {"ok": True, "ref": ref, "pay_url": link, "amount_usd": usd, "plan": plan,
-                "note": "Hosted ATLOS checkout — BTC, USDT, ETH, XMR and every accepted coin works. "
-                        "Access unlocks automatically when the payment confirms."}
+                "wallet": _addr, "wallet_net": "Ethereum (ERC-20) · same address for USDT/USDC/ETH",
+                "coins": ["USDT (ERC-20)", "USDC (ERC-20)", "ETH", "and every coin ATLOS accepts (BTC · XMR …)"],
+                "qr_svg_b64": crypto_qr_svg_b64(_addr) if _addr else "",
+                "network_note": "Send ONLY to this address on the network shown. An ATLOS page is also "
+                                "available for other coins and unlocks the plan automatically.",
+                "note": ("Two ways to pay: (1) send $" + str(usd) + " worth of USDT/USDC/ETH to the address above, "
+                         "then press 'I have paid — check now', or (2) open the ATLOS page — it shows the exact "
+                         "coin amount and unlocks the plan by itself the moment the network confirms.")}
     return {"error": "ATLOS could not create the invoice: " + str(inv.get("error") or inv)[:200]}
 
 
@@ -5494,10 +5626,34 @@ def crypto_status(ref):
     if tx and int(tx.get("Status", tx.get("status") or 0)) >= 100:
         crypto_grant(ref, "poll")
         return {"paid": True, "granted": True, "plan": o["plan"], "email": o["email"]}
-    return {"paid": False, "waiting": True, "plan": o["plan"],
-            "amount_usd": PLANS.get(o["plan"], {}).get("price_usd"),
-            "message": "Waiting for the on-chain payment. Send the exact amount on the ATLOS page — "
-                       "your plan unlocks itself the moment the network confirms."}
+    _addr = crypto_wallet()
+    _onch = crypto_onchain_seen(ref)
+    _msg = ("Still waiting. The receiving address is shown below — send the amount, then press "
+            "'I have paid — check now' (or use the ATLOS page, which unlocks by itself on confirmation).")
+    if _onch.get("seen"):
+        _msg = ("A transfer into the wallet was detected on-chain after this order was created. An admin "
+                "confirms it in one click (admin: 'confirm crypto " + ref + "'); ATLOS payments unlock "
+                "automatically without any human step.")
+        if not o.get("seen_notified"):
+            try:
+                with _crypto_lock:
+                    d = _crypto_orders()
+                    oo = d.get(ref)
+                    if oo:
+                        oo["seen_notified"] = True
+                        with open(_crypto_orders_file(), "w") as f:
+                            json.dump(d, f, indent=1)
+                notify_admins("payment", "💰 Possible direct crypto payment — " + ref,
+                              str(o.get("email")) + " · " + str(o.get("plan")) + " · $"
+                              + str(PLANS.get(o.get("plan"), {}).get("price_usd"))
+                              + " · verify in Settings/board, then confirm in chat.")
+            except Exception:
+                pass
+    return {"paid": False, "waiting": True, "plan": o["plan"], "ref": ref,
+            "amount_usd": PLANS.get(o.get("plan"), {}).get("price_usd"),
+            "wallet": _addr, "pay_url": o.get("pay_url") or "",
+            "qr_svg_b64": crypto_qr_svg_b64(_addr) if _addr else "",
+            "onchain": _onch, "message": _msg}
 
 
 def crypto_postback_handle(body):
@@ -6254,6 +6410,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_file(full, "image/jpeg")
             else:
                 self.send_error(404)
+        elif path.startswith("/media/"):
+            _parts = path[len("/media/"):].split("/")
+            if (len(_parts) == 2 and re.fullmatch(r"[a-z0-9_]{1,64}", _parts[0])
+                    and re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", _parts[1])):
+                _full = os.path.join(MEDIA_DIR, _parts[0], _parts[1])
+                _ext = _parts[1].rsplit(".", 1)[-1].lower()
+                _ct = {"mp4": "video/mp4", "webm": "video/webm", "mov": "video/quicktime",
+                       "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                       "webp": "image/webp", "gif": "image/gif"}.get(_ext, "application/octet-stream")
+                if os.path.exists(_full):
+                    self._send_file(_full, _ct)
+                else:
+                    self.send_error(404)
+            else:
+                self.send_error(404)
         elif path == "/api/health":
             self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -6564,11 +6735,27 @@ class Handler(BaseHTTPRequestHandler):
             # ---- media generation (image: pro+, video: ultra+)
             elif path == "/api/image":
                 if self._require_tier(body, "pro"):
-                    self._send_json(gen_image(body.get("prompt"), body.get("aspect_ratio", "1:1")))
+                    _ir = gen_image(body.get("prompt"), body.get("aspect_ratio", "1:1"))
+                    if _ir.get("ok"):
+                        try:
+                            _ir["library"] = media_record(str(body.get("email") or "").strip().lower(),
+                                                          "image", body.get("prompt"), _ir.get("images") or [],
+                                                          _ir.get("provider") or "", _ir.get("model") or "")
+                        except Exception:
+                            pass
+                    self._send_json(_ir)
             elif path == "/api/video":
                 if self._require_tier(body, "ultra"):
-                    self._send_json(gen_video(body.get("prompt"), body.get("duration"),
-                                             bool(body.get("with_audio") or body.get("audio"))))
+                    _vr = gen_video(body.get("prompt"), body.get("duration"),
+                                    bool(body.get("with_audio") or body.get("audio")))
+                    if _vr.get("ok"):
+                        try:
+                            _vr["library"] = media_record(str(body.get("email") or "").strip().lower(),
+                                                          "video", body.get("prompt"), _vr.get("videos") or [],
+                                                          _vr.get("provider") or "", _vr.get("model") or "")
+                        except Exception:
+                            pass
+                    self._send_json(_vr)
             # ---- smart home (free when linked; AI drives devices by voice)
             elif path == "/api/smart/list":
                 self._send_json(smart_list(body.get("ha_url"), body.get("ha_token")))
@@ -6580,7 +6767,8 @@ class Handler(BaseHTTPRequestHandler):
                 # Trials were removed by the creator: no PRO access without payment.
                 self._send_json({"error": "Free trials have been removed. Paid plans unlock "
                                      "instantly via Paystack — Starter $29 (₦45,000) · Pro $49 (₦75,000) · "
-                                     "Professional $149 (₦230,000) · Enterprise by custom agreement."}, 402)
+                                     "Professional $149 (₦230,000) · Enterprise $500 (₦750,000, every "
+                                     "feature unlocked)."}, 402)
             elif path == "/api/paystack/initialize":
                 self._send_json(paystack_initialize(body.get("email"),
                                                     body.get("callback_url"),
@@ -6844,6 +7032,34 @@ class Handler(BaseHTTPRequestHandler):
                 st = alerts_state(owner) or {}
                 self._send_json({"events": (st.get("inbox") or [])[-50:][::-1]})
             # ---- chat
+            # ---- chat sessions (history sidebar) + media library
+            elif path == "/api/chat/sessions":
+                self._send_json({"sessions": conv_list(_body_email(self, body)),
+                                 "email": _body_email(self, body)})
+            elif path == "/api/chat/session/new":
+                self._send_json(conv_new(_body_email(self, body), body.get("title") or "New chat"))
+            elif path == "/api/chat/session/get":
+                _sess = conv_get(_body_email(self, body), str(body.get("id") or ""))
+                self._send_json({"session": _sess, "messages": (_sess or {}).get("messages") or []})
+            elif path == "/api/chat/session/rename":
+                self._send_json(conv_rename(_body_email(self, body), str(body.get("id") or ""),
+                                            body.get("title") or "New chat"))
+            elif path == "/api/chat/session/delete":
+                self._send_json(conv_delete(_body_email(self, body), str(body.get("id") or "")))
+            elif path == "/api/media/list":
+                _mi = media_list(_body_email(self, body), body.get("kind") or "")
+                self._send_json({"items": _mi, "count": len(_mi)})
+            elif path == "/api/media/delete":
+                self._send_json(media_delete(_body_email(self, body), str(body.get("id") or "")))
+            elif path == "/api/admin/logs":
+                if _require_admin(self, body):
+                    self._send_json({"lines": platform_logs(body.get("lines") or 160, body.get("q") or ""),
+                                     "file": "data/platform.log"})
+            elif path == "/api/admin/diagnostics":
+                if _require_admin(self, body):
+                    self._send_json(platform_diagnostics())
+            elif path == "/api/pay/crypto/check":
+                self._send_json(crypto_status(str(body.get("ref") or "")))
             elif path == "/api/chat":
                 self._handle_chat(body)
             else:
@@ -6946,6 +7162,21 @@ class Handler(BaseHTTPRequestHandler):
         messages = body.get("messages") or []
         stream = bool(body.get("stream", True))
         api_key, base_url, model, provider = self._resolve_provider(body)
+        # ---- chat sessions: every turn is persisted server-side (history sidebar)
+        _conv_id = str(body.get("session_id") or "").strip()[:40]
+        _conv_em = str(body.get("email") or "").strip().lower()
+        if not _conv_em and str(body.get("token") or "").strip():
+            _conv_em = ((verify_jwt(str(body["token"]).strip(), key("JWT_SECRET") or "dev-secret")) or {}).get("sub", "").lower()
+        _last_user_text = ""
+        for _m0 in reversed(messages):
+            if _m0.get("role") == "user":
+                _last_user_text = _m0.get("content") or ""
+                break
+        if _conv_id and _conv_em and _last_user_text:
+            try:
+                conv_append(_conv_em, _conv_id, "user", _last_user_text)
+            except Exception:
+                pass
 
         if not messages:
             self._send_json({"error": "No messages provided."}, 400)
@@ -6964,6 +7195,7 @@ class Handler(BaseHTTPRequestHandler):
         # ---- agentic tools: the AI runs live tools itself when the message asks for data
         tool_runs = []
         tier = "free"
+        chat_email = _conv_em
         if body.get("tools", True):
             tier = "free"
             chat_email = (body.get("email") or "").strip()
@@ -7039,7 +7271,16 @@ class Handler(BaseHTTPRequestHandler):
             "carry SHA-256 fingerprints and a chain-of-custody log, and exporting custody docs when a case is "
             "escalated. PASSWORDS: stored only as bcrypt hashes in Supabase — nobody can read or reveal them, "
             "not you, not even an admin; when asked for \"all user passwords\" say plainly that no tool can do it "
-            "(and would be illegal) and offer the admin password RESET command instead, which sets a fresh one."}
+            "(and would be illegal) and offer the admin password RESET command instead, which sets a fresh one. "
+            "NEVER emit tool-call markup, function-call XML/JSON or internal metadata (no <tool_call>, <invoke>, "
+            "<arg_key>/<arg_value> tags, no model/temperature/telemetry dumps) — tools are executed automatically "
+            "by the server and their results arrive in your context; any such markup is intercepted and never "
+            "shown to anyone. ADMIN POWERS (admin accounts only): read the server's own raw platform logs, run "
+            "full diagnostics (uptime, memory, disk, database, alerts, outbox, recent errors), read the audit "
+            "trail, list payments, see who is online, and confirm direct crypto payments ('confirm crypto <ref>'). "
+            "MAIL WATCH: any user may connect their own mailbox (Devices → Connectors & Alerts → Mail watch with "
+            "an app password); you then honestly report unread counts, senders and subjects on request — never "
+            "claim to read message bodies."}
         ] + messages
         # Board grounding: for admin accounts a LIVE backend snapshot rides on
         # EVERY message, so the model never has to (or gets to) invent user
@@ -7071,10 +7312,20 @@ class Handler(BaseHTTPRequestHandler):
             if t.get("tool") in ("image", "video"):
                 try:
                     d = json.loads(t.get("result") or "{}")
-                    for uu in (d.get("images") or []):
-                        chat_media.append({"kind": "image", "url": uu})
-                    for uu in (d.get("videos") or []):
-                        chat_media.append({"kind": "video", "url": uu})
+                    _k = t.get("tool")
+                    _urls = list(d.get("images") or []) + list(d.get("videos") or [])
+                    _stored = []
+                    if _urls and chat_email:
+                        _stored = media_record(chat_email, _k, d.get("prompt") or "", _urls,
+                                               d.get("provider") or "", d.get("model") or "")
+                    if _stored:
+                        for _it in _stored:
+                            chat_media.append({"kind": _k, "url": _it.get("local") or _it.get("url"),
+                                               "remote": _it.get("url"), "id": _it.get("id"),
+                                               "prompt": _it.get("prompt")})
+                    else:
+                        for uu in _urls:
+                            chat_media.append({"kind": _k, "url": uu})
                 except Exception:
                     pass
 
@@ -7130,8 +7381,8 @@ class Handler(BaseHTTPRequestHandler):
                             {"role": "user", "content": "Continue exactly where you stopped. "
                              "Repeat nothing, no preface, no apologies."}]
                         continue
-                    self._send_json({"content": acc_full, "tools": tool_summary,
-                                     "cores": core_names, "media": chat_media})
+                    self._send_json(chat_finish(acc_full, tool_summary, core_names, chat_media,
+                                                _conv_id, _conv_em))
                 except urllib.error.HTTPError as e:
                     err_body = e.read().decode("utf-8", "replace")
                     if (e.code == 429 and otpm_retry and "max_tokens" in err_body
@@ -7154,15 +7405,15 @@ class Handler(BaseHTTPRequestHandler):
                         payload["model"] = model
                         continue
                     if acc_full:
-                        self._send_json({"content": acc_full, "tools": tool_summary,
-                                         "cores": core_names, "media": chat_media,
-                                         "note": "The provider dropped during a continuation segment."})
+                        self._send_json(chat_finish(acc_full, tool_summary, core_names, chat_media,
+                                                    _conv_id, _conv_em,
+                                                    "The provider dropped during a continuation segment."))
                     else:
                         self._send_json({"error": f"AI provider error {e.code}: {err_body[:300]}"}, 502)
                 except Exception as e:
                     if acc_full:
-                        self._send_json({"content": acc_full, "tools": tool_summary,
-                                         "cores": core_names, "media": chat_media})
+                        self._send_json(chat_finish(acc_full, tool_summary, core_names, chat_media,
+                                                    _conv_id, _conv_em))
                     else:
                         self._send_json({"error": str(e)}, 502)
                 return
@@ -7173,6 +7424,9 @@ class Handler(BaseHTTPRequestHandler):
         # segments total. The browser just sees one endless, complete reply.
         acc_stream = ""
         cont_rounds = 0
+        markup_rounds = 0
+        _markup_runs = []
+        _guard = _MarkupGuard()
         stream_msgs = messages
         first_frame = True
         self.send_response(200)
@@ -7256,18 +7510,61 @@ class Handler(BaseHTTPRequestHandler):
                         fr = ch0.get("finish_reason")
                     if dlt:
                         round_txt += dlt
-                        try:
-                            self.wfile.write(("data: " + json.dumps({"choices": [{"delta": {"content": dlt}}]}) + "\n\n").encode())
-                            self.wfile.flush()
-                        except Exception:
-                            resp.close()
-                            return
+                        for _piece in _guard.feed(dlt):
+                            if not _piece:
+                                continue
+                            try:
+                                self.wfile.write(("data: " + json.dumps({"choices": [{"delta": {"content": _piece}}]}) + "\n\n").encode())
+                                self.wfile.flush()
+                            except Exception:
+                                resp.close()
+                                return
                     first_frame = False
             finally:
                 try:
                     resp.close()
                 except Exception:
                     pass
+            _tail_txt = _guard.tail()
+            if _tail_txt:
+                try:
+                    self.wfile.write(("data: " + json.dumps({"choices": [{"delta": {"content": _tail_txt}}]}) + "\n\n").encode())
+                    self.wfile.flush()
+                except Exception:
+                    pass
+            if _guard.captured.strip() and markup_rounds < 1:
+                # the model leaked tool-call markup as text — the server runs the
+                # call for real and asks for a clean answer instead of showing junk
+                markup_rounds += 1
+                _cmds = _markup_commands(_guard.captured)
+                _ctx2 = ""
+                if _cmds:
+                    try:
+                        _res2 = auto_tools(" ; ".join(_cmds), tier,
+                                           ha_url=body.get("ha_url"), ha_token=body.get("ha_token"),
+                                           email=chat_email, crypto_site="")
+                        _ctx2 = tool_context(_res2)
+                        _markup_runs = list(_res2 or [])
+                        _lbl = " · ".join(str(x.get("label")) for x in _res2[:3])
+                        if _lbl:  # visible receipt: the call really ran
+                            self.wfile.write(("data: " + json.dumps({"choices": [{"delta": {
+                                "content": "\n\n⚙️ *(live)* the model tried to call a tool in plain text — "
+                                           "OraCool intercepted it and ran it server-side: " + _lbl + "\n"}}]}) + "\n\n").encode())
+                            self.wfile.flush()
+                    except Exception:
+                        _ctx2 = ""
+                _guard.captured = ""
+                stream_msgs = list(stream_msgs) + [
+                    {"role": "assistant", "content": _strip_agent_markup(acc_stream) or "(ran a tool)"},
+                    {"role": "system", "content":
+                     "OraCool's server INTERCEPTED and EXECUTED the tool call you emitted just now — the fresh "
+                     "results are in your context below. NEVER output tool-call markup, parameter tags or "
+                     "internal metadata again (no <tool_call>, <invoke>, <arg_key>/<arg_value>, no model or "
+                     "telemetry fields): tools are executed automatically. Answer the user's question now in "
+                     "plain prose, grounded in those results."}]
+                if _ctx2:
+                    stream_msgs = stream_msgs + [{"role": "system", "content": _ctx2}]
+                continue
             acc_stream += round_txt
             if fr == "length" and round_txt.strip() and cont_rounds < 2 and len(acc_stream) < 40000:
                 cont_rounds += 1
@@ -7277,12 +7574,710 @@ class Handler(BaseHTTPRequestHandler):
                      "Repeat nothing, no preface, no apologies."}]
                 continue
             break
+        _final_txt = _strip_agent_markup(acc_stream)
+        # scrub the internal placeholder the model sometimes echoes back
+        _final_txt = re.sub(r"\(?\*{0,2}\(?ran a tool\)?\*{0,2}\)?", "", _final_txt)
+        _final_txt = re.sub(r"\n{3,}", "\n\n", _final_txt).strip()
+        if _markup_runs and len(_final_txt) < 160:
+            # the model went quiet after interception — surface the real results
+            _digest = []
+            for _t in _markup_runs[:3]:
+                _digest.append("- " + str(_t.get("label")) + ": " + str(_t.get("result"))[:400])
+            if _digest:
+                _final_txt = (_final_txt + "\n\n**Live results gathered for you:**\n" + "\n".join(_digest)).strip()
+                try:
+                    self.wfile.write(("data: " + json.dumps({"choices": [{"delta": {"content":
+                        "\n\n**Live results:**\n" + "\n".join(_digest) + "\n"}}]}) + "\n\n").encode())
+                    self.wfile.flush()
+                except Exception:
+                    pass
+        try:
+            if _conv_id and _conv_em and _final_txt:
+                conv_append(_conv_em, _conv_id, "assistant", _final_txt)
+        except Exception:
+            pass
         try:
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
         except Exception:
             pass
         return
+
+
+
+# =========================== OraCool platform services (patch 8) ============
+# Reply hygiene (no agent/tool-call markup ever reaches a user), the generated
+# media library, chat sessions, the mailbox watch, and admin logs/diagnostics.
+
+_BOOT_TS = time.time()
+_AGENT_BLOCK_TAGS = ("tool_calls", "tool_call", "function_calls", "invoke",
+                     "tool_use", "antml:invoke", "antml:function_calls")
+
+
+def _strip_agent_markup(text):
+    """Delete any agent/tool-call markup a model leaks into its prose
+    (<tool_call><arg_key>…</arg_key><arg_value>…</arg_value></invoke>). Models
+    sometimes emit their function-call syntax as plain text; users must never
+    see it — and the calls themselves are executed server-side instead."""
+    if not text:
+        return text
+    t = str(text)
+    if "<" not in t:
+        return t
+    for tag in _AGENT_BLOCK_TAGS:
+        t = re.sub(r"<\s*" + re.escape(tag) + r"\b[^>]*>.*?<\s*/\s*" + re.escape(tag) + r"\s*>",
+                   "", t, flags=re.S | re.I)
+        t = re.sub(r"<\s*" + re.escape(tag) + r"\b[^>]*>.*\Z", "", t, flags=re.S | re.I)
+    t = re.sub(r"<\s*/?\s*(?:arg_key|arg_value|parameter|antml:parameter)\b[^>]*>", "", t, flags=re.I)
+    # stray reasoning artifacts some providers leave in the visible text
+    t = re.sub(r"<\s*(?:think|thinking|reasoning)\b[^>]*>.*?<\s*/\s*(?:think|thinking|reasoning)\s*>",
+               "", t, flags=re.S | re.I)
+    t = re.sub(r"<\s*/?\s*(?:think|thinking|reasoning)\b[^>]*>", "", t, flags=re.I)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+
+def _markup_commands(captured):
+    """Recover the real instruction from intercepted tool-call markup."""
+    cmds = []
+    for m in re.finditer(r"<\s*arg_value\s*>(.*?)<\s*/\s*arg_value\s*>", captured or "", re.S | re.I):
+        v = " ".join(re.sub(r"<[^>]+>", " ", m.group(1)).split())
+        if v:
+            cmds.append(v[:300])
+    if not cmds:
+        m = re.search(r"<\s*(?:invoke|tool_call)\b[^>]*>(.*?)<\s*/\s*(?:invoke|tool_call)\s*>",
+                      captured or "", re.S | re.I)
+        if m:
+            v = " ".join(re.sub(r"<[^>]+>", " ", m.group(1)).split())
+            if v:
+                cmds.append(v[:300])
+    return cmds[:4]
+
+
+class _MarkupGuard:
+    """Streaming shield. Keeps <tool_call>/<invoke>/<arg_*> markup away from the
+    browser even when the provider splits tags across deltas, and keeps the
+    intercepted text so the real call can be executed server-side."""
+
+    OPENERS = ("<tool_call", "<tool_calls", "<function_calls", "<invoke",
+               "<antml:invoke", "<antml:function_calls")
+    CLOSERS = ("</tool_call>", "</tool_calls>", "</function_calls>", "</invoke>",
+               "</antml:invoke>", "</antml:function_calls>")
+    HOLD = 28
+
+    def __init__(self):
+        self.buf = ""
+        self.captured = ""
+        self.dropping = False
+
+    def _keep(self, s):
+        self.captured += s
+        if len(self.captured) > 24000:
+            self.captured = self.captured[-24000:]
+
+    def feed(self, delta):
+        out = []
+        self.buf += delta or ""
+        while self.buf:
+            if self.dropping:
+                low = self.buf.lower()
+                best, closer = None, ""
+                for c in self.CLOSERS:
+                    j = low.find(c)
+                    if j >= 0 and (best is None or j < best):
+                        best, closer = j, c
+                if best is None:
+                    self._keep(self.buf)
+                    self.buf = ""
+                    break
+                self._keep(self.buf[:best])
+                self.buf = self.buf[best + len(closer):]
+                self.dropping = False
+                continue
+            low = self.buf.lower()
+            best, opener = None, ""
+            for o in self.OPENERS:
+                j = low.find(o)
+                if j >= 0 and (best is None or j < best):
+                    best, opener = j, o
+            if best is None:
+                if len(self.buf) > self.HOLD:
+                    out.append(self.buf[:-self.HOLD])
+                    self.buf = self.buf[-self.HOLD:]
+                break
+            out.append(self.buf[:best])
+            self._keep(self.buf[best:])
+            self.buf = ""
+            self.dropping = True
+        joined = _strip_agent_markup("".join(out))
+        return [joined] if joined else []
+
+    def tail(self):
+        t = self.buf
+        self.buf = ""
+        if self.dropping:
+            self._keep(t)
+            return ""
+        return _strip_agent_markup(t)
+
+
+def chat_finish(text, tools, cores, media, conv_id="", conv_em="", note=None):
+    """Single exit for non-streamed replies: sanitize, persist to the session,
+    hand the browser a clean payload."""
+    clean = _strip_agent_markup(text)
+    out = {"content": clean, "tools": tools or [], "cores": cores or [], "media": media or []}
+    if note:
+        out["note"] = note
+    if conv_id and conv_em and clean:
+        try:
+            conv_append(conv_em, conv_id, "assistant", clean)
+        except Exception:
+            pass
+    return out
+
+
+# ------------------------------------------------------ generated-media library
+MEDIA_DIR = os.path.join(DATA_DIR, "media")
+
+
+def _media_file():
+    return os.path.join(DATA_DIR, "media.json")
+
+
+def _media_all():
+    try:
+        with open(_media_file()) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _media_write(d):
+    try:
+        with open(_media_file(), "w") as f:
+            json.dump(d, f, indent=1)
+    except Exception:
+        pass
+
+
+def _media_slug(email):
+    return re.sub(r"[^a-z0-9]", "_", (email or "anon").lower())[:60]
+
+
+def _download_media(url, dest, timeout=22):
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context()) as r:
+            data = r.read()
+        if not data or len(data) < 512:
+            return False
+        with open(dest, "wb") as f:
+            f.write(data)
+        return True
+    except Exception:
+        return False
+
+
+def media_record(email, kind, prompt, urls, provider="", model=""):
+    """Persist generated media for the user's gallery: download each URL into
+    data/media/<slug>/ (survives provider link expiry) and index it. Best
+    effort — the remote URL is kept even when the download fails."""
+    email = (email or "").strip().lower()
+    if not email or not urls:
+        return []
+    items = []
+    d = _media_all()
+    lst = d.setdefault(email, [])
+    folder = os.path.join(MEDIA_DIR, _media_slug(email))
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except Exception:
+        folder = ""
+    for u in list(urls)[:2]:
+        u = str(u or "").strip()
+        if not u:
+            continue
+        it = {"id": os.urandom(5).hex(), "kind": kind or "image", "prompt": (prompt or "")[:300],
+              "url": u, "provider": provider, "model": model, "t": _now(), "local": ""}
+        if folder and u.startswith("http"):
+            ext = ".mp4" if it["kind"] == "video" else ".jpg"
+            m = re.search(r"\.(png|jpe?g|webp|gif|mp4|webm|mov)(?:\?|$)", u, re.I)
+            if m:
+                ext = "." + m.group(1).lower()
+            fn = it["id"] + ext
+            if _download_media(u, os.path.join(folder, fn)):
+                it["local"] = "/media/" + _media_slug(email) + "/" + fn
+        lst.append(it)
+        items.append(it)
+    d[email] = lst[-200:]
+    _media_write(d)
+    return items
+
+
+def media_list(email, kind=""):
+    email = (email or "").strip().lower()
+    out = list(reversed(_media_all().get(email) or []))
+    if kind:
+        out = [x for x in out if x.get("kind") == kind]
+    return out
+
+
+def media_delete(email, mid):
+    email = (email or "").strip().lower()
+    d = _media_all()
+    lst = d.get(email) or []
+    keep, gone = [], None
+    for x in lst:
+        if x.get("id") == mid and gone is None:
+            gone = x
+        else:
+            keep.append(x)
+    if not gone:
+        return {"error": "Not found."}
+    if gone.get("local"):
+        try:
+            os.remove(os.path.join(MEDIA_DIR, *(gone["local"].split("/")[2:])))
+        except Exception:
+            pass
+    d[email] = keep
+    _media_write(d)
+    return {"ok": True, "deleted": mid}
+
+
+# --------------------------------------------------- chat sessions (sidebar)
+_CONV_LOCK = threading.RLock()
+
+
+def _conv_file():
+    return os.path.join(DATA_DIR, "conversations.json")
+
+
+def _conv_all():
+    try:
+        with open(_conv_file()) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _conv_write(d):
+    try:
+        with open(_conv_file(), "w") as f:
+            json.dump(d, f, indent=1)
+    except Exception:
+        pass
+    try:
+        if key("SUPABASE_URL"):
+            supabase_kv_put("conversations", d)
+    except Exception:
+        pass
+
+
+def conv_list(email):
+    email = (email or "").strip().lower()
+    if not email:
+        return []
+    with _CONV_LOCK:
+        rows = []
+        for c in (_conv_all().get(email) or []):
+            msgs = c.get("messages") or []
+            rows.append({"id": c.get("id"), "title": c.get("title") or "New chat",
+                         "updated": c.get("updated") or c.get("created") or "",
+                         "count": len(msgs),
+                         "preview": ((msgs[-1].get("content") if msgs else "") or "")[:70]})
+    rows.sort(key=lambda x: str(x.get("updated") or ""), reverse=True)
+    return rows
+
+
+def conv_new(email, title="New chat"):
+    email = (email or "").strip().lower()
+    if not email:
+        return {"error": "Sign in first."}
+    cid = "c" + os.urandom(5).hex()
+    with _CONV_LOCK:
+        d = _conv_all()
+        lst = d.setdefault(email, [])
+        lst.append({"id": cid, "title": (title or "New chat")[:60], "created": _now(),
+                    "updated": _now(), "messages": []})
+        d[email] = lst[-80:]
+        _conv_write(d)
+    return {"id": cid, "title": title}
+
+
+def conv_get(email, cid):
+    email = (email or "").strip().lower()
+    with _CONV_LOCK:
+        for c in (_conv_all().get(email) or []):
+            if c.get("id") == cid:
+                return c
+    return None
+
+
+def conv_append(email, cid, role, content):
+    email = (email or "").strip().lower()
+    if not email or not cid or not content:
+        return False
+    with _CONV_LOCK:
+        d = _conv_all()
+        lst = d.setdefault(email, [])
+        target = None
+        for c in lst:
+            if c.get("id") == cid:
+                target = c
+                break
+        if target is None:
+            target = {"id": cid, "title": "New chat", "created": _now(), "updated": _now(),
+                      "messages": []}
+            lst.append(target)
+        msgs = target.setdefault("messages", [])
+        msgs.append({"role": role, "content": str(content)[:12000], "t": _now()})
+        target["messages"] = msgs[-400:]
+        target["updated"] = _now()
+        if role == "user" and (target.get("title") in ("", "New chat")):
+            target["title"] = " ".join(str(content).split())[:60] or "New chat"
+        d[email] = lst
+        _conv_write(d)
+    return True
+
+
+def conv_delete(email, cid):
+    email = (email or "").strip().lower()
+    with _CONV_LOCK:
+        d = _conv_all()
+        lst = [c for c in (d.get(email) or []) if c.get("id") != cid]
+        d[email] = lst
+        _conv_write(d)
+    return {"ok": True}
+
+
+def conv_rename(email, cid, title):
+    email = (email or "").strip().lower()
+    with _CONV_LOCK:
+        d = _conv_all()
+        for c in (d.get(email) or []):
+            if c.get("id") == cid:
+                c["title"] = (title or "New chat")[:60]
+        _conv_write(d)
+    return {"ok": True}
+
+
+# ------------------------------------------------------------ mailbox watch
+def mail_check(cfg):
+    """Read-only UNSEEN scan of the user's own mailbox over IMAP. Credentials
+    are their own app password, sealed at rest like every other connector."""
+    import imaplib
+    import email as _email_mod
+    cfg = cfg or {}
+    host = str(cfg.get("imap_host") or "").strip() or "imap.gmail.com"
+    user = str(cfg.get("email") or "").strip()
+    pw = str(cfg.get("app_password") or "").strip()
+    if not user or not pw:
+        return {"error": "Mail watch needs your mailbox address and an app password "
+                         "(Devices → Connectors & Alerts → 📧 Mail watch)."}
+    try:
+        M = imaplib.IMAP4_SSL(host, 993, timeout=30)
+    except Exception as e:
+        return {"error": "Could not reach " + host + ": " + str(e)[:120]}
+    try:
+        M.login(user, pw)
+        M.select("INBOX", readonly=True)
+        typ, data = M.search(None, "UNSEEN")
+        ids = (data[0].split() if data and data[0] else [])
+        latest = []
+        for i in list(ids)[-6:][::-1]:
+            try:
+                typ, md = M.fetch(i, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+                raw = b""
+                for part in (md or []):
+                    if isinstance(part, tuple) and len(part) > 1:
+                        raw = part[1]
+                msg = _email_mod.message_from_bytes(raw or b"")
+                latest.append({"from": str(msg.get("From") or "")[:120],
+                               "subject": str(msg.get("Subject") or "")[:160],
+                               "date": str(msg.get("Date") or "")[:60]})
+            except Exception:
+                continue
+        return {"ok": True, "mailbox": user, "unread": len(ids), "latest": latest,
+                "note": "Read-only UNSEEN scan — OraCool reports counts, senders and subjects only, "
+                        "never message bodies."}
+    except imaplib.IMAP4.error as e:
+        return {"error": "IMAP login refused: " + str(e)[:150] +
+                         " — Gmail/Outlook/Zoho need an APP PASSWORD (generate one in your account's "
+                         "security settings; your normal password will not work)."}
+    except Exception as e:
+        return {"error": "Mail scan failed: " + str(e)[:140]}
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+
+def mail_watch_config(email):
+    st = alerts_state((email or "").strip().lower())
+    for c in ((st or {}).get("connectors") or {}).values():
+        if c.get("type") == "mail" and c.get("enabled", True):
+            return {k: _unseal(v) for k, v in (c.get("cfg") or {}).items()}
+    return None
+
+
+def mail_alert_tick():
+    """Every 5 minutes: poll each mail-watch connector and alert the owner when
+    new unread mail arrives."""
+    for em, st in list((_alerts_all() or {}).items()):
+        try:
+            conns = [c for c in ((st.get("connectors") or {}).values())
+                     if c.get("type") == "mail" and c.get("enabled", True)]
+            if not conns or not (st.get("events") or {}).get("mail", True):
+                continue
+            seen = st.get("mail_seen") or {}
+            changed = False
+            for c in conns:
+                cfg = {k: _unseal(v) for k, v in (c.get("cfg") or {}).items()}
+                r = mail_check(cfg)
+                if r.get("error"):
+                    continue
+                ck = c.get("id") or "mail"
+                prev = seen.get(ck)
+                seen[ck] = r.get("unread")
+                changed = True
+                if prev is not None and int(r.get("unread") or 0) > int(prev or 0):
+                    subj = " · ".join((x.get("subject") or "")[:70] for x in (r.get("latest") or [])[:3])
+                    emit_event(em, "mail", "📧 " + str(r.get("unread")) + " unread message"
+                               + ("s" if int(r.get("unread") or 0) != 1 else "") + " in your inbox",
+                               subj or "New mail arrived in your mailbox.", "mailwatch")
+            if changed:
+                with _ALERTS_LOCK:
+                    d = _alerts_all()
+                    sst = d.get(em)
+                    if sst:
+                        sst["mail_seen"] = seen
+                        _alerts_write(d)
+        except Exception:
+            continue
+
+
+# ------------------------------------------------ platform logs + diagnostics
+_LOG_LOCK = threading.RLock()
+_LOG_RING = []
+_PLATFORM_LOG = os.path.join(DATA_DIR, "platform.log")
+
+
+def _log_line(tag, msg):
+    line = "%s [%s] %s" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), tag, str(msg)[:400])
+    with _LOG_LOCK:
+        _LOG_RING.append(line)
+        if len(_LOG_RING) > 800:
+            del _LOG_RING[:-800]
+        try:
+            if os.path.exists(_PLATFORM_LOG) and os.path.getsize(_PLATFORM_LOG) > 2000000:
+                with open(_PLATFORM_LOG, "r", errors="replace") as f:
+                    keep = f.readlines()[-2000:]
+                with open(_PLATFORM_LOG, "w") as f:
+                    f.writelines(keep)
+            with open(_PLATFORM_LOG, "a") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass
+
+
+class _TeeOut:
+    """Mirror server stdout into the platform log so the admin AI can read raw
+    operational logs (Render console + in-app diagnostics)."""
+
+    def __init__(self, real):
+        self.real = real
+
+    def write(self, s):
+        try:
+            self.real.write(s)
+        except Exception:
+            pass
+        try:
+            for ln in str(s).splitlines():
+                if ln.strip():
+                    _log_line("out", ln)
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            self.real.flush()
+        except Exception:
+            pass
+
+    def isatty(self):
+        return False
+
+
+def platform_logs(lines=150, needle=""):
+    want = max(1, min(int(lines or 150), 800))
+    try:
+        with open(_PLATFORM_LOG, "r", errors="replace") as f:
+            rows = f.readlines()[-6000:]
+    except Exception:
+        rows = list(_LOG_RING)
+    if needle:
+        rows = [r for r in rows if needle.lower() in r.lower()]
+    return [r.rstrip("\n") for r in rows[-want:]]
+
+
+def audit_tail(limit=60):
+    try:
+        rows = (_cases_load().get("audit") or [])[-max(1, int(limit)):]
+        return list(reversed(rows))
+    except Exception:
+        return []
+
+
+def admin_online_payload(minutes=30):
+    users = load_users()
+    rows = []
+    for em, u in (users or {}).items():
+        rows.append({"email": em, "plan": u.get("plan") or "free",
+                     "last_seen": u.get("last_seen") or "", "last_ip": u.get("last_ip") or ""})
+    rows.sort(key=lambda r: str(r.get("last_seen") or ""), reverse=True)
+    cutoff = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() - minutes * 60))
+    recent = [r for r in rows if str(r.get("last_seen") or "") >= cutoff]
+    return {"window_minutes": minutes, "recent_count": len(recent), "accounts": rows[:25]}
+
+
+def platform_diagnostics():
+    out = {"online": True, "time": _now(), "uptime_sec": int(time.time() - _BOOT_TS)}
+    try:
+        import resource
+        out["rss_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1)
+    except Exception:
+        pass
+    try:
+        out["threads"] = threading.active_count()
+    except Exception:
+        pass
+    try:
+        st = os.statvfs(DATA_DIR)
+        out["disk_free_mb"] = round(st.f_bavail * st.f_frsize / 1048576.0, 1)
+    except Exception:
+        pass
+    try:
+        out["users"] = len(load_users() or {})
+    except Exception:
+        pass
+    try:
+        out["brain"] = {"configured": KEYS.get("BRAIN_PROVIDER") or "auto",
+                        "groq": bool(key("GROQ_API_KEY")), "agnes": bool(key("AGNES_API_KEY")),
+                        "openai": bool(key("OPENAI_API_KEY"))}
+    except Exception:
+        pass
+    try:
+        al = _alerts_all() or {}
+        out["alerts"] = {"accounts": len(al),
+                         "connectors": sum(len((v.get("connectors") or {})) for v in al.values()),
+                         "outbox": len(_outbox_load() or []),
+                         "push_ready": _push_available()}
+    except Exception:
+        pass
+    try:
+        out["cases"] = len((_cases_load().get("cases") or {}))
+    except Exception:
+        pass
+    try:
+        sv = key("SUPABASE_URL")
+        if sv:
+            st, raw, _ = http_fetch(sv.rstrip("/") + "/rest/v1/", timeout=12,
+                                    headers={"apikey": key("SUPABASE_SERVICE_KEY"),
+                                             "Authorization": "Bearer " + (key("SUPABASE_SERVICE_KEY") or "")})
+            out["supabase"] = {"reachable": True, "status": st}
+        else:
+            out["supabase"] = {"reachable": False, "error": "not configured"}
+    except Exception as e:
+        out["supabase"] = {"reachable": False, "error": str(e)[:120]}
+    try:
+        pl = platform_logs(200)
+        errs = [l for l in pl if re.search(r"\b(error|traceback|exception|failed)\b", l, re.I)]
+        out["log_lines"] = len(pl)
+        out["recent_errors"] = errs[-5:]
+    except Exception:
+        pass
+    try:
+        out["gateway"] = {"events_last_minute": max(0, len(_gw_rl))}
+    except Exception:
+        pass
+    return out
+
+
+def _tee_platform_log():
+    """Route stdout into the platform log (admin AI reads it)."""
+    try:
+        if not isinstance(sys.stdout, _TeeOut):
+            sys.stdout = _TeeOut(sys.stdout)
+    except Exception:
+        pass
+
+
+# ------------------------------------------------- crypto payment UX helpers
+def crypto_wallet():
+    """The OraCool receiving wallet for direct crypto payments (EVM address —
+    USDT/USDC/ETH land here; ATLOS handles every other coin)."""
+    try:
+        return str(key("CRYPTO_WALLET_EVM") or "").strip()
+    except Exception:
+        return ""
+
+
+def crypto_qr_svg_b64(text):
+    if not text:
+        return ""
+    try:
+        import qrcode
+        import qrcode.image.svg
+        import io
+        img = qrcode.make(text, image_factory=qrcode.image.svg.SvgPathImage, box_size=8, border=2)
+        b = io.BytesIO()
+        img.save(b)
+        return base64.b64encode(b.getvalue()).decode()
+    except Exception:
+        return ""
+
+
+def crypto_onchain_seen(ref):
+    """Keyless on-chain peek: did anything land in the OraCool wallet after this
+    order was created? Read-only public explorer data — no keys, no guessing."""
+    addr = crypto_wallet()
+    o = _crypto_orders().get(ref)
+    if not addr or not o:
+        return {"checked": False, "reason": "no receiving wallet configured"}
+    since = int(o.get("created") or 0) - 900
+    transfers = []
+    try:
+        _, raw, _ = http_fetch("https://api.ethplorer.io/getAddressHistory/" + addr +
+                               "?apiKey=freekey&limit=25", timeout=25)
+        d = json.loads(raw.decode("utf-8", "replace") if isinstance(raw, bytes) else (raw or "{}"))
+        for op in (d.get("operations") or []):
+            ts = int(op.get("timestamp") or 0)
+            if ts < since:
+                continue
+            if str(op.get("to") or "").lower() == addr.lower():
+                transfers.append({"tx": str(op.get("transactionHash") or "")[:80],
+                                  "value": op.get("value"),
+                                  "token": ((op.get("tokenInfo") or {}).get("symbol") or "ETH"),
+                                  "when": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(ts))})
+    except Exception as e:
+        return {"checked": False, "reason": str(e)[:120], "wallet": addr}
+    return {"checked": True, "seen": bool(transfers), "transfers": transfers[:5], "wallet": addr}
+
+
+def _body_email(handler, body):
+    """Who is asking: admin token first, then the email the client sent."""
+    try:
+        payload = handler._auth(body)
+        if payload and payload.get("sub"):
+            return str(payload["sub"]).strip().lower()
+    except Exception:
+        pass
+    return str(body.get("email") or "").strip().lower()
+
 
 
 def main():
@@ -7299,6 +8294,11 @@ def main():
         threading.Thread(target=_alerts_loops, daemon=True).start()
     except Exception:
         pass
+    try:
+        _tee_platform_log()
+    except Exception:
+        pass
+    _log_line("boot", "OraCool server starting on http://%s:%s" % (HOST, PORT))
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"OraCool AI server (v2) running on http://{HOST}:{PORT}")
     print("Keys loaded:", sum(1 for v in KEYS.values() if isinstance(v, str) and v.strip() and not v.startswith('_')))
