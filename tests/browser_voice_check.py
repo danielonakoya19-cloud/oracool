@@ -3,7 +3,7 @@ import json,base64,time,urllib.request
 from playwright.sync_api import sync_playwright
 config=json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/config'))
 token='e30.'+base64.urlsafe_b64encode(json.dumps({'exp':int(time.time())+3600}).encode()).decode().rstrip('=')+'.test'
-fixture={'user':{'email':'voice-test@example.test','id':'test'},'access_token':token,'refresh_token':'test','admin':False}
+fixture={'user':{'email':'voice-test@example.test','id':'test'},'access_token':token,'refresh_token':'test','admin':True}
 init='''
 window._utterances=[];window._recStarts=0;
 class FakeSR { start(){window._recStarts++;window._activeRec=this;if(this.onstart)this.onstart();} abort(){} stop(){if(this.onend)this.onend();} emit(t){const r=[{transcript:t}];r.isFinal=true;this.onresult?.({resultIndex:0,results:[r]});} }
@@ -18,7 +18,7 @@ with sync_playwright() as p:
   path=route.request.url.split('8000')[-1];body=json.loads(route.request.post_data or '{}')
   data={}
   if path=='/api/config':data=config
-  elif path=='/api/auth/me':data={'status':200,'data':fixture['user'],'admin':False}
+  elif path=='/api/auth/me':data={'status':200,'data':fixture['user'],'admin':True}
   elif path=='/api/chat/sessions':data={'sessions':[]}
   elif path=='/api/chat/session/new':data={'id':'test-session'}
   elif path=='/api/reminders/state':data={'config':{'ready':True,'missing':[]},'phone':{'verified':True,'mask':'+15••••0006'},'alarms':alarms}

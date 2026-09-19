@@ -299,3 +299,8 @@ For the complete current schema, run **SUPABASE-COMPLETE-SETUP.sql** (supersedes
 Read `PHONE-CALLS-SETUP.md`. Your completed SQL setup is sufficient; no new SQL is needed.
 Health marker: `patch10-voice-phone-alarms`. Real phone calls are disabled until Twilio, verified recipients, provider credit and always-on hosting are configured. Keep exactly one active scheduler replica.
 Browser voice requires an explicit Start action and microphone permission. It does not keep listening while the phone is locked/the app is hidden.
+
+
+## Admin-only telephone alarms follow-up
+
+Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, calling and reminders are admin-only, enforced by authenticated server identity, service checks and the scheduler. Normal voice conversation stays available to other users. Supplied Twilio credentials are private, not included in this repository/ZIP. Read `PHONE-CALLS-SETUP.md`: the trial account authenticated, but the supplied caller number could not be found in that account and no Verify service was configured. No SMS/call was sent. Delivery remains disabled until setup is completed.

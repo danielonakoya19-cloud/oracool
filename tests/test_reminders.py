@@ -17,12 +17,22 @@ class ReminderTests(unittest.TestCase):
         self.store={}
         self.keys={'TWILIO_ACCOUNT_SID':'ACtest','TWILIO_AUTH_TOKEN':'test-secret','TWILIO_FROM_NUMBER':'+15005550006','TWILIO_VERIFY_SERVICE_SID':'VAtest','PUBLIC_BASE_URL':'https://example.test','REMINDER_CALLS_ENABLED':'true','REMINDERS_ALWAYS_ON':'true'}
         self.cipher=Fernet(Fernet.generate_key())
-        self.s=Service(lambda k:copy.deepcopy(self.store.get(k,{})),self.put,self.keys.get,lambda:self.cipher,clock=lambda:self.now[0])
+        self.s=Service(lambda k:copy.deepcopy(self.store.get(k,{})),self.put,self.keys.get,lambda:self.cipher,clock=lambda:self.now[0],allowed=lambda owner:True)
         self.s.provider=Mock(return_value={'sid':'CAtest','status':'queued'})
     def put(self,k,d):self.store[k]=copy.deepcopy(d);return True
     def verified(self,owner='owner@example.test'):
         d=self.s.load();d['phones'][owner]={'phone':self.cipher.encrypt(b'+15005550006').decode(),'version':'v1','verified_at':self.now[0],'mask':'+15••••0006','consent':True};self.s.save()
     def body(self):return {'due_at':self.now[0]+1200,'timezone':'Africa/Lagos','request_id':'request-00000001','confirmed':True,'kind':'timer'}
+    def test_nonadmin_service_methods_denied(self):
+        self.s.allowed=lambda owner:False
+        for method,args in ((self.s.listing,()),(self.s.send_code,('+15005550006',True)),(self.s.check_code,('123456',)),(self.s.create,(self.body(),)),(self.s.cancel,('abc',)),(self.s.disconnect,())):
+            self.assertTrue(method('ordinary@example.test',*args)['admin_only'])
+        self.s.provider.assert_not_called()
+    def test_role_removal_cancels_future_alarm_while_provider_disabled(self):
+        self.verified();self.s.create('owner@example.test',self.body())
+        self.keys['REMINDER_CALLS_ENABLED']='false';self.s.allowed=lambda owner:False;self.s.tick()
+        self.assertEqual(next(iter(self.store['reminders']['alarms'].values()))['status'],'cancelled')
+        self.s.provider.assert_not_called()
     def test_twenty_minute_timer(self):
         for t in ('set a timer for 20 minutes','alert me at the count down of twenty min'):
             r=parse_schedule(t,'Africa/Lagos',self.now[0]);self.assertEqual(r['due_at'],self.now[0]+1200)

@@ -3710,7 +3710,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch10-voice-phone-alarms",
+        "build": "patch10-admin-only-phone-alarms",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6467,7 +6467,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch10-voice-phone-alarms",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch10-admin-only-phone-alarms",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -6505,6 +6505,10 @@ class Handler(BaseHTTPRequestHandler):
             em = request_identity(self, body, require_supabase=path.startswith(("/api/reminders/", "/api/voice/")))
             if not em:
                 self._send_json({"error": "Sign in to access your account.", "auth_required": True}, 401)
+                return
+            if path.startswith("/api/reminders/") and not is_admin(em):
+                self._send_json({"error": "Phone calling and reminders are restricted to administrators.",
+                                 "admin_only": True}, 403)
                 return
             if is_blocked(em):
                 self._send_json({"error": "Account suspended."}, 403)
@@ -7402,7 +7406,8 @@ class Handler(BaseHTTPRequestHandler):
             "full diagnostics (uptime, memory, disk, database, alerts, outbox, recent errors), read the audit "
             "trail, list payments, see who is online, and confirm direct crypto payments ('confirm crypto <ref>'). "
             "REMINDERS: never claim to set timers, alarms or telephone calls without a successful saved-reminder receipt. "
-            "The Voice & alarms interface verifies a user-owned phone, previews the time/timezone, and requires confirmation. "
+            "Telephone calling, timers and reminders are ADMIN-ONLY, regardless of paid tier. "
+            "The Voice & alarms interface verifies the signed-in admin’s own phone, previews the time/timezone, and requires confirmation. "
             "MAIL WATCH: any user may connect their own mailbox (Devices → Connectors & Alerts → Mail watch with "
             "an app password); you then honestly report unread counts, senders and subjects on request — never "
             "claim to read message bodies."}
@@ -8723,7 +8728,7 @@ def reminder_service():
     global _REMINDER_SERVICE
     with _REMINDER_SERVICE_LOCK:
         if _REMINDER_SERVICE is None:
-            _REMINDER_SERVICE = reminders.Service(supabase_kv_get, supabase_kv_put, key, _brand_fernet, claim=reminder_claim, allowed=lambda email: not is_blocked(email))
+            _REMINDER_SERVICE = reminders.Service(supabase_kv_get, supabase_kv_put, key, _brand_fernet, claim=reminder_claim, allowed=lambda email: is_admin(email) and not is_blocked(email))
         return _REMINDER_SERVICE
 
 

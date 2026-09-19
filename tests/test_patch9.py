@@ -133,6 +133,28 @@ class Patch9Tests(unittest.TestCase):
         with patch.object(s,'_MEDIA_JOBS',{'j':{'email':'a@example.com','status':'done','kind':'video','result':{'ok':True}}}):
             self.assertIn('error',s.media_job_status('b@example.com','j'))
             self.assertEqual(s.media_job_status('a@example.com','j')['status'],'done')
+    def test_all_reminder_routes_deny_authenticated_nonadmin(self):
+        with patch.object(s,'request_identity',return_value='ordinary@example.test'),patch.object(s,'is_admin',return_value=False),patch.object(s,'is_blocked',return_value=False),patch.object(s,'reminder_service') as service:
+            server=s.ThreadingHTTPServer(('127.0.0.1',0),s.Handler)
+            t=threading.Thread(target=server.serve_forever,daemon=True);t.start()
+            try:
+                for suffix in ('state','preview','create','cancel','disconnect','phone/send','phone/verify'):
+                    req=urllib.request.Request('http://127.0.0.1:'+str(server.server_port)+'/api/reminders/'+suffix,data=json.dumps({'email':'admin@example.test','admin':True,'confirmed':True}).encode(),headers={'Content-Type':'application/json'})
+                    with self.assertRaises(urllib.error.HTTPError) as caught:urllib.request.urlopen(req,timeout=3)
+                    self.assertEqual(caught.exception.code,403)
+                    self.assertTrue(json.loads(caught.exception.read())['admin_only'])
+                service.assert_not_called()
+            finally:server.shutdown();server.server_close();t.join()
+    def test_admin_reminder_state_uses_verified_identity(self):
+        with patch.object(s,'request_identity',return_value='admin@example.test'),patch.object(s,'is_admin',return_value=True),patch.object(s,'is_blocked',return_value=False),patch.object(s,'reminder_service') as service:
+            service.return_value.listing.return_value={'alarms':[],'config':{'admin_only':True}}
+            server=s.ThreadingHTTPServer(('127.0.0.1',0),s.Handler)
+            t=threading.Thread(target=server.serve_forever,daemon=True);t.start()
+            try:
+                req=urllib.request.Request('http://127.0.0.1:'+str(server.server_port)+'/api/reminders/state',data=json.dumps({'email':'someone-else@example.test'}).encode(),headers={'Content-Type':'application/json'})
+                with urllib.request.urlopen(req,timeout=3) as r:self.assertEqual(r.status,200)
+                service.return_value.listing.assert_called_once_with('admin@example.test')
+            finally:server.shutdown();server.server_close();t.join()
     def test_http_history_rejects_forged_email(self):
         server=s.ThreadingHTTPServer(('127.0.0.1',0),s.Handler)
         t=threading.Thread(target=server.serve_forever,daemon=True);t.start()
