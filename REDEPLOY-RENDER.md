@@ -304,3 +304,16 @@ Browser voice requires an explicit Start action and microphone permission. It do
 ## Admin-only telephone alarms follow-up
 
 Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, calling and reminders are admin-only, enforced by authenticated server identity, service checks and the scheduler. Normal voice conversation stays available to other users. Supplied Twilio credentials are private, not included in this repository/ZIP. Read `PHONE-CALLS-SETUP.md`: the trial account authenticated, but the supplied caller number could not be found in that account and no Verify service was configured. No SMS/call was sent. Delivery remains disabled until setup is completed.
+
+
+## Patch 11 (2026-09-20) — public landing page, roomier console, Enterprise communications
+
+- **Routes changed:** `/` now serves the standalone marketing/landing page (`landing.html`) and the app console moved to **`/app`**. `/index.html` still opens the console for older bookmarks and the manifest/service worker now start at `/app`. Payment returns, OAuth returns and password links are forwarded to the correct page, so existing links keep working.
+- **Privacy policy** is now a plain page (`/privacy`); it was simplified because the older text mixed browser-storage facts with non-public security claims.
+- **Roomier layout:** chat bubbles, spacing and side panel were widened; the detailed voice controls moved out of the chat into a modal drawer (`Voice settings`), which the browser checks confirm no longer reduces the chat height.
+- **Communications drawer:** Enterprise/admin users get Call / SMS / Email with recipient verification, an exact-content review card and a single confirmed send. Ordinary users see an upgrade card. Entering the Twilio number is no longer required for anyone to use voice chat.
+- **Access rule:** calls, SMS, email and phone reminders = verified admin **or** durable Enterprise entitlement (cloud `subscribers` row is authoritative; outages fail closed). Suspended accounts excluded.
+- **New environment names (both default to disabled):** `COMMUNICATIONS_ENABLED`, `SENDGRID_ENABLED`, `SENDGRID_API_KEY`, `SENDGRID_FROM_EMAIL`. Twilio credentials do not enable email.
+- **No new SQL** is required; communications reuse `case_store` under the key `communications` with `comms_<id>` dispatch reservations.
+- **Landing page pricing** states the ladder as implemented: Free $0, Starter $29, Pro $49, Professional $149, Enterprise $500/30 days, no free paid-plan trial.
+- **Build marker** `/api/health` → `patch11-enterprise-communications`.

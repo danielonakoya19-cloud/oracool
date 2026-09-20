@@ -439,6 +439,7 @@
   td.no{text-align:center;color:var(--dim);padding:5px 4px;border-bottom:1px solid rgba(0,229,255,.08)}
   td:not(.yes):not(.no){text-align:center;color:var(--tx);padding:5px 4px;border-bottom:1px solid rgba(0,229,255,.08)}
 </style>
+<link rel="stylesheet" href="/console-layout.css">
 </head>
 <body>
 <div class="scanline"></div>
@@ -455,7 +456,7 @@
     <div class="brand">
       <div id="hdrReactor"></div>
       <div>
-        <div class="title">ORA-COOL AI</div>
+        <a class="title" href="/" style="text-decoration:none">ORACOOL AI</a>
         <div class="sub">Personal Intelligence System</div>
       </div>
     </div>
@@ -1281,6 +1282,7 @@ async function send(text){
   const files=pendingFiles.slice(); pendingFiles=[]; renderFileChips();
   if(!text && !files.length) return;
   if(busy) return;
+  if(!files.length && window.OraComms && await window.OraComms.handle(text)){if(window.OraVoice)window.OraVoice.resume();return;}
   if(!files.length && window.OraReminders && await window.OraReminders.handle(text)){if(window.OraVoice)window.OraVoice.resume();return;}
   if(!files.length){
     const dc=runDeviceCommand(text);
@@ -2352,7 +2354,7 @@ function renderAccount(){
         <button class="btn ghost small" id="aPassBtn">Register face / fingerprint</button>
       </div>
       <div class="result" id="aSecOut" style="margin-top:8px"></div>`;
-    $('#acctUp').onclick=e=>{e.preventDefault(); openUpgrade();};
+    if($('#acctUp')) $('#acctUp').onclick=e=>{e.preventDefault(); openUpgrade();};
     $('#acctSignout').onclick=()=>{
       clearSession(); setProToken('');
       renderAccount(); renderStatus(); updateTier();
@@ -3660,5 +3662,6 @@ let deferredInstall=null;
 window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); deferredInstall=e; const b=$('#installBtn'); if(b){ b.style.display=''; b.onclick=async()=>{ deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall=null; b.style.display='none'; }; } });
 </script>
 <script src="/voice-reminders.js"></script>
+<script src="/communications.js"></script>
 </body>
 </html>

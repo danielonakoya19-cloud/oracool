@@ -10,7 +10,7 @@
     var q = new URLSearchParams(location.search);
     var err = q.get('error_description') || q.get('error') || '';
     try{ localStorage.setItem('oracool_oauth', JSON.stringify({error: err || 'OAuth sign-in was cancelled or failed. Enable the provider in Supabase and try again.'})); }catch(e){}
-    location.replace('/');
+    location.replace('/app');
     return;
   }
   var p = new URLSearchParams(h);
@@ -18,10 +18,10 @@
   var ref = p.get('refresh_token');
   if(!tok){
     try{ localStorage.setItem('oracool_oauth', JSON.stringify({error: p.get('error_description')||'OAuth failed — provider not configured or declined.'})); }catch(e){}
-    location.replace('/');
+    location.replace('/app');
     return;
   }
   try{ localStorage.setItem('oracool_oauth', JSON.stringify({access_token:tok, refresh_token:ref})); }catch(e){}
-  location.replace('/');
+  location.replace('/app');
 })();
 </script></body></html>

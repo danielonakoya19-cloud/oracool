@@ -35,6 +35,7 @@ import pocket_option
 import cores
 import crypto
 import reminders
+import communications
 
 PORT = int(os.environ.get("PORT", "8000"))
 HOST = "0.0.0.0"
@@ -87,7 +88,7 @@ def _load_keys():
                  "AGNES_VIDEO_MODEL", "HIA_VIDEO_AUDIO_MODEL",
                  "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER",
                  "TWILIO_VERIFY_SERVICE_SID", "PUBLIC_BASE_URL", "REMINDER_CALLS_ENABLED",
-                 "REMINDERS_ALWAYS_ON"):
+                 "REMINDERS_ALWAYS_ON", "COMMUNICATIONS_ENABLED", "SENDGRID_ENABLED", "SENDGRID_API_KEY", "SENDGRID_FROM_EMAIL", "KAIROS_API_KEY", "KAIROS_APP_ID"):
         env = os.environ.get(name)
         if not env:
             continue
@@ -259,6 +260,16 @@ def admin_set_pro(email, tier, days=30, by=""):
     email = (email or "").strip().lower()
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         return {"error": "Enter a valid email address."}
+    if tier not in ("", None, "free") and tier not in PLANS:
+        return {"error": "Unknown plan."}
+    # Retire cloud entitlements too; old paid rows must not resurrect a revoked plan.
+    if key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY"):
+        try:
+            http_fetch(key("SUPABASE_URL").rstrip("/")+"/rest/v1/subscribers?email=eq."+urllib.parse.quote(email,safe=""),
+                       method="PATCH", headers=_supabase_headers(),
+                       json_body={"expires_at":time.strftime("%Y-%m-%d",time.gmtime(time.time()-86400))}, timeout=10)
+        except Exception:
+            return {"error":"Could not update durable plan access. No local plan change was made; retry after database connectivity is restored."}
     if tier in ("", None, "free"):
         subs = [s for s in load_subscribers() if (s.get("email") or "").lower() != email]
         try:
@@ -3710,7 +3721,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch10-admin-only-phone-alarms",
+        "build": "patch11-enterprise-communications",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6402,8 +6413,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
-        if path in ("/", "/index.html"):
+        if path == "/":
+            self._send_file(os.path.join(BASE_DIR, "landing.html"), "text/html; charset=utf-8")
+        elif path in ("/app", "/app/", "/index.html"):
             self._send_file(os.path.join(BASE_DIR, "index.html"), "text/html; charset=utf-8")
+        elif path in ("/communications.js", "/console-layout.css"):
+            self._send_file(os.path.join(BASE_DIR, path[1:]), "text/javascript" if path.endswith(".js") else "text/css")
+        elif path in ("/privacy", "/privacy.html"):
+            self._send_file(os.path.join(BASE_DIR, "privacy.html"), "text/html; charset=utf-8")
         elif path == "/oauth":
             self._send_file(os.path.join(BASE_DIR, "oauth.html"), "text/html; charset=utf-8")
         elif path == "/manifest.json":
@@ -6467,12 +6484,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch10-admin-only-phone-alarms",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch11-enterprise-communications",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
-        elif path in ("/privacy", "/privacy.html"):
-            self._send_html(PRIVACY_HTML)
         elif path == "/api/auth/providers":
             self._send_json(oauth_providers())
         else:
@@ -6485,7 +6500,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/paystack/webhook":
             self._paystack_webhook()
             return
-        if path.startswith("/api/reminders/callback/"):
+        if path.startswith(("/api/reminders/callback/", "/api/comms/callback/")) or path == "/api/comms/inbound":
             try:
                 length = int(self.headers.get("Content-Length") or 0)
                 if length < 1 or length > 16000:
@@ -6493,22 +6508,30 @@ class Handler(BaseHTTPRequestHandler):
                 pairs = urllib.parse.parse_qsl(self.rfile.read(length).decode(), keep_blank_values=True)
                 if len(dict(pairs)) != len(pairs):
                     self._send_json({"error": "Duplicate callback fields."}, 400); return
-                ok = reminder_service().callback(path.rsplit("/", 1)[-1], dict(pairs), self.headers.get("X-Twilio-Signature", ""))
+                signature = self.headers.get("X-Twilio-Signature", "")
+                if path == "/api/comms/inbound":
+                    ok = communication_service().inbound(dict(pairs), signature)
+                    if ok:
+                        data=b"<Response/>"
+                        self.send_response(200); self.send_header("Content-Type","text/xml"); self.send_header("Content-Length",str(len(data))); self.end_headers(); self.wfile.write(data); return
+                else:
+                    service = communication_service() if path.startswith("/api/comms/") else reminder_service()
+                    ok = service.callback(path.rsplit("/", 1)[-1], dict(pairs), signature)
                 self._send_json({"ok": ok}, 200 if ok else 403)
             except Exception:
                 self._send_json({"error": "Callback could not be processed."}, 503)
             return
         body = self._read_json()
         body.pop("_verified_email", None)
-        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/reminders/")) or path in ("/api/image", "/api/video")
+        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/reminders/", "/api/comms/")) or path in ("/api/image", "/api/video")
         if protected:
-            em = request_identity(self, body, require_supabase=path.startswith(("/api/reminders/", "/api/voice/")))
+            em = request_identity(self, body, require_supabase=path.startswith(("/api/reminders/", "/api/voice/", "/api/comms/")))
             if not em:
                 self._send_json({"error": "Sign in to access your account.", "auth_required": True}, 401)
                 return
-            if path.startswith("/api/reminders/") and not is_admin(em):
-                self._send_json({"error": "Phone calling and reminders are restricted to administrators.",
-                                 "admin_only": True}, 403)
+            if path.startswith(("/api/reminders/", "/api/comms/")) and not communications_allowed(em):
+                self._send_json({"error": "Communications and phone reminders require Enterprise or administrator access.",
+                                 "plan": "enterprise", "locked": True}, 403)
                 return
             if is_blocked(em):
                 self._send_json({"error": "Account suspended."}, 403)
@@ -6523,7 +6546,18 @@ class Handler(BaseHTTPRequestHandler):
                     _ae = ((verify_jwt(body["token"].strip(), key("JWT_SECRET") or "dev-secret")) or {}).get("sub", "")
                 _tail = path.split("/")[3] if path.count("/") > 3 else path.split("/")[-1]
                 audit_log(_ae, path.replace("/api/", ""), _tail)
-            if path == "/api/reminders/state":
+            if path.startswith("/api/comms/"):
+                service = communication_service(); owner = body["email"]
+                action = path[len("/api/comms/"):]
+                if action == "state": result = service.listing(owner)
+                elif action == "preview": result = service.preview(owner, body)
+                elif action == "send": result = service.send(owner, body)
+                elif action == "verify/send": result = service.verify_send(owner, body, self.client_address[0] if self.client_address else "")
+                elif action == "verify/check": result = service.verify_check(owner, body)
+                elif action == "remove": result = service.remove(owner, str(body.get("id") or ""))
+                else: result = {"error":"Unknown communications action."}
+                self._send_json(result)
+            elif path == "/api/reminders/state":
                 self._send_json(reminder_service().listing(body["email"]))
             elif path == "/api/reminders/preview":
                 self._send_json(reminders.parse_schedule(body.get("text"), body.get("timezone")))
@@ -7406,8 +7440,11 @@ class Handler(BaseHTTPRequestHandler):
             "full diagnostics (uptime, memory, disk, database, alerts, outbox, recent errors), read the audit "
             "trail, list payments, see who is online, and confirm direct crypto payments ('confirm crypto <ref>'). "
             "REMINDERS: never claim to set timers, alarms or telephone calls without a successful saved-reminder receipt. "
-            "Telephone calling, timers and reminders are ADMIN-ONLY, regardless of paid tier. "
-            "The Voice & alarms interface verifies the signed-in admin’s own phone, previews the time/timezone, and requires confirmation. "
+            "Telephone calling, SMS, email and phone reminders require Enterprise or administrator access. "
+            "The Communications drawer collects a destination and message, verifies recipient consent and ownership, "
+            "then previews the exact content and requires explicit confirmation. Never claim delivery without a provider receipt. "
+            "Phone calls read a custom message; they are not an interactive two-way AI conversation. "
+            "Phone reminders verify the signed-in user’s own phone and require a time/timezone preview. "
             "MAIL WATCH: any user may connect their own mailbox (Devices → Connectors & Alerts → Mail watch with "
             "an app password); you then honestly report unread counts, senders and subjects on request — never "
             "claim to read message bodies."}
@@ -8724,11 +8761,44 @@ def reminder_claim(ident):
         return False
 
 
+def communications_allowed(email):
+    # Verified identity only. Never accept a tier/admin flag or a different user's JWT from the request.
+    if not email or is_blocked(email):
+        return False
+    if is_admin(email):
+        return True
+    # Cloud entitlements are authoritative when configured. An outage fails closed;
+    # a stale local payment or unbound client tier token cannot unlock paid sending.
+    if key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY"):
+        try:
+            _, raw, _ = http_fetch(key("SUPABASE_URL").rstrip("/")+"/rest/v1/subscribers?email=eq."+urllib.parse.quote(email,safe=""),
+                                  headers=_supabase_headers(), timeout=10)
+            rows=json.loads(raw);today=time.strftime("%Y-%m-%d",time.gmtime())
+            return any(str(row.get("email") or "").strip().lower()==email.strip().lower()
+                       and str(row.get("plan") or row.get("tier") or "").lower()=="enterprise"
+                       and str(row.get("expires_at") or "")[:10]>=today for row in rows)
+        except Exception:
+            return False
+    return check_tier(email) == "enterprise"
+
+
+_COMMUNICATION_SERVICE = None
+_COMMUNICATION_SERVICE_LOCK = threading.Lock()
+
+
+def communication_service():
+    global _COMMUNICATION_SERVICE
+    with _COMMUNICATION_SERVICE_LOCK:
+        if _COMMUNICATION_SERVICE is None:
+            _COMMUNICATION_SERVICE = communications.Service(supabase_kv_get, supabase_kv_put, key, _brand_fernet, communications_allowed, reminder_claim)
+        return _COMMUNICATION_SERVICE
+
+
 def reminder_service():
     global _REMINDER_SERVICE
     with _REMINDER_SERVICE_LOCK:
         if _REMINDER_SERVICE is None:
-            _REMINDER_SERVICE = reminders.Service(supabase_kv_get, supabase_kv_put, key, _brand_fernet, claim=reminder_claim, allowed=lambda email: is_admin(email) and not is_blocked(email))
+            _REMINDER_SERVICE = reminders.Service(supabase_kv_get, supabase_kv_put, key, _brand_fernet, claim=reminder_claim, allowed=communications_allowed)
         return _REMINDER_SERVICE
 
 

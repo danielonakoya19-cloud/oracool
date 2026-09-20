@@ -17,13 +17,14 @@ with sync_playwright() as p:
         elif path.startswith('/api/reminders/'):
             calls.append(path);route.fulfill(status=403,content_type='application/json',body=json.dumps({'error':'Admin only','admin_only':True}));return
         route.fulfill(status=200,content_type='application/json',body=json.dumps(d))
-    page.route('**/api/**',api);page.goto('http://127.0.0.1:8000/')
+    page.route('**/api/**',api);page.goto('http://127.0.0.1:8000/app')
     page.wait_for_selector('#app:not(.hidden)',timeout=15000)
     page.click('#alarmToggle');assert page.locator('#adminAlarmTools').is_hidden()
     assert page.locator('#hfStart').is_visible()
     assert page.locator('#hfLanguage').is_visible()
+    page.click('#closeVoiceSheet')
     page.evaluate("send('set a timer for 20 minutes')")
-    page.wait_for_function("document.querySelector('#chat').textContent.includes('restricted to administrators')")
+    page.wait_for_function("document.querySelector('#chat').textContent.includes('require Enterprise or administrator access')")
     assert not calls,calls;assert not errors,errors
     print('Ordinary user: phone UI hidden, timer commands blocked without provider/API calls, normal voice controls retained PASS')
     browser.close()

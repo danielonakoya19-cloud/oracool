@@ -30,7 +30,7 @@ with sync_playwright() as p:
    route.fulfill(status=200,content_type='text/event-stream',body=''.join('data: '+json.dumps(f)+'\n\n' for f in frames)+'data: [DONE]\n\n');return
   route.fulfill(status=200,content_type='application/json',body=json.dumps(data))
  page.route('**/api/**',api)
- page.goto('http://127.0.0.1:8000/');page.wait_for_selector('#app:not(.hidden)',timeout=15000)
+ page.goto('http://127.0.0.1:8000/app');page.wait_for_selector('#app:not(.hidden)',timeout=15000)
  page.wait_for_function('!!window.OraVoice && !!session',timeout=10000)
  print('Startup errors:',errors)
  page.click('#hfStart');page.wait_for_function('window._recStarts>0')
@@ -50,12 +50,12 @@ with sync_playwright() as p:
  page.click('#confirmAlarm');page.wait_for_function("document.querySelector('#alarmRows').textContent.includes('scheduled')")
  assert len(created)==1 and created[0]['confirmed']
  print('Phone alarm preview, explicit confirmation, scheduled status PASS (provider mocked)')
- page.click('#hfStop');page.wait_for_function('!OraVoice.enabled')
+ page.click('#closeVoiceSheet');page.click('#hfStop');page.wait_for_function('!OraVoice.enabled')
  assert 'Microphone off' in page.locator('#hfState').inner_text()
  print('Stop releases conversation mode PASS')
  page.set_viewport_size({'width':390,'height':844})
  assert page.locator('#hfStart').is_visible()
- assert page.locator('#hfStop').is_visible()
+ assert page.locator('#alarmToggle').is_visible()
  page.screenshot(path='/home/user/voice-mobile-check.png',full_page=False)
  print('390px controls visible PASS')
  assert not errors,errors

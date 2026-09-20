@@ -20,7 +20,7 @@ with sync_playwright() as p:
   elif path=='/api/chat':
    route.fulfill(status=200,content_type='text/event-stream',body='data: '+json.dumps({'choices':[{'delta':{'content':'Recorder fallback is working.'}}]})+'\n\ndata: [DONE]\n\n');return
   route.fulfill(status=200,content_type='application/json',body=json.dumps(data))
- page.route('**/api/**',api);page.goto('http://127.0.0.1:8000/');page.wait_for_selector('#app:not(.hidden)',timeout=15000);page.click('#hfStart')
+ page.route('**/api/**',api);page.goto('http://127.0.0.1:8000/app');page.wait_for_selector('#app:not(.hidden)',timeout=15000);page.click('#hfStart')
  page.wait_for_function("window._spoken.some(t=>t.includes('Recorder fallback is working'))",timeout=25000)
  assert clips and len(clips[0]['audio'])>100
  page.click('#hfStop');assert not page.evaluate('OraVoice.enabled');assert not errs,errs

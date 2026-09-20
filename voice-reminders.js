@@ -27,7 +27,7 @@
   const toolbar=document.createElement('div');
   toolbar.className='voicebar';
   toolbar.innerHTML=`<div class="row" style="flex-wrap:wrap;gap:7px">
-    <button class="btn primary" id="hfStart">🎧 Start conversation</button>
+    <button class="btn primary" id="hfStart">🎧 Start voice</button>
     <button class="btn ghost" id="hfStop" disabled>Stop / mute</button>
     <button class="btn ghost" id="hfInterrupt" disabled>Interrupt reply</button>
     <button class="btn ghost" id="alarmToggle">Voice settings</button>
@@ -40,7 +40,7 @@
         <label>Language <select id="hfLanguage"><option value="en-NG">English (Nigeria)</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="fr-FR">French</option><option value="es-ES">Spanish</option></select></label>
         <label style="display:block;margin:8px 0"><input type="checkbox" id="hfProactive"> Offer occasional spoken suggestions while conversation mode is on (quiet 10 PM–7 AM).</label>
         <section id="adminAlarmTools" hidden>
-        <h4>Admin-only phone calls & reminders</h4>
+        <h4>Enterprise phone reminders</h4>
         <div class="hint">Verify your own number. Only alarms you review and confirm will call it. SMS verification and calls use provider credit. Requires an always-running server and phone reception; Do Not Disturb/carrier filtering may silence calls. Not an emergency alarm service.</div>
         <div id="alarmStatus" class="result">Open this panel to check phone-call configuration.</div>
         <input id="alarmPhone" type="tel" autocomplete="tel" placeholder="Your own number, e.g. +234…">
@@ -56,6 +56,16 @@
     </details>`;
   document.querySelector('.reactorhead').after(toolbar);
   const style=document.createElement('style');style.textContent='.voicebar{padding:8px 12px;border-bottom:1px solid var(--line);font-size:12px}.voicebar [hidden]{display:none!important}.voicebar details{margin-top:7px}.voicebar button{min-height:40px}.voicebar input,.voicebar select{max-width:100%}.voicebar input:not([type=checkbox]),.voicebar select,.voicebar textarea{background:#061723;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px;margin:4px 0}.voicebar input[type=checkbox]{accent-color:var(--cyan)}#hfState{font-size:11px;color:var(--cyan2)}.alarmitem{padding:8px 0;border-bottom:1px solid var(--line)}';document.head.appendChild(style);
+  const sheet=document.createElement('dialog');sheet.id='voiceSheet';sheet.className='settings-sheet voicebar';
+  sheet.setAttribute('aria-label','Voice settings and phone reminders');
+  sheet.innerHTML='<div class="sheet-head"><div><span class="sheet-eyebrow">PERSONALIZE</span><h2>Voice & reminders</h2></div><button class="btn ghost" id="closeVoiceSheet" aria-label="Close voice settings">✕</button></div>';
+  const details=toolbar.querySelector('#voiceAlarmPanel');sheet.appendChild(details);document.body.appendChild(sheet);
+  toolbar.querySelector('.hint').remove();
+  const voiceButton=document.createElement('button');voiceButton.className='btn ghost';voiceButton.id='commsToggle';voiceButton.textContent='↗ Communications';toolbar.querySelector('.row').insertBefore(voiceButton,toolbar.querySelector('#hfState'));
+  window.OraSettings={open(){if(!sheet.open)sheet.showModal();details.open=true;},close(){sheet.close();details.open=false;}};
+  document.querySelector('#closeVoiceSheet').onclick=()=>window.OraSettings.close();
+  sheet.addEventListener('click',e=>{if(e.target===sheet&&e.clientX<sheet.getBoundingClientRect().left)window.OraSettings.close();});
+  sheet.addEventListener('close',()=>{details.open=false;});
   const q=s=>document.querySelector(s);
   q('#alarmTimezone').value=Intl.DateTimeFormat().resolvedOptions().timeZone||'Africa/Lagos';
   q('#hfLanguage').value=settings.voiceLanguage||'en-NG';
@@ -201,16 +211,21 @@
   },10000);
 
   let pending=null, alarmOwner='';
-  function isAlarmAdmin(){return signedIn()&&session.admin===true;}
+  function hasCommunications(){
+    if(!signedIn()||session.blocked)return false;
+    if(session.admin===true)return true;
+    try{const p=JSON.parse(atob(proToken.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));return !p.trial&&p.tier==='enterprise'&&p.exp>Date.now()/1000&&String(p.sub||'').toLowerCase()===myEmail().toLowerCase();}catch(e){return false;}
+  }
+  window.OraCommunicationsAccess=hasCommunications;
   function updateAlarmAccess(){
-    const admin=isAlarmAdmin(), owner=admin?myEmail():'';
+    const admin=hasCommunications(), owner=admin?myEmail():'';
     q('#adminAlarmTools').hidden=!admin;
-    q('#alarmToggle').textContent=admin?'☎ Voice & admin alarms':'Voice settings';
-    q('#voiceAlarmPanel summary').textContent=admin?'Voice privacy, admin phone setup & scheduled alarms':'Voice settings & privacy';
+    q('#alarmToggle').textContent=admin?'Voice settings':'Voice settings';
+    q('#voiceAlarmPanel summary').textContent=admin?'Voice privacy & phone reminders':'Voice settings & privacy';
     if(owner!==alarmOwner){
       pending=null;q('#alarmConfirm').innerHTML='';q('#alarmRows').innerHTML='';
       q('#alarmPhone').value='';q('#alarmCode').value='';q('#alarmConsent').checked=false;
-      q('#alarmStatus').textContent=admin?'Open this panel to check your admin phone setup.':'';
+      q('#alarmStatus').textContent=admin?'Open this panel to check your phone reminder setup.':'';
       alarmOwner=owner;
     }
   }
@@ -218,11 +233,11 @@
   updateAlarmAccess();
   function alarmMessage(message,error=false){q('#alarmStatus').className=error?'errbox':'okbox';q('#alarmStatus').textContent=message;}
   async function refreshAlarms(){
-    if(!isAlarmAdmin()){updateAlarmAccess();return null;}
+    if(!hasCommunications()){updateAlarmAccess();return null;}
     const owner=myEmail();
     try{
       const r=await post('/api/reminders/state',{});
-      if(!isAlarmAdmin()||myEmail()!==owner)return null;
+      if(!hasCommunications()||myEmail()!==owner)return null;
       if(r.error){alarmMessage(r.error,true);return null;}
       const cfg=r.config||{},phone=r.phone||{};
       alarmMessage(!cfg.ready?'Phone calls are not enabled yet. Operator setup needed: '+(cfg.missing||[]).join(', '):phone.verified?'Verified number: '+phone.mask+'. Review and confirm each phone alarm.':'Calling provider configured. Verify your own phone number to continue.',!cfg.ready);
@@ -234,11 +249,11 @@
   }
   function reply(text){addAI(text);speak(text);saveChat();}
   async function prepare(text,chatReply=true){
-    if(!isAlarmAdmin()){if(chatReply)reply('Phone calls and reminders are available only to administrators. Normal voice conversation is still available.');return;}
+    if(!hasCommunications()){if(chatReply)reply('Phone calls and reminders require Enterprise or administrator access. Normal voice conversation is still available.');return;}
     const state=await refreshAlarms();
     if(!state?.config?.ready||!state?.phone?.verified){
-      q('#voiceAlarmPanel').open=true;
-      if(chatReply)reply('No alarm has been scheduled. Open Voice & alarms to configure calling and verify your own phone number first.');
+      window.OraSettings.open();
+      if(chatReply)reply('No alarm has been scheduled. Open Voice settings to configure calling and verify your own phone number first.');
       return;
     }
     const r=await post('/api/reminders/preview',{text,timezone:q('#alarmTimezone').value.trim()});
@@ -247,11 +262,11 @@
     const message='Call '+state.phone.mask+' at '+r.local_time+' in '+r.timezone+'? This is a real telephone call using provider credit. Say “confirm alarm” or “cancel alarm”.';
     q('#alarmConfirm').innerHTML='<div class="okbox">'+escapeHtml(message)+'</div><div class="row"><button class="btn primary" id="confirmAlarm">Confirm phone alarm</button><button class="btn ghost" id="declineAlarm">Cancel</button></div>';
     q('#confirmAlarm').onclick=()=>confirmAlarm();q('#declineAlarm').onclick=()=>{pending=null;q('#alarmConfirm').innerHTML='';reply('Alarm cancelled before scheduling.');};
-    q('#voiceAlarmPanel').open=true;if(chatReply)reply(message);
+    window.OraSettings.open();if(chatReply)reply(message);
   }
   let confirming=false;
   async function confirmAlarm(){
-    if(!isAlarmAdmin()){pending=null;updateAlarmAccess();reply('Phone reminders require administrator access.');return;}
+    if(!hasCommunications()){pending=null;updateAlarmAccess();reply('Phone reminders require Enterprise or administrator access.');return;}
     if(confirming)return;
     if(!pending||pending.expires<Date.now()){pending=null;q('#alarmConfirm').innerHTML='';reply('That preview expired. Please ask for the timer or alarm again.');return;}
     confirming=true;
@@ -263,19 +278,19 @@
     finally{confirming=false;}
   }
   window.OraReminders={async handle(text){
-    if(!isAlarmAdmin()&&(/\b(?:timers?|alarms?|reminders?|wake me|call me|count\s*down|scheduled calls)\b/i.test(text)||/\b(?:remind|alert) me\b/i.test(text))){
-      addUser(text);reply('Phone calling and reminders are restricted to administrators. You can still use hands-free voice conversation.');return true;
+    if(!hasCommunications()&&(/\b(?:timers?|alarms?|reminders?|wake me|call me|count\s*down|scheduled calls)\b/i.test(text)||/\b(?:remind|alert) me\b/i.test(text))){
+      addUser(text);reply('Phone calling and reminders require Enterprise or administrator access. You can still use hands-free voice conversation.');return true;
     }
     if(pending&&/^(?:yes|yes please|confirm(?: alarm)?|confirm phone alarm)[.!]?$/i.test(text.trim())){addUser(text);await confirmAlarm();return true;}
     if(pending&&/^(?:no|cancel(?: alarm)?|never mind)[.!]?$/i.test(text.trim())){pending=null;q('#alarmConfirm').innerHTML='';addUser(text);reply('No phone alarm scheduled.');return true;}
-    if(/\b(?:my alarms|my timers|list alarms|show alarms|scheduled calls)\b/i.test(text)){addUser(text);q('#voiceAlarmPanel').open=true;await refreshAlarms();reply('Your phone alarms and their delivery status are in Voice & alarms.');return true;}
+    if(/\b(?:my alarms|my timers|list alarms|show alarms|scheduled calls)\b/i.test(text)){addUser(text);window.OraSettings.open();await refreshAlarms();reply('Your phone alarms and their delivery status are in Voice settings.');return true;}
     if(/\b(?:set|start|create|remind|alert|wake|call me|count\s*down)\b/i.test(text)&&/\b(?:timer|alarm|minutes?|mins?|seconds?|hours?|wake|call me|at|when it is|when it's)\b/i.test(text)){
       addUser(text);await prepare(text);return true;
     }
     return false;
   }};
-  q('#alarmToggle').onclick=()=>{q('#voiceAlarmPanel').open=!q('#voiceAlarmPanel').open;};
-  q('#voiceAlarmPanel').addEventListener('toggle',()=>{if(q('#voiceAlarmPanel').open&&isAlarmAdmin())refreshAlarms();});
+  q('#alarmToggle').onclick=()=>window.OraSettings.open();
+  q('#voiceAlarmPanel').addEventListener('toggle',()=>{if(q('#voiceAlarmPanel').open&&hasCommunications())refreshAlarms();});
   q('#alarmRefresh').onclick=refreshAlarms;
   q('#alarmPreview').onclick=()=>prepare(q('#alarmCommand').value,true);
   q('#alarmSendCode').onclick=async()=>{
@@ -289,5 +304,5 @@
     catch(e){alarmMessage('Verification unavailable. Retry shortly.',true);}
   };
   q('#alarmDisconnect').onclick=async()=>{if(!confirm('Remove your phone and cancel all pending calls?'))return;const r=await post('/api/reminders/disconnect',{});if(r.error)alarmMessage(r.error,true);else refreshAlarms();};
-  setInterval(()=>{if(q('#voiceAlarmPanel').open&&isAlarmAdmin()&&!document.hidden)refreshAlarms();},20000);
+  setInterval(()=>{if(q('#voiceAlarmPanel').open&&hasCommunications()&&!document.hidden)refreshAlarms();},20000);
 })();

@@ -5,7 +5,7 @@ self.addEventListener('fetch', e => {
   if (new URL(e.request.url).pathname.startsWith('/api/')) return;
   e.respondWith(
     fetch(e.request).then(r => {
-      const c = caches.open('oracool-v2').then(c => { c.put(e.request, r.clone()); return r; });
+      const c = caches.open('oracool-v3').then(c => { c.put(e.request, r.clone()); return r; });
       return r;
     }).catch(() => caches.match(e.request))
   );
@@ -22,6 +22,6 @@ self.addEventListener('notificationclick', e => {
   e.notification.close();
   e.waitUntil(self.clients.matchAll({type: 'window', includeUncontrolled: true}).then(cs => {
     for (const c of cs) { if ('focus' in c) return c.focus(); }
-    return self.clients.openWindow('/');
+    return self.clients.openWindow('/app');
   }));
 });

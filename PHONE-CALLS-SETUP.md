@@ -2,11 +2,13 @@
 
 ## Status and scope
 
-**Telephone calling, phone-number verification and reminders are now restricted to signed-in, non-suspended administrator accounts. This applies to every endpoint and background dispatch, regardless of subscription tier. Normal hands-free voice conversation remains available to ordinary users.**
+**Phone reminders and alarm calls now require a signed-in, non-suspended account that is either an administrator or an enterprise subscriber; client-supplied flags cannot grant this. Normal hands-free voice conversation remains available to everyone.**
 
-The interface hides phone setup/alarms from ordinary users; server-side checks remain authoritative. Removing admin access cancels that account’s queued reminders. Every admin still verifies their own recipient number and confirms each alarm. The configured Twilio number is the outgoing caller, not the recipient.
+For ordinary telephone calls, SMS and email to other consenting people, see `COMMUNICATIONS-SETUP.md` (same eligibility rule: Enterprise or admin).
 
-- Build marker: `patch10-admin-only-phone-alarms`.
+The interface shows phone reminders only to Enterprise/admin accounts; server-side checks remain authoritative. Losing eligibility cancels that account’s queued reminders. Every account still verifies its own recipient number and confirms each alarm. The configured Twilio number is the outgoing caller, not the recipient.
+
+- Build marker: `patch11-enterprise-communications`.
 - Hands-free voice is opt-in. Tap **Start conversation**, allow the microphone, then speak after each reply. No repeated mic taps are needed.
 - Stop / mute releases the microphone. Interrupt reply cancels the current browser request and speech. Voice pauses when the page is hidden, locked, or signed out. Listening pauses during speech to avoid feedback; this is turn-taking, not uninterrupted full-duplex audio.
 - Replies are spoken sentence-by-sentence as they stream. Voice turns use the configured fast model when available. Ordinary admin small-talk no longer fetches the entire admin board first. Chat cloud syncing and periodic connection telemetry no longer block every first answer token.
@@ -36,15 +38,15 @@ The interface hides phone setup/alarms from ordinary users; server-side checks r
 Keep `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_ANON_KEY`, `JWT_SECRET` and the original `ENCRYPTION_KEY` configured. Do not rotate the encryption key casually: saved phone credentials then become unreadable.
 
 5. Build with `pip install -r requirements.txt`, start with `python3 server.py`, then deploy the latest commit.
-6. Check `/api/health` for the Patch 10 build marker. Open **Voice & alarms** to see missing configuration, verify a number and test a short countdown while you are awake.
+6. Check `/api/health` for the Patch 11 build marker. Open the **Voice settings** drawer (Communications → phone reminders section) to see missing configuration, verify a number and test a short countdown while you are awake.
 
 ## No new SQL needed after your successful setup
 
 This patch reuses the private `case_store` table you already created. It stores alarm state at key `reminders`, and one unique `reminder_dispatch_<id>` reservation per dispatched call attempt. Do not manually insert an empty reminders snapshot or delete dispatch reservations for active/previous alarms.
 
-## Administrator setup and commands
+## Recipient setup and commands
 
-1. Sign in with a designated admin account → **Voice & admin alarms**.
+1. Sign in with an Enterprise or admin account → **Voice settings** (voice toolbar) and open the phone-reminder section.
 2. Enter YOUR number with country code, such as `+234…`, and consent to verification SMS/requested alarm calls.
 3. Send the verification SMS and enter its code in the form (not in chat). A code for email signup is still not required; this separate SMS verifies ownership of the telephone number.
 4. Confirm the IANA timezone (normally taken from your browser), such as `Africa/Lagos`.

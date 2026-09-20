@@ -73,11 +73,11 @@ def parse_schedule(text, zone, now=None):
             "label":"Wake-up call" if re.search(r"\b(wake|sleep)\b",t) else "OraCool timer" if kind=='timer' else "OraCool alarm"}
 
 
-def authorized_admin(method):
+def authorized_communications(method):
     @wraps(method)
     def guarded(self, owner, *args, **kwargs):
         if not self.allowed(owner):
-            return {"error": "Phone calling and reminders are restricted to administrators.", "admin_only": True}
+            return {"error": "Phone calling and reminders require Enterprise or administrator access.", "plan": "enterprise", "locked": True}
         return method(self, owner, *args, **kwargs)
     return guarded
 
@@ -98,7 +98,7 @@ class Service:
             missing.append('PUBLIC_BASE_URL must be an HTTPS origin without a path')
         for k in ('REMINDER_CALLS_ENABLED','REMINDERS_ALWAYS_ON'):
             if str(self.key(k) or '').lower() not in ('true','1','yes'):missing.append(k)
-        return {'ready':not missing,'missing':missing,'phone_required':True,'admin_only':True,'last_tick':self.last_tick,'scheduler_error':self.last_error,
+        return {'ready':not missing,'missing':missing,'phone_required':True,'plan':'enterprise','last_tick':self.last_tick,'scheduler_error':self.last_error,
                 'note':'Real calls and verification SMS incur provider charges. Requires one always-running server. Not for emergency or safety-critical alerts.'}
 
     def load(self):
@@ -136,7 +136,7 @@ class Service:
         if len(times)>=limit:raise ValueError('Verification limit reached. Please try again later.')
         d['limits'][bucket]=times+[now]
 
-    @authorized_admin
+    @authorized_communications
     def send_code(self,owner,number,consent,ip=''):
         if not self.config()['ready']:return {'error':'Phone alarms are not configured by the operator yet.','config':self.config()}
         if consent is not True or not E164.fullmatch(number):return {'error':'Use your own number in international format (+234…) and agree to receive verification SMS and requested alarm calls.'}
@@ -152,7 +152,7 @@ class Service:
             self.save()
             return {'ok':True,'mask':self.mask(number),'message':'Verification SMS requested. Enter its code; do not share it in chat.'}
 
-    @authorized_admin
+    @authorized_communications
     def check_code(self,owner,code):
         if not re.fullmatch(r'\d{4,8}',code):return {'error':'Enter the numeric code from your SMS.'}
         with self.lock:
@@ -166,7 +166,7 @@ class Service:
             d['pending'].pop(owner,None);self.save()
             return {'ok':True,'mask':self.mask(number)}
 
-    @authorized_admin
+    @authorized_communications
     def listing(self,owner):
         with self.lock:
             d=self.load(); p=d['phones'].get(owner) or {}
@@ -177,7 +177,7 @@ class Service:
     def public(self,row):
         return {k:v for k,v in row.items() if k not in ('owner','request_id','phone_version','call_sid')}
 
-    @authorized_admin
+    @authorized_communications
     def create(self,owner,body):
         if body.get('confirmed') is not True:return {'error':'Review the exact time, timezone and phone-call consent, then confirm.'}
         if not self.config()['ready']:return {'error':'Calling provider or always-on hosting is not configured. No alarm scheduled.'}
@@ -205,7 +205,7 @@ class Service:
             d['alarms'][ident]=row;self.save()
             return {'ok':True,'alarm':self.public(row),'message':'Phone alarm saved. Delivery depends on server, provider, carrier and your phone settings.'}
 
-    @authorized_admin
+    @authorized_communications
     def cancel(self,owner,ident):
         with self.lock:
             row=self.load()['alarms'].get(ident)
@@ -213,7 +213,7 @@ class Service:
             if row['status']!='scheduled':return {'error':'The alarm is no longer pending; a dispatched telephone call cannot be recalled here.'}
             row['status']='cancelled';self.save();return {'ok':True}
 
-    @authorized_admin
+    @authorized_communications
     def disconnect(self,owner):
         with self.lock:
             d=self.load();d['phones'].pop(owner,None);d['pending'].pop(owner,None)

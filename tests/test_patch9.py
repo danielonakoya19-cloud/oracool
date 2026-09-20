@@ -142,12 +142,12 @@ class Patch9Tests(unittest.TestCase):
                     req=urllib.request.Request('http://127.0.0.1:'+str(server.server_port)+'/api/reminders/'+suffix,data=json.dumps({'email':'admin@example.test','admin':True,'confirmed':True}).encode(),headers={'Content-Type':'application/json'})
                     with self.assertRaises(urllib.error.HTTPError) as caught:urllib.request.urlopen(req,timeout=3)
                     self.assertEqual(caught.exception.code,403)
-                    self.assertTrue(json.loads(caught.exception.read())['admin_only'])
+                    self.assertTrue(json.loads(caught.exception.read())['locked'])
                 service.assert_not_called()
             finally:server.shutdown();server.server_close();t.join()
     def test_admin_reminder_state_uses_verified_identity(self):
         with patch.object(s,'request_identity',return_value='admin@example.test'),patch.object(s,'is_admin',return_value=True),patch.object(s,'is_blocked',return_value=False),patch.object(s,'reminder_service') as service:
-            service.return_value.listing.return_value={'alarms':[],'config':{'admin_only':True}}
+            service.return_value.listing.return_value={'alarms':[],'config':{'plan':'enterprise'}}
             server=s.ThreadingHTTPServer(('127.0.0.1',0),s.Handler)
             t=threading.Thread(target=server.serve_forever,daemon=True);t.start()
             try:
@@ -155,6 +155,47 @@ class Patch9Tests(unittest.TestCase):
                 with urllib.request.urlopen(req,timeout=3) as r:self.assertEqual(r.status,200)
                 service.return_value.listing.assert_called_once_with('admin@example.test')
             finally:server.shutdown();server.server_close();t.join()
+    def test_comms_all_endpoints_deny_forged_enterprise_and_other_identity(self):
+        with patch.object(s,'request_identity',return_value='free@example.test'),patch.object(s,'is_admin',return_value=False),patch.object(s,'is_blocked',return_value=False),patch.object(s,'check_tier',return_value='free'),patch.object(s,'communication_service') as service:
+            server=s.ThreadingHTTPServer(('127.0.0.1',0),s.Handler);t=threading.Thread(target=server.serve_forever,daemon=True);t.start()
+            try:
+                for suffix in ('state','preview','send','verify/send','verify/check','remove'):
+                    body={'email':'admin@example.test','admin':True,'tier':'enterprise','token':s.make_tier_token('paid@example.test','enterprise'),'confirmed':True}
+                    req=urllib.request.Request('http://127.0.0.1:'+str(server.server_port)+'/api/comms/'+suffix,data=json.dumps(body).encode(),headers={'Content-Type':'application/json'})
+                    with self.assertRaises(urllib.error.HTTPError) as caught:urllib.request.urlopen(req,timeout=3)
+                    self.assertEqual(caught.exception.code,403)
+                service.assert_not_called()
+            finally:server.shutdown();server.server_close();t.join()
+    def test_enterprise_can_access_reminder_and_comms_using_verified_identity(self):
+        with patch.object(s,'request_identity',return_value='paid@example.test'),patch.object(s,'is_admin',return_value=False),patch.object(s,'is_blocked',return_value=False),patch.object(s,'check_tier',return_value='enterprise'),patch.object(s,'communication_service') as comms,patch.object(s,'reminder_service') as alarms:
+            comms.return_value.listing.return_value={'messages':[]};alarms.return_value.listing.return_value={'alarms':[]}
+            server=s.ThreadingHTTPServer(('127.0.0.1',0),s.Handler);t=threading.Thread(target=server.serve_forever,daemon=True);t.start()
+            try:
+                for group in ('reminders','comms'):
+                    req=urllib.request.Request('http://127.0.0.1:'+str(server.server_port)+'/api/'+group+'/state',data=json.dumps({'email':'other@example.test'}).encode(),headers={'Content-Type':'application/json'})
+                    with urllib.request.urlopen(req,timeout=3) as r:self.assertEqual(r.status,200)
+                comms.return_value.listing.assert_called_once_with('paid@example.test');alarms.return_value.listing.assert_called_once_with('paid@example.test')
+            finally:server.shutdown();server.server_close();t.join()
+    def test_blocked_admin_and_enterprise_cannot_send(self):
+        with patch.object(s,'is_blocked',return_value=True),patch.object(s,'is_admin',return_value=True),patch.object(s,'check_tier',return_value='enterprise'):
+            self.assertFalse(s.communications_allowed('admin@example.test'))
+    def test_cloud_entitlements_override_stale_local_tier(self):
+        self.cloud()
+        with patch.object(s,'is_blocked',return_value=False),patch.object(s,'is_admin',return_value=False),patch.object(s,'check_tier',return_value='enterprise'):
+            for rows in ([],[{'email':'other@example.test','plan':'enterprise','expires_at':'2099-01-01'}],[{'email':'paid@example.test','plan':'enterprise','expires_at':'2001-01-01'}],[{'email':'paid@example.test','plan':'pro','expires_at':'2099-01-01'}]):
+                with patch.object(s,'http_fetch',return_value=(200,json.dumps(rows).encode(),{})):self.assertFalse(s.communications_allowed('paid@example.test'))
+            with patch.object(s,'http_fetch',return_value=(200,b'[{"email":"paid@example.test","plan":"enterprise","expires_at":"2099-01-01"}]',{})):self.assertTrue(s.communications_allowed('paid@example.test'))
+            with patch.object(s,'http_fetch',side_effect=RuntimeError('offline')):self.assertFalse(s.communications_allowed('paid@example.test'))
+    def test_admin_revoke_retires_durable_paid_rows(self):
+        self.cloud()
+        with patch.object(s,'http_fetch',return_value=(204,b'',{})) as fetch,patch.object(s,'touch_user'),patch.object(s,'emit_event'):
+            self.assertTrue(s.admin_set_pro('paid@example.test','free')['revoked'])
+            self.assertEqual(fetch.call_args.kwargs['method'],'PATCH');self.assertIn('expires_at',fetch.call_args.kwargs['json_body'])
+    def test_admin_revoke_cloud_failure_makes_no_local_change(self):
+        self.cloud();s.save_subscriber({'email':'paid@example.test','plan':'enterprise','expires_at':'2099-01-01'})
+        with patch.object(s,'http_fetch',side_effect=RuntimeError('offline')):
+            self.assertIn('error',s.admin_set_pro('paid@example.test','free'))
+        self.assertEqual(s.load_subscribers()[0]['plan'],'enterprise')
     def test_http_history_rejects_forged_email(self):
         server=s.ThreadingHTTPServer(('127.0.0.1',0),s.Handler)
         t=threading.Thread(target=server.serve_forever,daemon=True);t.start()

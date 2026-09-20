@@ -14,3 +14,10 @@ RENDER_ENV.txt
 .env
 
 .env.*
+
+# Private deployment exports
+RENDER-ENV*.txt
+private/
+
+# Stale local tunnel notes (not part of the deployment)
+PUBLIC_URL.txt

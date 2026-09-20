@@ -26,7 +26,7 @@ class ReminderTests(unittest.TestCase):
     def test_nonadmin_service_methods_denied(self):
         self.s.allowed=lambda owner:False
         for method,args in ((self.s.listing,()),(self.s.send_code,('+15005550006',True)),(self.s.check_code,('123456',)),(self.s.create,(self.body(),)),(self.s.cancel,('abc',)),(self.s.disconnect,())):
-            self.assertTrue(method('ordinary@example.test',*args)['admin_only'])
+            self.assertTrue(method('ordinary@example.test',*args)['locked'])
         self.s.provider.assert_not_called()
     def test_role_removal_cancels_future_alarm_while_provider_disabled(self):
         self.verified();self.s.create('owner@example.test',self.body())

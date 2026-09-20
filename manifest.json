@@ -1,14 +1,24 @@
 {
   "name": "OraCool AI",
   "short_name": "OraCool",
-  "description": "1,000-core personal AI — JARVIS-style assistant with OSINT, markets, space and device control.",
-  "start_url": "/",
+  "description": "1,000-core personal AI \u2014 JARVIS-style assistant with OSINT, markets, space and device control.",
+  "start_url": "/app",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#04070d",
   "theme_color": "#04070d",
   "icons": [
-    { "src": "/icon.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    {
+      "src": "/icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
   ]
 }
