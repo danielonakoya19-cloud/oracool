@@ -3658,26 +3658,60 @@ def tier_of_tool(tool):
             return t2
     return "free"
 
-def get_config():
-    def loaded(names):
-        return {n: bool(key(n)) for n in names}
+# Names whose *loaded / not loaded* status the Server Key Vault panel shows.
+# Values are never sent anywhere; the status list itself is administrator-only
+# (see admin_vault_status / POST /api/admin/keys) — ordinary accounts must not
+# learn which providers or secrets the server holds.
+VAULT_STATUS_KEYS = ["OPENAI_API_KEY", "GROQ_API_KEY", "AGNES_API_KEY", "NEXAAPI_KEY",
+                     "PAYSTACK_SECRET_KEY", "PAYSTACK_PUBLIC_KEY", "SUPABASE_URL",
+                     "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_KEY", "GITHUB_TOKEN",
+                     "SHODAN_API_KEY", "VIRUSTOTAL_API_KEY", "ABUSEIPDB_API_KEY",
+                     "IPINFO_API_KEY", "NUMVERIFY_API_KEY", "LEAKCHECK_API_KEY",
+                     "URLSCAN_API_KEY", "TAVILY_API_KEY", "FINNHUB_API_KEY",
+                     "COINGECKO_API_KEY", "FRED_API_KEY", "ALPACA_PAPER_KEY_ID",
+                     "ALPACA_PAPER_SECRET", "NASA_API_KEY", "HIBP_API_KEY", "HIA_API_KEY",
+                     "PIXAZO_KEY", "SHORTAPI_KEY", "TOKENMIX_API_KEY", "FCS_API_KEY",
+                     "DOMSCAN_API_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "HA_URL",
+                     "KAIROS_API_KEY", "KAIROS_APP_ID", "ATLOS_MERCHANT_ID", "ATLOS_API_SECRET",
+                     "CRYPTO_WALLET_EVM", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
+                     "TWILIO_FROM_NUMBER", "TWILIO_VERIFY_SERVICE_SID", "SENDGRID_API_KEY",
+                     "SENDGRID_FROM_EMAIL", "JWT_SECRET", "ENCRYPTION_KEY", "ENCRYPTION_IV"]
+
+
+def admin_vault_status():
+    """Administrator-only: which server secrets are loaded (booleans only, never values)."""
     return {
+        "keys": {n: bool(key(n)) for n in VAULT_STATUS_KEYS},
         "brain": {"openai": bool(key("OPENAI_API_KEY")), "groq": bool(key("GROQ_API_KEY")),
+                  "agnes": bool(key("AGNES_API_KEY")),
+                  "default_provider": KEYS.get("BRAIN_PROVIDER", "groq"),
+                  "default_model": KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL),
+                  "fast_model": KEYS.get("GROQ_FAST_MODEL", GROQ_DEFAULT_MODEL)},
+        "source": "environment + keys.json (server side only)",
+        "note": "Statuses are visible to administrators only. Values never leave the server.",
+    }
+
+
+def user_model_allowlist():
+    """Models an ordinary (non-admin) account may request by name — only the
+    server-configured ones, so the Turbo/Smart switch keeps working while
+    arbitrary model names, custom keys and custom base URLs are ignored."""
+    names = {KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), KEYS.get("GROQ_FAST_MODEL", GROQ_DEFAULT_MODEL),
+             KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), GROQ_DEFAULT_MODEL}
+    return {str(n).strip() for n in names if str(n or "").strip()}
+
+
+def get_config():
+    brain_ready = bool(key("OPENAI_API_KEY") or key("GROQ_API_KEY") or key("AGNES_API_KEY"))
+    return {
+        # Public payload: capability flags only. The per-secret inventory lives
+        # behind POST /api/admin/keys (administrators only).
+        "brain": {"ready": brain_ready,
                   "default_provider": KEYS.get("BRAIN_PROVIDER", "groq"),
                   "default_model": KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL),
                   "fast_model": KEYS.get("GROQ_FAST_MODEL", GROQ_DEFAULT_MODEL),
                   "chat_max_tokens": int(KEYS.get("CHAT_MAX_TOKENS", 3000))},
-        "keys": loaded(["NEXAAPI_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "PAYSTACK_SECRET_KEY",
-                        "SUPABASE_URL", "GITHUB_TOKEN", "SHODAN_API_KEY",
-                        "VIRUSTOTAL_API_KEY", "ABUSEIPDB_API_KEY", "IPINFO_API_KEY",
-                        "NUMVERIFY_API_KEY", "LEAKCHECK_API_KEY", "URLSCAN_API_KEY",
-                        "TAVILY_API_KEY", "FINNHUB_API_KEY", "COINGECKO_API_KEY",
-                        "FRED_API_KEY", "ALPACA_PAPER_KEY_ID", "ALPACA_PAPER_SECRET",
-                        "NASA_API_KEY", "HIA_API_KEY", "PIXAZO_KEY", "SHORTAPI_KEY",
-                        "TOKENMIX_API_KEY", "FCS_API_KEY", "DOMSCAN_API_KEY",
-                        "GOOGLE_CLIENT_ID", "HA_URL",
-                        "KAIROS_API_KEY", "ATLOS_MERCHANT_ID", "ATLOS_API_SECRET",
-                        "AGNES_API_KEY", "KAIROS_APP_ID"]),
+        "payments_ready": bool(key("PAYSTACK_SECRET_KEY")),
         "paystack_public_key": key("PAYSTACK_PUBLIC_KEY") if not key("PAYSTACK_TEST") else key("PAYSTACK_TEST_PUBLIC"),
         "paystack_test": bool(key("PAYSTACK_TEST")),
         "paystack_currency": (KEYS.get("PAYSTACK_CURRENCY") or "NGN").upper(),
@@ -3721,7 +3755,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch11-enterprise-communications",
+        "build": "patch12-admin-only-vault",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6484,7 +6518,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch11-enterprise-communications",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch12-admin-only-vault",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -6580,6 +6614,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/osint/domain":
                 self._send_json(osint_domain(body.get("domain")))
             elif path == "/api/osint/email":
+                # A caller-supplied HaveIBeenPwned key is an administrator override;
+                # everyone else uses the server's key (or none) — see _sanitize_overrides.
+                self._sanitize_overrides(body)
                 self._send_json(osint_email(body.get("email"), body.get("hibp_key")))
             elif path == "/api/osint/username":
                 self._send_json(osint_username(body.get("username")))
@@ -7216,6 +7253,10 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/admin/diagnostics":
                 if _require_admin(self, body):
                     self._send_json(platform_diagnostics())
+            elif path == "/api/admin/keys":
+                # Server Key Vault status — administrators only; booleans, never values.
+                if _require_admin(self, body):
+                    self._send_json(admin_vault_status())
             elif path == "/api/pay/crypto/check":
                 self._send_json(crypto_status(str(body.get("ref") or "")))
             elif path == "/api/chat":
@@ -7279,8 +7320,44 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     # ---- chat proxy (streaming SSE) with server-default keys + fallback
+    def _admin_request(self, body):
+        """True only for a verified, non-blocked administrator: a server-signed
+        admin token, or a signed token whose subject is in ADMIN_EMAILS.
+        Client-supplied `email`/`admin` fields are never trusted."""
+        payload = self._auth(body)
+        if not payload:
+            return False
+        sub = str(payload.get("sub") or "").strip().lower()
+        if not (payload.get("admin") or is_admin(sub)):
+            return False
+        return not (sub and is_blocked(sub))
+
+    def _sanitize_overrides(self, body):
+        """Provider overrides (own API key, custom base URL, arbitrary model,
+        HIBP key) are administrator-only. For everyone else they are removed
+        from the request before any provider resolution — so a non-admin can
+        neither point the assistant at another endpoint nor pick a model the
+        operator did not configure. Ordinary accounts may still name one of
+        the server-configured models (keeps the Turbo/Smart switch working)."""
+        if not isinstance(body, dict):
+            return body
+        if body.get("_overrides_checked"):
+            return body
+        body["_overrides_checked"] = True
+        if self._admin_request(body):
+            body["_admin_overrides"] = True
+            return body
+        body["_admin_overrides"] = False
+        for field in ("api_key", "base_url", "hibp_key"):
+            body.pop(field, None)
+        model = str(body.get("model") or "").strip()
+        if model and model not in user_model_allowlist():
+            body.pop("model", None)
+        return body
+
     def _resolve_provider(self, body):
         """Return (keyv, base_url, model) resolved from body or server vault."""
+        self._sanitize_overrides(body)
         api_key = (body.get("api_key") or "").strip()
         base_url = (body.get("base_url") or "").strip().rstrip("/")
         model = (body.get("model") or "").strip()
@@ -7319,6 +7396,7 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_chat(self, body):
         messages = body.get("messages") or []
         stream = bool(body.get("stream", True))
+        self._sanitize_overrides(body)   # admin-only overrides stripped before any provider use
         api_key, base_url, model, provider = self._resolve_provider(body)
         if body.get("voice_mode") and not body.get("api_key") and key("GROQ_API_KEY"):
             api_key, base_url, model, provider = key("GROQ_API_KEY"), "https://api.groq.com/openai/v1", key("GROQ_FAST_MODEL") or GROQ_DEFAULT_MODEL, "auto"

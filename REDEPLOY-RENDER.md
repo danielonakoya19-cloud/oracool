@@ -316,4 +316,13 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 - **New environment names (both default to disabled):** `COMMUNICATIONS_ENABLED`, `SENDGRID_ENABLED`, `SENDGRID_API_KEY`, `SENDGRID_FROM_EMAIL`. Twilio credentials do not enable email.
 - **No new SQL** is required; communications reuse `case_store` under the key `communications` with `comms_<id>` dispatch reservations.
 - **Landing page pricing** states the ladder as implemented: Free $0, Starter $29, Pro $49, Professional $149, Enterprise $500/30 days, no free paid-plan trial.
-- **Build marker** `/api/health` → `patch11-enterprise-communications`.
+- **Build marker** `/api/health` → `patch12-admin-only-vault`.
+
+## Patch 12 — Server Key Vault and provider overrides are administrator-only
+
+- **Build marker** `/api/health` → `patch12-admin-only-vault`.
+- `GET /api/config` no longer lists which server secrets are loaded. It carries capability flags only (`brain.ready`, `payments_ready`, public Paystack key, plan ladder).
+- New `POST /api/admin/keys` (administrators only, signed token required) returns the loaded/not-loaded booleans the **Server Key Vault** panel shows. Values never leave the server.
+- The Settings panel shows **Operator controls** (brain provider, override API key / base URL / model, HaveIBeenPwned key) and the **Server Key Vault** only to signed-in administrators. Ordinary accounts see personal preferences only.
+- The server strips `api_key`, `base_url`, `hibp_key` and any model name that is not one of the configured server models from every non-administrator request before provider resolution — so a modified client cannot redirect the assistant to another endpoint or pick an unconfigured model. Turbo/Smart still works for everyone.
+- No environment changes are required for this patch. Redeploy commit `patch12` → Manual Deploy → confirm `/api/health` shows `patch12-admin-only-vault` and `/api/config` has no `keys` object.

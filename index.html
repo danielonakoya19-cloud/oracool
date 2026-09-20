@@ -1322,7 +1322,7 @@ async function send(text){
     if(session&&session.access_token) payload.access_token=session.access_token;
     const _em=myEmail(); if(_em) payload.email=_em; if(proToken) payload.token=proToken;
     if(settings.haUrl && settings.haToken){ payload.ha_url=settings.haUrl; payload.ha_token=settings.haToken; }
-    if(settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
+    if(isAdminSession() && settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
     else if(settings.brainMode==='fast' && srv && srv.brain && srv.brain.fast_model){ payload.provider='groq'; payload.model=srv.brain.fast_model; }
     const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:chatAbort.signal});
     if(!resp.ok){ let j=null; try{j=await resp.json();}catch(e){} throw new Error((j&&j.error)||('AI provider error '+resp.status)); }
@@ -1591,7 +1591,7 @@ document.querySelectorAll('.tab').forEach(t=>{
 
 /* ---------- status ---------- */
 function renderStatus(){
-  const brainOK=!(srv && !srv.brain.openai && !srv.brain.groq);
+  const brainOK=!(srv && srv.brain && srv.brain.ready===false);
   const hasHA=!!(settings.haUrl&&settings.haToken);
   const rows=[
     ['Neural core (AI brain)', brainOK?'ok':'off', brainOK? (srv?(srv.brain.default_provider==='groq'?'Groq · online':'Online'):'online') : 'no key'],
@@ -1605,7 +1605,7 @@ function renderStatus(){
     ['Video creation', srv&&srv.video_ready?'ok':'warn', srv&&srv.video_ready?'HiAPI online':'needs HiAPI credit'],
     ['OSINT toolkit','ok','IP · Domain · Username · Email'],
     ['Markets feed','ok','Stocks · Crypto · FRED'],
-    ['Payments (Paystack)', srv&&srv.keys.PAYSTACK_SECRET_KEY?'ok':'off', srv&&srv.keys.PAYSTACK_SECRET_KEY?'live keys loaded':'not configured'],
+    ['Payments (Paystack)', srv&&srv.payments_ready?'ok':'off', srv&&srv.payments_ready?'configured':'not configured'],
     ['Device bridge (Home Assistant)', hasHA?'ok':'off', hasHA?'linked':'not configured'],
   ];
   $('#p-status').innerHTML=`
@@ -1685,7 +1685,7 @@ async function runIntel(){
     switch(curIntel){
       case 'ip': r=await post('/api/osint/ip',{ip:val}); break;
       case 'domain': r=await post('/api/osint/domain',{domain:val}); break;
-      case 'email': r=await post('/api/osint/email',{email:val,hibp_key:settings.hibpKey}); break;
+      case 'email': r=await post('/api/osint/email',isAdminSession()&&settings.hibpKey?{email:val,hibp_key:settings.hibpKey}:{email:val}); break;
       case 'username': r=await post('/api/osint/username',{username:val}); break;
       case 'phone': r=await post('/api/osint/phone',{phone:val}); break;
       case 'weather': r=await post('/api/weather',{city:val}); break;
@@ -1934,7 +1934,7 @@ async function runAssistantReply(){
     let acc='';
     await ensureFreshLogin();
     const payload={messages:msgs,stream:true,provider:settings.provider||'auto',email:myEmail(),token:proToken||'',session_id:await ensureSession(),access_token:session&&session.access_token};
-    if(settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
+    if(isAdminSession() && settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
     const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!resp.ok){ let j=null; try{j=await resp.json();}catch(e){} throw new Error((j&&j.error)||('AI provider error '+resp.status)); }
     const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf='';
@@ -2812,13 +2812,34 @@ async function toggleAuto(){
 }
 
 /* ---------- settings ---------- */
+/* Administrator check for operator-only settings (server key vault, provider
+   overrides). Mirrors the server: the server independently ignores overrides
+   and refuses /api/admin/keys for anyone who is not a verified administrator,
+   so this only decides what is drawn — never what is permitted. */
+function isAdminSession(){ return !!(session && session.admin===true && !session.blocked); }
+function purgeOperatorSettings(){
+  /* Non-admin accounts never keep or send provider overrides — clears anything
+     saved before this restriction existed. */
+  let changed=false;
+  for(const f of ['apiKey','baseUrl','model','hibpKey']){ if(settings[f]){ settings[f]=''; changed=true; } }
+  if(settings.provider && settings.provider!=='auto'){ settings.provider='auto'; changed=true; }
+  if(changed) saveSettings();
+}
+async function renderKeyVault(){
+  const box=$('#keyVault'); if(!box || !isAdminSession()) return;
+  const r=await post('/api/admin/keys',{token:proToken}).catch(()=>({error:'unavailable'}));
+  if(!r || r.locked || r.error){ box.innerHTML='<div class="hint">Key vault status unavailable (administrator sign-in required).</div>'; return; }
+  const k=r.keys||{}, b=r.brain||{};
+  box.innerHTML=`
+    <div class="hint" style="margin-bottom:6px">${b.openai?'OpenAI key loaded. ':''}${b.groq?'Groq key loaded ✓ ':'Groq key missing. '}${b.agnes?'Agnes key loaded ✓':''} · default provider <b>${escapeHtml(b.default_provider||'auto')}</b></div>
+    ${Object.keys(k).map(n=>`<div class="keyrow"><span class="n">${escapeHtml(n)}</span><span class="s" style="color:${k[n]?'var(--ok)':'var(--dim)'}">${k[n]?'✓ loaded':'—'}</span></div>`).join('')}
+    <div class="hint" style="margin-top:8px">Statuses only — values never leave the server (environment / keys.json). Visible to administrators only.</div>`;
+}
 function renderSettings(){
-  const k=srv?srv.keys:{};
-  const keynames=['OPENAI_API_KEY','GROQ_API_KEY','AGNES_API_KEY','PAYSTACK_SECRET_KEY','SUPABASE_URL','SHODAN_API_KEY','VIRUSTOTAL_API_KEY','ABUSEIPDB_API_KEY','IPINFO_API_KEY','NUMVERIFY_API_KEY','TAVILY_API_KEY','URLSCAN_API_KEY','LEAKCHECK_API_KEY','FINNHUB_API_KEY','COINGECKO_API_KEY','FRED_API_KEY','ALPACA_PAPER_KEY_ID','ALPACA_PAPER_SECRET','NASA_API_KEY','HIBP_API_KEY','JWT_SECRET','ENCRYPTION_KEY','ENCRYPTION_IV','KAIROS_API_KEY','ATLOS_MERCHANT_ID','ATLOS_API_SECRET'];
-  $('#p-settings').innerHTML=`
-    <h3 class="ptitle">Settings</h3>
-    <label class="lbl">What should I call you?</label>
-    <input type="text" id="sName" value="${escapeHtml(settings.userName)}" placeholder="sir">
+  const admin=isAdminSession();
+  if(!admin) purgeOperatorSettings();
+  const operatorControls=admin?`
+    <h3 class="ptitle" style="margin-top:20px">Operator controls <span class="muted" style="font-weight:400;font-size:11px">(administrators only)</span></h3>
     <label class="lbl">Brain provider</label>
     <select id="sProvider">
       <option value="auto" ${settings.provider==='auto'?'selected':''}>Auto (server default)</option>
@@ -2826,21 +2847,27 @@ function renderSettings(){
       <option value="agnes" ${settings.provider==='agnes'?'selected':''}>Agnes (FREE multimodal — online ✓)</option>
       <option value="openai" ${settings.provider==='openai'?'selected':''}>OpenAI</option>
     </select>
+    <label class="lbl">Override API key <span class="muted">(optional — uses server keys if blank)</span></label>
+    <input type="password" id="sKey" value="${escapeHtml(settings.apiKey||'')}" placeholder="sk-…" autocomplete="off">
+    <label class="lbl">Override base URL</label>
+    <input type="text" id="sBase" value="${escapeHtml(settings.baseUrl||'')}" placeholder="https://api.openai.com/v1" autocomplete="off">
+    <label class="lbl">Override model</label>
+    <input type="text" id="sModel" value="${escapeHtml(settings.model||'')}" placeholder="(server default)" autocomplete="off">
+    <label class="lbl">HaveIBeenPwned API key <span class="muted">(optional)</span></label>
+    <input type="password" id="sHibp" value="${escapeHtml(settings.hibpKey||'')}" placeholder="optional" autocomplete="off">
+    <div class="hint">These overrides apply to your administrator session only. The server ignores override fields from non-administrator accounts.</div>
+    <h3 class="ptitle" style="margin-top:20px">Server Key Vault</h3>
+    <div id="keyVault"><div class="hint">Checking server key status…</div></div>`:'';
+  $('#p-settings').innerHTML=`
+    <h3 class="ptitle">Settings</h3>
+    <label class="lbl">What should I call you?</label>
+    <input type="text" id="sName" value="${escapeHtml(settings.userName)}" placeholder="sir">
     <label class="lbl">Response speed</label>
     <select id="sBrainMode">
       <option value="fast" ${settings.brainMode!=='smart'?'selected':''}>⚡ Turbo — fastest replies</option>
       <option value="smart" ${settings.brainMode==='smart'?'selected':''}>🧠 Smart — deeper reasoning</option>
     </select>
-    <div class="hint">Turbo uses ${srv&&srv.brain?srv.brain.fast_model:'a configured fast model'}. Response times depend on provider load and requested tools. Smart uses ${srv&&srv.brain?srv.brain.default_model:'the full model'}. Switch anytime.</div>
-    <div class="hint">${k.OPENAI_API_KEY?'OpenAI key loaded, but currently has <b>no credits</b> (429). ':''}${k.GROQ_API_KEY?'Groq key loaded ✓':'Groq key missing.'}</div>
-    <label class="lbl">Override API key <span class="muted">(optional — uses server keys if blank)</span></label>
-    <input type="password" id="sKey" value="${escapeHtml(settings.apiKey)}" placeholder="sk-…">
-    <label class="lbl">Override base URL</label>
-    <input type="text" id="sBase" value="${escapeHtml(settings.baseUrl)}" placeholder="https://api.openai.com/v1">
-    <label class="lbl">Override model</label>
-    <input type="text" id="sModel" value="${escapeHtml(settings.model)}" placeholder="(server default)">
-    <label class="lbl">HaveIBeenPwned API key <span class="muted">(optional)</span></label>
-    <input type="password" id="sHibp" value="${escapeHtml(settings.hibpKey)}" placeholder="optional">
+    <div class="hint">Turbo answers fastest; Smart takes a little longer for deeper reasoning. Switch anytime.</div>
     <label class="lbl">Session auto-lock (idle)</label>
     <select id="sLock">
       <option value="0" ${Number(settings.lockMins)===0?'selected':''}>Off</option>
@@ -2864,10 +2891,7 @@ function renderSettings(){
     <label class="lbl">Voice</label>
     <select id="sVoice"><option value="">System default</option>${voices.map(v=>`<option value="${escapeHtml(v.name)}" ${v.name===settings.voiceName?'selected':''}>${escapeHtml(v.name)} (${escapeHtml(v.lang||'')})</option>`).join('')}</select>
     <div class="row" style="margin-top:16px"><button class="btn primary" id="sSave">Save settings</button><button class="btn ghost" id="sTest">🔊 Test voice</button></div>
-
-    <h3 class="ptitle" style="margin-top:20px">Server Key Vault</h3>
-    ${keynames.map(n=>`<div class="keyrow"><span class="n">${n}</span><span class="s" style="color:${k[n]?'var(--ok)':'var(--dim)'}">${k[n]?'✓ loaded':'—'}</span></div>`).join('')}
-    <div class="hint" style="margin-top:8px">Keys live in <b>keys.json</b> on the server and are never exposed to the browser.</div>
+    ${operatorControls}
 
     <h3 class="ptitle" style="margin-top:20px">Plan</h3>
     ${tierGte('starter')? `<div class="okbox">◈ ${planLabel()} plan active.</div>`:'<div class="warnbox">You are on the FREE tier — paid plans unlock the ladder progressively.</div>'}
@@ -2880,14 +2904,17 @@ function renderSettings(){
   $('#sTest').onclick=()=>speak('All systems operational. This is OraCool AI.');
   $('#sUpgrade').onclick=openUpgrade;
   const lg=$('#sLogout'); if(lg)lg.onclick=()=>{ setProToken(''); renderSettings(); renderStatus(); addAI('Signed out of PRO mode.'); };
+  if(admin) renderKeyVault();
   $('#sSave').onclick=()=>{
     settings.userName=$('#sName').value.trim()||'sir';
-    settings.provider=$('#sProvider').value;
     settings.brainMode=$('#sBrainMode').value;
-    settings.apiKey=$('#sKey').value.trim();
-    settings.baseUrl=$('#sBase').value.trim();
-    settings.model=$('#sModel').value.trim();
-    settings.hibpKey=$('#sHibp').value.trim();
+    if(isAdminSession() && $('#sProvider')){
+      settings.provider=$('#sProvider').value;
+      settings.apiKey=$('#sKey').value.trim();
+      settings.baseUrl=$('#sBase').value.trim();
+      settings.model=$('#sModel').value.trim();
+      settings.hibpKey=$('#sHibp').value.trim();
+    } else { settings.provider='auto'; settings.apiKey=''; settings.baseUrl=''; settings.model=''; settings.hibpKey=''; }
     settings.lockMins=Number($('#sLock').value||30);
     settings.poSSID=$('#sPoSSID').value.trim();
     settings.voiceName=$('#sVoice').value;
