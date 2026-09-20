@@ -353,3 +353,20 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 - Verified in a real WebKit engine with iPhone emulation (`tests/browser_iphone_check.py`): landing page, sign-in gate, console, BLOCKED screen and the failsafe. Static guard in the same test fails the build if lookbehind or post-iOS-15 APIs come back.
 - **On an iPhone that already showed the black page**: Safari may keep the old copy. Settings → Safari → Advanced → Website Data → search the site → Delete, then reopen. (Or "Clear History and Website Data".)
 - Deploy: no environment changes. Render auto-deploys `main`; confirm the marker.
+
+## Patch 15 — Community chat, OraCool numbers, usernames, groups & channels, friends-by-number, AI moderator
+
+- **Build marker** `/api/health` → `patch15-community-ai-moderation`.
+- **One-time step (60 seconds): run the community SQL in Supabase.**
+  1. Supabase dashboard → **SQL Editor** → **New query**
+  2. Paste the entire file **`supabase_patch15.sql`** (in this workspace / repo root) → **Run**.
+  3. Until that script has run, the Community tab shows a short “setting up” note and nothing else changes — no error, no data. It is idempotent; safe to run again.
+- **Identity at signup**: the signup form takes a **username** (3–20 characters, unique, reserved names blocked) — e-mails are never shown to other members. Every member also gets a unique 10-digit **OraCool number** issued by a Postgres sequence (starts at 2000000000). The number is shown on the Community page with a copy button, and the AI itself knows it (ask the AI “what is my OraCool number?”).
+- **Community tab** (members only):
+  - **Rooms** — the 3 built-in rooms (Lounge, Markets, Help desk) + any member-created **groups** and **channels** (the “+ New group/channel” button; public rooms are joinable by every member, private groups only by their owner).
+  - **Messages** — private DMs with unread badges; the moderator sends warnings/suspension notices here.
+  - **People & Friends** — search members, message them, report them, and **add a friend by typing their OraCool number**.
+- **Reports & the AI moderator**: any member can report another (⚑ on a message or a person). When **3 different credible members** have open reports on one account, the moderator AI reviews the dossier (that member’s own room messages, DMs to the reporters, profile, the reports) and decides: suspend (only for evidenced illegal activity at ≥75% confidence), warn, dismiss, or ask a human. **Only the moderator AI or an administrator can suspend** — reporters never can. Suspensions are the same durable Patch-13 BLOCKED screen + $20 fine; admins see the **Moderation** card (confirm / overturn / advisory review) in the Admin console.
+- **Privacy & IP safety**: no community table stores an IP address and no API returns one IP to another member; RLS is on every new table with zero public policies (only the server’s service-role key touches them); chat shows usernames + numbers only.
+- **Tables created**: `comm_profiles`, `comm_rooms`, `comm_members`, `comm_messages`, `comm_reports`, `comm_cases`, `comm_contacts`, `comm_read_state` + sequence `comm_number_seq`.
+- Deploy: Render auto-deploys `main`; confirm the marker. No environment changes.

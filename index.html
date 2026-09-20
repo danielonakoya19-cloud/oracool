@@ -136,6 +136,25 @@
   .bubble.err{border-color:rgba(255,95,109,.5); border-left-color:var(--danger); color:#ffd7db;}
   .bubble .dots::after{content:"…"; animation:dots 1.2s steps(3,end) infinite;}
   @keyframes dots{0%{content:""} 33%{content:"."} 66%{content:".."}}
+  /* ---- community (member chat, DMs, reports) ---- */
+  .commhead{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;}
+  .commnav{display:flex; gap:4px; margin-left:auto;}
+  .commmsgs{height:min(46vh,420px); overflow-y:auto; border:1px solid var(--line); border-radius:12px; padding:10px; background:rgba(3,12,20,.6); display:flex; flex-direction:column; gap:8px; -webkit-overflow-scrolling:touch;}
+  .cmsg{max-width:88%; align-self:flex-start; background:rgba(8,34,46,.7); border:1px solid var(--line); border-radius:4px 12px 12px 12px; padding:8px 11px; font-size:13px; line-height:1.45;}
+  .cmsg.mine{align-self:flex-end; background:rgba(12,44,88,.6); border-color:rgba(90,150,255,.35); border-radius:12px 4px 12px 12px;}
+  .cmsg.mod{border-color:rgba(255,194,75,.45); background:rgba(60,44,10,.5);}
+  .cmeta{font-size:10px; color:var(--dim); margin-bottom:3px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;}
+  .cmeta b{color:var(--cyan2);} .cmeta a{cursor:pointer; color:var(--dim); text-decoration:none;} .cmeta a:hover{color:var(--danger);}
+  .cbody{white-space:pre-wrap; word-wrap:break-word;}
+  .commcompose{display:flex; gap:6px; margin-top:8px;} .commcompose input{flex:1;}
+  .cthread,.cperson{display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--line); border-radius:10px; margin-bottom:6px;}
+  .cthread{cursor:pointer;} .cthread:hover{border-color:var(--cyan);}
+  .cunread{display:inline-block; min-width:16px; padding:0 5px; border-radius:9px; background:var(--cyan); color:#032; font-size:10px; font-weight:800; text-align:center;}
+  .tabbadge{display:none; min-width:14px; padding:0 4px; border-radius:8px; background:var(--cyan); color:#032; font-size:9px; font-weight:800; margin-left:3px; vertical-align:middle;}
+  .tabbadge.on{display:inline-block;}
+  .chip.on{background:rgba(0,229,255,.18); color:#fff;}
+  .conl{display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--dim); margin-right:4px;} .conl.on{background:var(--ok); box-shadow:0 0 6px var(--ok);}
+  #commReport textarea{width:100%; background:rgba(4,14,22,.7); border:1px solid var(--line); border-radius:9px; padding:10px; color:var(--text); font-size:14px; font-family:inherit; resize:vertical;}
   .chiprow{display:flex; flex-wrap:wrap; gap:8px; padding:2px 16px 12px;}
   .chip{font-size:11px; letter-spacing:1px; color:var(--cyan2); background:rgba(0,229,255,.06); border:1px solid var(--line); padding:6px 12px; border-radius:20px; cursor:pointer; transition:.2s;}
   .chip:hover{background:rgba(0,229,255,.16); box-shadow:0 0 14px rgba(0,229,255,.3);}
@@ -556,6 +575,7 @@
     <aside class="right card">
       <div class="tabs">
         <div class="tab active" data-p="status">Status</div>
+        <div class="tab" data-p="community" id="communityTab">💬 Community<span class="tabbadge" id="commTabBadge"></span></div>
         <div class="tab" data-p="intel">Intel</div>
       <div class="tab" data-p="cases" id="casesTab" title="Cases & evidence — PRO">🗂 Cases</div>
         <div class="tab" data-p="markets">Markets</div>
@@ -572,6 +592,7 @@
         <div class="tab" id="lockTab" title="Lock the whole app right now">🔒</div>
       </div>
       <div class="panelbody active" id="p-status"></div>
+      <div class="panelbody" id="p-community"></div>
       <div class="panelbody" id="p-intel"></div>
       <div class="panelbody" id="p-cases"></div>
       <div class="panelbody" id="p-markets"></div>
@@ -1700,6 +1721,194 @@ function kv(title,pairs){
   return `<div class="tag" style="margin-top:6px">${escapeHtml(title)}</div><div class="kv">${pairs.map(([k,v])=>`<div class="k">${escapeHtml(k)}</div><div class="val">${escapeHtml(String(v==null||v===''?'—':v))}</div>`).join('')}</div>`;
 }
 
+
+/* ---------- community: numbers, rooms, groups & channels, DMs, friends, reports → AI moderator ---------- */
+const COMM={view:'rooms', room:'lounge', peer:null, lastRoomId:null, lastDmId:null, me:null, timer:null, busy:false};
+function commActive(){ const t=document.querySelector('.tab.active'); return !!(t && t.dataset.p==='community') && !isBlockedSession(); }
+function fmtCommTime(t){ try{ const sx=String(t||''); const d=/T/.test(sx)?new Date(sx):new Date(sx.replace(' ','T')+'Z'); if(isNaN(d)) return sx||''; const now=new Date(); const same=d.toDateString()===now.toDateString(); return (same?'':d.toLocaleDateString([], {month:'short',day:'numeric'})+' ')+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }catch(e){ return t||''; } }
+function updateCommBadge(n){ const b=$('#commTabBadge'); if(!b) return; n=Number(n)||0; b.textContent=n>99?'99+':String(n); b.classList.toggle('on', n>0); const d=$('#commDmBadge'); if(d) d.innerHTML=n>0?`<span class="cunread">${n}</span>`:''; }
+async function renderCommunity(){
+  const box=$('#p-community'); if(!box) return;
+  if(!session){ box.innerHTML='<h3 class="ptitle">💬 Community</h3><div class="warnbox">Sign in to chat with other OraCool members.</div>'; return; }
+  box.innerHTML=`<h3 class="ptitle">💬 Community</h3>
+    <div class="commhead"><div style="font-size:12px">You are <b id="commHandle" style="color:var(--cyan2)">…</b> <span class="muted">· OraCool number</span> <b id="commNum" style="color:var(--gold); letter-spacing:1px">…</b> <button class="btn small ghost" id="commCopy" title="Copy your OraCool number">⧉ copy</button> <button class="btn small ghost" id="commEdit" title="Edit username & bio">✎</button></div>
+      <div class="commnav"><button class="btn small ${COMM.view==='rooms'?'primary':'ghost'}" data-v="rooms">Rooms</button><button class="btn small ${COMM.view==='dms'?'primary':'ghost'}" data-v="dms">Messages <span id="commDmBadge"></span></button><button class="btn small ${COMM.view==='people'?'primary':'ghost'}" data-v="people">People & Friends</button></div></div>
+    <div id="commGuide" class="muted" style="font-size:11px;margin:0 0 8px"></div>
+    <div id="commBody"><div class="muted">Loading…</div></div>`;
+  box.querySelectorAll('.commnav [data-v]').forEach(b=>{ b.onclick=()=>{ COMM.view=b.dataset.v; COMM.peer=null; COMM.lastDmId=null; renderCommunity(); }; });
+  $('#commEdit').onclick=editCommProfile;
+  $('#commCopy').onclick=async()=>{ const n=$('#commNum').textContent; try{ await navigator.clipboard.writeText(n); addSystemNote('Your OraCool number <b>'+escapeHtml(n)+'</b> is copied — share it so friends can add you.'); }catch(e){ prompt('Copy your OraCool number:', n); } };
+  const me=await post('/api/community/me',{});
+  if(me.setup_required){ $('#commBody').innerHTML='<div class="warnbox">🛠 <b>Community is being set up.</b> Its database script is running in Supabase — check back in about a minute.</div>'; return; }
+  if(me.error||me.suspended||!me.profile){ $('#commBody').innerHTML='<div class="errbox">'+escapeHtml(me.error||'Community unavailable right now.')+'</div>'; return; }
+  COMM.me=me; $('#commHandle').textContent='@'+(me.profile.username||'member'); $('#commNum').textContent=me.profile.number||'…'; $('#commGuide').textContent=me.guidelines||''; updateCommBadge(me.unread_dm);
+  if(COMM.view==='rooms') renderCommRooms(); else if(COMM.view==='dms') renderCommDms(); else renderCommPeople();
+  if(!COMM.timer) COMM.timer=setInterval(commPoll, 4000);
+}
+async function editCommProfile(){
+  const p=(COMM.me&&COMM.me.profile)||{};
+  const u=prompt('Choose your public username (3–20 characters: letters, numbers, dots, underscores). Other members see this instead of your email.', p.username||''); if(u==null) return;
+  const bio=prompt('One line about you (optional, 140 characters):', p.bio||'');
+  const r=await post('/api/community/profile',{username:u.trim(), bio:bio==null?undefined:bio});
+  if(r.error){ addErr('Community: '+r.error); return; }
+  addSystemNote('You are now <b>@'+escapeHtml(r.profile.username||u)+'</b> in the community.'); renderCommunity();
+}
+async function commPoll(){
+  if(!session || isBlockedSession()){ return; }
+  if(!commActive()){ return; }
+  if(COMM.busy) return; COMM.busy=true;
+  try{
+    if(COMM.view==='rooms' && $('#commMsgs')) await loadCommRoom(false);
+    else if(COMM.view==='dms' && COMM.peer && $('#dmMsgs')) await loadCommDm(false);
+  }catch(e){} finally{ COMM.busy=false; }
+}
+setInterval(async()=>{ try{ if(session && !isBlockedSession() && !commActive() && !document.getElementById('authGate')?.classList.contains('open')){ const r=await post('/api/community/me',{}); if(r && r.unread_dm!=null) updateCommBadge(r.unread_dm); } }catch(e){} }, 45000);
+
+function kindTag(k){ return k==='room'?'<span class="tag" style="color:var(--cyan2)">ROOM</span> ':(k==='channel'?'<span class="tag" style="color:var(--gold)">CHANNEL</span> ':(k==='group'?'<span class="tag" style="color:var(--ok)">GROUP</span> ':'')); }
+function renderCommRooms(){
+  const rooms=(COMM.me&&COMM.me.rooms)||[]; const cur=rooms.find(r=>r.id===COMM.room)||rooms[0]||{id:'lounge',name:'Lounge'}; COMM.room=cur.id;
+  $('#commBody').innerHTML=`<div class="chiprow" style="padding:0 0 8px; align-items:center">${rooms.map(r=>`<span class="chip ${r.id===COMM.room?'on':''}" data-r="${escapeHtml(r.id)}" title="${escapeHtml(r.about||'')}">${kindTag(r.kind)}#${escapeHtml(r.name)}</span>`).join('')}<button class="btn small ghost" id="commNewRoom" title="Create a group or channel">+ New group/channel</button></div>
+    <div class="muted" style="font-size:11px;margin-bottom:6px">${escapeHtml(cur.about||'')}${cur.owner?(' · by @'+escapeHtml(cur.owner)):''}</div>
+    <div class="commmsgs" id="commMsgs"><div class="muted">Loading…</div></div>
+    <div class="commcompose"><input type="text" id="commInput" maxlength="800" autocomplete="off" placeholder="Message #${escapeHtml(cur.name)} — be kind"><button class="btn primary" id="commSend">Send</button></div>`;
+  $('#commBody').querySelectorAll('.chip[data-r]').forEach(c=>{ c.onclick=()=>{ COMM.room=c.dataset.r; COMM.lastRoomId=null; renderCommRooms(); }; });
+  $('#commNewRoom').onclick=openNewRoomModal;
+  const send=async()=>{ const inp=$('#commInput'); const body=(inp.value||'').trim(); if(!body) return; inp.value=''; const r=await post('/api/community/room/send',{room:COMM.room, body}); if(r.error){ addErr('Community: '+r.error); inp.value=body; return; } const el=$('#commMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); COMM.lastRoomId=r.message.id; el.scrollTop=el.scrollHeight; } };
+  $('#commSend').onclick=send; $('#commInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
+  COMM.lastRoomId=null; loadCommRoom(true);
+}
+function openNewRoomModal(){
+  let m=document.getElementById('newRoomModal'); if(m) m.remove();
+  m=document.createElement('div'); m.id='newRoomModal'; m.className='modal open';
+  m.innerHTML=`<div class="modalcard"><div class="ptitle" style="font-size:14px">➕ Create a group or channel</div>
+    <div class="muted" style="font-size:12px;margin:6px 0 10px;line-height:1.5">A <b>group</b> is for your people; a <b>channel</b> is a topic anyone can join. You own it and it appears in every member's Rooms list${''} when public.</div>
+    <label class="lbl">Name</label><input type="text" id="nrName" maxlength="40" placeholder="e.g. Crypto watchers">
+    <label class="lbl" style="margin-top:8px">Type</label>
+    <div class="row" style="gap:8px; align-items:center"><select id="nrKind" style="flex:1"><option value="group">Group</option><option value="channel">Channel</option></select><label style="display:flex;align-items:center;gap:6px;font-size:12px;flex:none"><input type="checkbox" id="nrPublic" checked> public</label></div>
+    <label class="lbl" style="margin-top:8px">Description</label><input type="text" id="nrDesc" maxlength="160" placeholder="What is this for? (optional)">
+    <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end"><button class="btn ghost" id="nrCancel">Cancel</button><button class="btn primary" id="nrGo">Create</button></div>
+    <div class="result" id="nrOut"></div></div>`;
+  document.body.appendChild(m);
+  $('#nrCancel').onclick=()=>m.remove(); m.addEventListener('click',e=>{ if(e.target===m) m.remove(); });
+  $('#nrGo').onclick=async()=>{
+    const name=$('#nrName').value.trim(); const out=$('#nrOut');
+    if(name.length<2){ out.innerHTML='<div class="errbox">Give it a name (2+ characters).</div>'; return; }
+    out.innerHTML=SPIN;
+    const r=await post('/api/community/rooms/create',{name, kind:$('#nrKind').value, description:$('#nrDesc').value.trim(), public:$('#nrPublic').checked});
+    if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+    m.remove(); COMM.room=r.room.id; renderCommunity();
+    addSystemNote('🏠 Your '+(r.room.kind||'room')+' <b>#'+escapeHtml(r.room.name)+'</b> is live.');
+  };
+  setTimeout(()=>{ const i=$('#nrName'); if(i) i.focus(); }, 50);
+}
+async function loadCommRoom(initial){
+  const r=await post('/api/community/room/messages',{room:COMM.room, after: initial?null:COMM.lastRoomId});
+  const el=$('#commMsgs'); if(!el || r.error) return;
+  if(initial){ el.innerHTML=''; if(!(r.messages||[]).length) el.innerHTML='<div class="muted">No messages yet — say hello!</div>'; }
+  const atBottom=el.scrollHeight-el.scrollTop-el.clientHeight<80;
+  (r.messages||[]).forEach(m=>appendCommMsg(el,m));
+  if((r.messages||[]).length){ COMM.lastRoomId=r.messages[r.messages.length-1].id; if(initial||atBottom) el.scrollTop=el.scrollHeight; }
+}
+function appendCommMsg(el,m){
+  if(!m || el.querySelector('[data-mid="'+m.id+'"]')) return;
+  if(el.firstElementChild && el.firstElementChild.classList.contains('muted')) el.innerHTML='';
+  const d=document.createElement('div'); d.className='cmsg'+(m.mine?' mine':'')+(m.mod?' mod':''); d.dataset.mid=m.id;
+  d.innerHTML=`<div class="cmeta"><b>${m.mod?'🛡 ':''}${escapeHtml(m.username||'member')}</b>${m.admin?'<span class="tag" style="color:var(--gold)">ADMIN</span>':''}<span>${escapeHtml(fmtCommTime(m.t))}</span>${(!m.mine&&!m.mod)?`<a class="cdm" data-h="${escapeHtml(m.username||'')}" title="Message privately">✉</a><a class="crep" data-h="${escapeHtml(m.username||'')}" data-id="${escapeHtml(m.id)}" title="Report this message to the moderator">⚑ report</a>`:''}</div><div class="cbody">${escapeHtml(m.body)}</div>`;
+  el.appendChild(d);
+  const rep=d.querySelector('.crep'); if(rep) rep.onclick=()=>openCommReport(rep.dataset.h, rep.dataset.id);
+  const dm=d.querySelector('.cdm'); if(dm) dm.onclick=()=>{ COMM.view='dms'; COMM.peer=dm.dataset.h; COMM.lastDmId=null; renderCommunity(); };
+}
+async function renderCommDms(){
+  const body=$('#commBody'); if(!body) return;
+  if(!COMM.peer){
+    const r=await post('/api/community/dm/threads',{});
+    const th=(r.threads||[]);
+    body.innerHTML=`<div class="muted" style="font-size:11px;margin-bottom:8px">Private messages between you and one member. Start one from <b>People &amp; Friends</b>, the ✉ icon, or add a friend by their OraCool number.</div>`+
+      (th.length? th.map(t=>`<div class="cthread" data-h="${escapeHtml(t.username||'')}"><div style="min-width:0"><b style="color:var(--cyan2)">${t.mod?'🛡 ':'<span class="conl '+(t.online?'on':'')+'"></span>'}${escapeHtml(t.username||'member')}</b>${t.admin?' <span class="tag" style="color:var(--gold)">ADMIN</span>':''}${t.unread?` <span class="cunread">${t.unread}</span>`:''}<div class="muted" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.preview||'')}</div></div><div class="muted" style="font-size:10px;flex:none">${escapeHtml(fmtCommTime(t.t))}</div></div>`).join('') : '<div class="muted">No conversations yet.</div>');
+    body.querySelectorAll('.cthread').forEach(el=>{ el.onclick=()=>{ COMM.peer=el.dataset.h; COMM.lastDmId=null; renderCommDms(); }; });
+    return;
+  }
+  body.innerHTML=`<div class="commhead" style="margin-bottom:6px"><button class="btn small ghost" id="dmBack">← Messages</button><b style="color:var(--cyan2)">@${escapeHtml(COMM.peer)}</b><span class="muted" id="dmOnline" style="font-size:10px"></span><span style="flex:1"></span><button class="btn small ghost" id="dmReport" style="color:var(--danger)">⚑ Report</button></div>
+    <div class="commmsgs" id="dmMsgs"><div class="muted">Loading…</div></div>
+    <div class="commcompose" id="dmCompose"><input type="text" id="dmInput" maxlength="800" autocomplete="off" placeholder="Message @${escapeHtml(COMM.peer)}"><button class="btn primary" id="dmSend">Send</button></div>`;
+  $('#dmBack').onclick=()=>{ COMM.peer=null; COMM.lastDmId=null; renderCommDms(); };
+  $('#dmReport').onclick=()=>openCommReport(COMM.peer, null);
+  const send=async()=>{ const inp=$('#dmInput'); const text=(inp.value||'').trim(); if(!text) return; inp.value=''; const r=await post('/api/community/dm/send',{handle:COMM.peer, body:text}); if(r.error){ addErr('Community: '+r.error); inp.value=text; return; } const el=$('#dmMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); COMM.lastDmId=r.message.id; el.scrollTop=el.scrollHeight; } };
+  $('#dmSend').onclick=send; $('#dmInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
+  loadCommDm(true);
+}
+async function loadCommDm(initial){
+  const r=await post('/api/community/dm/messages',{handle:COMM.peer, after: initial?null:COMM.lastDmId});
+  const el=$('#dmMsgs'); if(!el) return;
+  if(r.error){ el.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+  if(initial){ el.innerHTML=''; if(!(r.messages||[]).length) el.innerHTML='<div class="muted">Say hello — this conversation is private.</div>'; if(r.mod){ const c=$('#dmCompose'); if(c) c.innerHTML='<div class="muted" style="font-size:11px">The moderator does not take replies. Use ⚑ Report to reach it.</div>'; const rb=$('#dmReport'); if(rb) rb.style.display='none'; } }
+  (r.messages||[]).forEach(m=>appendCommMsg(el,m));
+  if((r.messages||[]).length){ COMM.lastDmId=r.messages[r.messages.length-1].id; el.scrollTop=el.scrollHeight; }
+  const on=$('#dmOnline'); if(on) on.textContent=r.mod?'moderator':(r.online?'● online':'offline');
+}
+async function renderCommFriends(){
+  const el=$('#commFriends'); if(!el) return;
+  const r=await post('/api/community/friends',{});
+  const fs=r.friends||[];
+  el.innerHTML=fs.length? fs.map(p=>`<div class="cperson"><div style="min-width:0"><span class="conl ${p.online?'on':''}"></span><b style="color:var(--cyan2)">@${escapeHtml(p.username||'member')}</b> <span class="muted" style="font-size:10px" title="OraCool number">${escapeHtml(String(p.number||''))}</span>${p.admin?' <span class="tag" style="color:var(--gold)">ADMIN</span>':''}</div><div style="display:flex;gap:6px;flex:none"><button class="btn small ghost" data-fdm="${escapeHtml(p.username||'')}">✉ Message</button></div></div>`).join('') : '<div class="muted">No friends yet — add one by their OraCool number below.</div>';
+  el.querySelectorAll('[data-fdm]').forEach(b=>{ b.onclick=()=>{ COMM.view='dms'; COMM.peer=b.dataset.fdm; COMM.lastDmId=null; renderCommunity(); }; });
+}
+async function commAddFriend(){
+  const inp=$('#friendNum'); const out=$('#friendOut'); if(!inp||!out) return;
+  const num=(inp.value||'').trim();
+  if(!/^\d{6,12}$/.test(num)){ out.innerHTML='<span style="color:var(--danger)">Enter their OraCool number (digits only).</span>'; return; }
+  out.innerHTML='<span class="muted">Looking up…</span>';
+  const r=await post('/api/community/friend/add',{number:num});
+  if(r.error){ out.innerHTML='<span style="color:var(--danger)">'+escapeHtml(r.error)+'</span>'; return; }
+  inp.value=''; out.innerHTML='<span style="color:var(--ok)">✓ Added @'+escapeHtml(r.profile.username)+' — say hi!</span>';
+  renderCommFriends();
+  addSystemNote('👥 You added <b>@'+escapeHtml(r.profile.username)+'</b> as a friend.');
+}
+async function renderCommPeople(q){
+  const body=$('#commBody'); if(!body) return;
+  if(q===undefined){ body.innerHTML=`<div class="tag" style="margin-top:2px">Friends</div><div id="commFriends"><div class="muted">Loading…</div></div>
+      <div class="commcompose" style="margin:8px 0"><input type="text" id="friendNum" placeholder="Add a friend by their OraCool number (e.g. 2000123456)" autocomplete="off" inputmode="numeric"><button class="btn primary" id="friendGo">Add</button></div>
+      <div class="muted" id="friendOut" style="font-size:11px;margin:-4px 0 10px"></div>
+      <div class="tag">All members</div>
+      <div class="commcompose" style="margin:8px 0"><input type="text" id="commQ" placeholder="Search by username, name, bio or number…" autocomplete="off"><button class="btn ghost" id="commQGo">Search</button></div>
+      <div id="commPeople"><div class="muted">Loading…</div></div>`;
+    $('#commQGo').onclick=()=>renderCommPeople($('#commQ').value);
+    $('#commQ').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); renderCommPeople($('#commQ').value); } });
+    $('#friendGo').onclick=commAddFriend;
+    $('#friendNum').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); commAddFriend(); } });
+    renderCommFriends();
+  }
+  const r=await post('/api/community/people',{q:q||''});
+  const list=$('#commPeople'); if(!list) return;
+  const ppl=r.people||[];
+  list.innerHTML=ppl.length? ppl.map(p=>`<div class="cperson"><div style="min-width:0"><span class="conl ${p.online?'on':''}"></span><b style="color:var(--cyan2)">@${escapeHtml(p.username||'member')}</b> <span class="muted" style="font-size:10px" title="OraCool number">${escapeHtml(String(p.number||''))}</span>${p.admin?' <span class="tag" style="color:var(--gold)">ADMIN</span>':''}<div class="muted" style="font-size:11px">${escapeHtml(p.bio||'')}${p.bio?' · ':''}joined ${escapeHtml(p.joined||'')}</div></div><div style="display:flex;gap:6px;flex:none"><button class="btn small ghost" data-dm="${escapeHtml(p.username||'')}">✉ Message</button>${p.admin?'':`<button class="btn small ghost" data-rep="${escapeHtml(p.username||'')}" style="color:var(--danger)">⚑</button>`}</div></div>`).join('') : '<div class="muted">No members found yet. Say hello in the Lounge — members appear here once they open the Community.</div>';
+  list.querySelectorAll('[data-dm]').forEach(b=>{ b.onclick=()=>{ COMM.view='dms'; COMM.peer=b.dataset.dm; COMM.lastDmId=null; renderCommunity(); }; });
+  list.querySelectorAll('[data-rep]').forEach(b=>{ b.onclick=()=>openCommReport(b.dataset.rep, null); });
+}
+function openCommReport(handle, messageId){
+  let m=document.getElementById('commReport'); if(m) m.remove();
+  m=document.createElement('div'); m.id='commReport'; m.className='modal open';
+  m.innerHTML=`<div class="modalcard"><div class="ptitle" style="font-size:14px">⚑ Report @${escapeHtml(handle)}</div>
+    <div class="muted" style="font-size:12px;margin:6px 0 10px;line-height:1.5">Tell the OraCool moderator what this member did. ${messageId?'The message you tapped is attached as evidence.':'Tip: tap <b>⚑ report</b> on the exact message to attach it as evidence.'}<br>When <b>3 different members</b> report the same account, the moderator (OraCool's admin AI) reviews the evidence itself. Only the moderator or an administrator can suspend an account — never the reporters. False reports reduce the weight of your future reports.</div>
+    <textarea id="commReason" rows="4" maxlength="500" placeholder="What happened? (scam, threats, illegal sales, hacking, harassment…)"></textarea>
+    <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end"><button class="btn ghost" id="commRepCancel">Cancel</button><button class="btn primary" id="commRepSend">Send report</button></div>
+    <div class="result" id="commRepOut"></div></div>`;
+  document.body.appendChild(m);
+  $('#commRepCancel').onclick=()=>m.remove();
+  m.addEventListener('click', e=>{ if(e.target===m) m.remove(); });
+  $('#commRepSend').onclick=async()=>{
+    const reason=($('#commReason').value||'').trim(); const out=$('#commRepOut');
+    if(reason.length<10){ out.innerHTML='<div class="errbox">Describe what happened (at least 10 characters).</div>'; return; }
+    out.innerHTML=SPIN;
+    const r=await post('/api/community/report',{handle, reason, message_ids: messageId?[messageId]:[]});
+    if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+    out.innerHTML='<div class="okbox">'+escapeHtml(r.message||'Report received.')+(r.note?'<div class="muted" style="font-size:11px;margin-top:4px">'+escapeHtml(r.note)+'</div>':'')+'</div>';
+    $('#commRepSend').style.display='none'; $('#commRepCancel').textContent='Close';
+    addSystemNote('⚑ Report sent about <b>@'+escapeHtml(handle)+'</b> — '+escapeHtml(r.message||''));
+  };
+  setTimeout(()=>{ const t=$('#commReason'); if(t) t.focus(); }, 50);
+}
+
 /* ---------- tabs ---------- */
 const TAB_TIER={cases:'pro', trading:'pro', code:'pro'};
 function tabLockPanel(p, need){
@@ -1722,6 +1931,7 @@ document.querySelectorAll('.tab').forEach(t=>{
     t.classList.add('active'); $('#p-'+t.dataset.p).classList.add('active');
     if(locked){ tabLockPanel(t.dataset.p, need); return; }   // plan lock — nothing above your tier opens
     if(t.dataset.p==='status')renderStatus();
+    if(t.dataset.p==='community')renderCommunity();
     if(t.dataset.p==='cases')renderCases();
     if(t.dataset.p==='devices')renderDevices();
     if(t.dataset.p==='code')renderCode();
@@ -2584,13 +2794,47 @@ async function renderAdmin(){
     <div class="result" id="aAudit" style="margin-top:8px"></div>
     <div class="result" id="aLogs" style="margin-top:8px"></div>
     <div class="result" id="aDiag" style="margin-top:8px"></div>
+    <div class="result" id="aMod" style="margin-top:8px"></div>
     <div id="aBrand" style="margin-top:14px"></div>
     <div id="aUsers"><div style="text-align:center;padding:16px"><span class="spinner"></span></div></div>
     <div class="result" id="aOut"></div>`;
   $('#aRefresh').onclick=refreshAdmin;
   $('#aSearch').addEventListener('input',()=>{ renderAdminRows(adminCache); });
   await refreshAdmin();
+  if($('#aMod')) renderModeration();
   if($('#aBrand')) renderBrandAccounts();
+}
+
+async function renderModeration(){
+  const box=$('#aMod'); if(!box) return;
+  const r=await post('/api/admin/moderation',{token:proToken});
+  if(!r || r.error || r.locked){ box.innerHTML=''; return; }
+  const st=r.stats||{}; const col=s=>s==='blocked'?'var(--danger)':(s==='pending_admin'?'var(--gold)':(s==='overturned'||s==='dismissed'?'var(--ok)':'var(--cyan2)'));
+  box.innerHTML=`<div class="ptitle" style="font-size:13px; margin-bottom:6px">🛡 Community moderation — admin AI <button class="btn small ghost" id="aModRefresh" style="float:right">↻</button></div>
+    <div class="statcards">
+      <div class="stat"><div class="l">Cases</div><div class="v">${st.cases||0}</div></div>
+      <div class="stat"><div class="l">Suspended by AI</div><div class="v" style="color:${(st.blocked_by_ai||0)>0?'var(--danger)':'var(--ok)'}">${st.blocked_by_ai||0}</div></div>
+      <div class="stat"><div class="l">Need your decision</div><div class="v" style="color:${(st.pending_admin||0)>0?'var(--gold)':'var(--ok)'}">${st.pending_admin||0}</div></div>
+    </div>
+    <div class="muted" style="font-size:10px; margin-bottom:6px">${escapeHtml(r.note||'')}</div>
+    ${(r.cases||[]).length? r.cases.slice(0,12).map(c=>`<div class="logline" style="display:block; margin-bottom:8px; line-height:1.5">
+        <b style="color:var(--cyan2)">@${escapeHtml(c.handle||'?')}</b> <span class="muted">${escapeHtml(c.reported||'')}</span> · <span class="tag" style="color:${col(c.status)}">${escapeHtml(String(c.status||'').replace('_',' '))}</span> · ${(c.reporters||[]).length} reporter(s) · <span class="muted">${escapeHtml(String(c.opened||'').slice(0,16))}</span><br>
+        <span style="font-size:11px">${c.verdict?`Verdict <b>${escapeHtml(c.verdict)}</b> (${Math.round((c.confidence||0)*100)}% confident) · ${escapeHtml(String(c.category||'none').replace(/_/g,' '))} — ${escapeHtml(c.summary||'')}`:escapeHtml(c.error||'Awaiting the moderator…')}</span>
+        ${(c.evidence||[]).length?`<div class="muted" style="font-size:10px">Evidence: “${escapeHtml(c.evidence[0])}”${c.evidence.length>1?' (+'+(c.evidence.length-1)+' more)':''}</div>`:''}
+        <div style="margin-top:4px; display:flex; gap:6px; flex-wrap:wrap">
+          ${(c.status==='pending_admin'||c.status==='advisory')?`<button class="btn small ghost" data-mod="confirm" data-id="${escapeHtml(c.id)}" style="color:var(--danger)">Suspend this account</button>`:''}
+          ${c.status==='blocked'?`<button class="btn small ghost" data-mod="overturn" data-id="${escapeHtml(c.id)}" style="color:var(--ok)">Overturn — unblock</button>`:''}
+        </div></div>`).join('') : '<div class="muted">No moderation cases yet. A case opens automatically when 3 different members report the same account.</div>'}
+    ${(r.reports||[]).length?`<div class="tag" style="margin-top:6px">Reported accounts</div>${r.reports.slice(0,10).map(x=>`<div class="logline" style="display:block">@${escapeHtml(x.handle||'?')} <span class="muted">${escapeHtml(x.email||'')}</span> · ${x.counting}/${st.threshold||3} counting (${x.total} total)${x.blocked?' · <b style="color:var(--danger)">suspended</b>':''} <button class="btn small ghost" data-mod="review" data-email="${escapeHtml(x.email||'')}">Ask the AI (advisory)</button></div>`).join('')}`:''}`;
+  $('#aModRefresh').onclick=renderModeration;
+  box.querySelectorAll('[data-mod]').forEach(b=>{ b.onclick=async()=>{
+    const act=b.dataset.mod; let r2;
+    if(act==='confirm'){ if(!confirm('Suspend this account now? They will see the BLOCKED screen and owe the $20 reinstatement fine.')) return; r2=await post('/api/admin/moderation/confirm',{token:proToken, case_id:b.dataset.id}); }
+    else if(act==='overturn'){ if(!confirm('Overturn the moderator and unblock this account?')) return; r2=await post('/api/admin/moderation/overturn',{token:proToken, case_id:b.dataset.id}); }
+    else { b.textContent='Reviewing…'; r2=await post('/api/admin/moderation/review',{token:proToken, email:b.dataset.email}); if(r2 && r2.verdict) addSystemNote('🛡 Advisory verdict for <b>'+escapeHtml(b.dataset.email)+'</b>: <b>'+escapeHtml(r2.verdict)+'</b> ('+Math.round((r2.confidence||0)*100)+'%) — '+escapeHtml(r2.summary||'')+' <i>(advisory only — nobody was suspended)</i>'); }
+    if(r2 && r2.error) addErr('Moderation: '+r2.error);
+    renderModeration(); if(act!=='review') refreshAdmin();
+  }; });
 }
 async function renderBrandAccounts(){
   const box=$('#aBrand');if(!box)return;
@@ -3738,7 +3982,9 @@ function renderGate(){
       <div class="gatetab ${gateMode==='signup'?'active':''}" id="gtSignup">Create account</div>
       <div class="gatetab ${gateMode==='signin'?'active':''}" id="gtSignin">Sign in</div>
     </div>
-    ${gateMode==='signup' ? `<label class="lbl">What should I call you?</label><input type="text" id="gName" placeholder="e.g. sir, boss, chief…" autocomplete="nickname">` : ''}
+    ${gateMode==='signup' ? `<label class="lbl">What should I call you?</label><input type="text" id="gName" placeholder="e.g. sir, boss, chief…" autocomplete="nickname">
+    <label class="lbl">Your username <span class="muted" style="font-size:10px">· public & unique — how members find you in Community</span></label>
+    <input type="text" id="gUser" placeholder="e.g. daniel_o" maxlength="20" autocomplete="off" style="text-transform:lowercase">` : ''}
     <label class="lbl">Email</label>
     <input type="email" id="gEmail" placeholder="you@example.com" autocomplete="email">
     <label class="lbl">Password</label>
@@ -3773,13 +4019,15 @@ function renderGate(){
     const email = $('#gEmail').value.trim(), pass = $('#gPass').value;
     const out = $('#gOut');
     if(!email || !pass){ out.innerHTML='<div class="errbox">Enter your email and password.</div>'; return; }
-    if(gateMode==='signup'){ const nm=$('#gName'); if(nm){ settings.userName=nm.value.trim()||'sir'; saveSettings(); } }
+    let uname='';
+    if(gateMode==='signup'){ const nm=$('#gName'); if(nm){ settings.userName=nm.value.trim()||'sir'; saveSettings(); } const gu=$('#gUser'); if(gu) uname=gu.value.trim(); }
     out.innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span></div>';
     const r = gateMode==='signup'
-      ? await post('/api/auth/signup',{email,password:pass,name:settings.userName||''})
+      ? await post('/api/auth/signup',{email,password:pass,name:settings.userName||'',username:uname})
       : await post('/api/auth/login',{email,password:pass});
     // Password-only signup: no email-code panel.
     if(r.status===200 && r.data && r.data.access_token){
+      if(r.community && r.community.number){ window.__commWelcome='Welcome to the community, <b>@'+escapeHtml(r.community.username||'')+'</b>! Your OraCool number is <b style="color:var(--gold)">'+r.community.number+'</b> — share it so friends can add you, and use it to add others in the Community tab.'; }
       if(r.requires_2fa){
         gate2fa = {email, session:{user:r.data.user, access_token:r.data.access_token, refresh_token:r.data.refresh_token}};
         renderGate(); return;
@@ -3792,6 +4040,7 @@ function renderGate(){
 }
 async function finishAuth(){
   hideGate();
+  if(window.__commWelcome){ addSystemNote(window.__commWelcome); delete window.__commWelcome; }
   updateTier(); updateAdminUI(); renderStatus(); renderAccount(); renderAcctChip();
   setOrbStatus('online');
   const restored=await restoreAccountChat();

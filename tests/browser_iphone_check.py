@@ -20,6 +20,10 @@ for i, js in enumerate(scripts):
     assert re.search(r'/\\p\{', js) is None, f'script {i}: literal unicode property escape — build it with new RegExp so old engines skip it'
     assert '.at(-' not in js and 'structuredClone' not in js and 'Object.hasOwn(' not in js, f'script {i}: API missing before iOS 15.4'
 open('/tmp/_failsafe.js', 'w').write(scripts[0]); open('/tmp/_main.js', 'w').write(scripts[1])
+import os
+if not os.path.exists('/tmp/esb/node_modules/acorn'):   # sandbox resets wipe /tmp — fetch the parser once
+    os.makedirs('/tmp/esb', exist_ok=True)
+    subprocess.run('cd /tmp/esb && npm init -y >/dev/null 2>&1 && npm i acorn@8 --silent', shell=True, capture_output=True)
 node = subprocess.run(['node', '-e', """
 const acorn=require('/tmp/esb/node_modules/acorn'); const fs=require('fs');
 acorn.parse(fs.readFileSync('/tmp/_failsafe.js','utf8'),{ecmaVersion:5});

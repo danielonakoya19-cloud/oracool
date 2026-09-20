@@ -41,7 +41,8 @@ class Patch9Tests(unittest.TestCase):
             r=s.auth_signup('a@example.com','TestPassword123')
         self.assertEqual(r['status'],200)
         self.assertNotIn('verify_sent',r)
-        self.assertTrue(fetch.call_args.kwargs['json_body']['email_confirm'])
+        create_call = next(c for c in fetch.call_args_list if '/auth/v1/admin/users' in c.args[0])
+        self.assertTrue(create_call.kwargs['json_body']['email_confirm'])
         self.assertIn('grant_type=password',auth.call_args.args[0])
     def test_admin_signup_is_reserved(self):
         with patch.object(s,'is_admin',return_value=True),patch.object(s,'http_fetch') as f:

@@ -36,6 +36,7 @@ import cores
 import crypto
 import reminders
 import communications
+import community
 
 PORT = int(os.environ.get("PORT", "8000"))
 HOST = "0.0.0.0"
@@ -703,8 +704,10 @@ def is_verified(email):
     return False
 
 
-def auth_signup(email, password, name=""):
-    """Password signup without an email-code gate; passwords stay in Supabase."""
+def auth_signup(email, password, name="", username=""):
+    """Password signup without an email-code gate; passwords stay in Supabase.
+    The username is the member's PUBLIC, UNIQUE community identity (their e-mail
+    is never shown to other members). If omitted, one is auto-assigned later."""
     email = (email or "").strip().lower()
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         return {"error": "Enter a valid email address."}
@@ -714,16 +717,36 @@ def auth_signup(email, password, name=""):
     # Never allow somebody to claim creator privileges by typing a reserved email.
     if is_admin(email):
         return {"error": "This is a reserved administrator address. Sign in to the existing account; public signup cannot create admins."}
+    un = None
+    if username:
+        un = str(username).strip().lstrip("@").lower()
+        if not community.USERNAME_RE.match(un):
+            return {"error": "Usernames are 3-20 characters, start with a letter or number, and use only letters, numbers, dots and underscores."}
+        if un in community.RESERVED_USERNAMES:
+            return {"error": "That username is reserved. Pick another one."}
+        taken = community_service().username_taken(un)
+        if taken:
+            return {"error": "That username is already taken. Pick another one."}
+        if taken is None:   # community tables not in place yet - check account records
+            for rec in load_users().values():
+                if str(rec.get("username") or "").lower() == un:
+                    return {"error": "That username is already taken. Pick another one."}
     url, svc = key("SUPABASE_URL"), key("SUPABASE_SERVICE_KEY")
     if not url or not svc:
         return {"error": "Signup is not configured. The operator must set Supabase server credentials."}
+    created = {}
     try:
-        http_fetch(url.rstrip("/") + "/auth/v1/admin/users", method="POST",
-                   headers={"apikey": svc, "Authorization": "Bearer " + svc,
-                            "Content-Type": "application/json"},
-                   json_body={"email": email, "password": password, "email_confirm": True,
-                              "user_metadata": {"display_name": (name or email.split("@")[0])[:60],
-                                                "signup_mode": "password_only"}}, timeout=25)
+        st, raw, _ = http_fetch(url.rstrip("/") + "/auth/v1/admin/users", method="POST",
+                                headers={"apikey": svc, "Authorization": "Bearer " + svc,
+                                         "Content-Type": "application/json"},
+                                json_body={"email": email, "password": password, "email_confirm": True,
+                                           "user_metadata": {"display_name": (name or email.split("@")[0])[:60],
+                                                             "username": un or "",
+                                                             "signup_mode": "password_only"}}, timeout=25)
+        try:
+            created = json.loads(raw) if raw else {}
+        except Exception:
+            created = {}
     except urllib.error.HTTPError as e:
         if e.code in (400, 422):
             return {"error": "Could not create this account. If already registered, sign in or reset your password."}
@@ -734,8 +757,23 @@ def auth_signup(email, password, name=""):
                       json_body={"email": email, "password": password})
     if r.get("status") == 200 and (r.get("data") or {}).get("access_token"):
         touch_user(email, email_verification_required=False)
+        try:
+            prof = community_service().ensure_profile(email, un, (name or "").strip()[:60])
+        except community.UsernameTaken:
+            uid = (created.get("user") or {}).get("id")
+            if uid:   # raced for the username - undo the account just created
+                try:
+                    http_fetch(url.rstrip("/") + "/auth/v1/admin/users/" + uid, method="DELETE",
+                               headers={"apikey": svc, "Authorization": "Bearer " + svc}, timeout=15)
+                except Exception:
+                    pass
+            return {"error": "That username was just taken by another member. Pick another one."}
+        if prof:
+            touch_user(email, username=prof.get("username"), oracool_number=prof.get("oracool_number"))
         return {"status": 200, "data": r["data"], "admin": False,
-                "blocked": is_blocked(email), "pro_token": check_subscription(email)}
+                "blocked": is_blocked(email), "pro_token": check_subscription(email),
+                "community": {"username": (prof or {}).get("username"),
+                              "number": (prof or {}).get("oracool_number")}}
     return {"error": "Account created. Please sign in with your email and password."}
 
 
@@ -3954,7 +3992,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch14-ios-safari-boot",
+        "build": "patch15-community-ai-moderation",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6728,7 +6766,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch14-ios-safari-boot",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch15-community-ai-moderation",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -6775,7 +6813,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "This account is suspended. Pay the reinstatement fine to restore access.",
                                  "suspended": True, "blocked": True, "fine_usd": FINE_USD}, 403)
                 return
-        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/reminders/", "/api/comms/")) or path in ("/api/image", "/api/video")
+        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/reminders/", "/api/comms/", "/api/community/")) or path in ("/api/image", "/api/video")
         if protected:
             em = request_identity(self, body, require_supabase=path.startswith(("/api/reminders/", "/api/voice/", "/api/comms/")))
             if not em:
@@ -6798,7 +6836,9 @@ class Handler(BaseHTTPRequestHandler):
                     _ae = ((verify_jwt(body["token"].strip(), key("JWT_SECRET") or "dev-secret")) or {}).get("sub", "")
                 _tail = path.split("/")[3] if path.count("/") > 3 else path.split("/")[-1]
                 audit_log(_ae, path.replace("/api/", ""), _tail)
-            if path.startswith("/api/comms/"):
+            if path.startswith("/api/community/"):
+                self._send_json(community_route(path[len("/api/community/"):], body))
+            elif path.startswith("/api/comms/"):
                 service = communication_service(); owner = body["email"]
                 action = path[len("/api/comms/"):]
                 if action == "state": result = service.listing(owner)
@@ -7064,6 +7104,33 @@ class Handler(BaseHTTPRequestHandler):
                     d = _cases_load()
                     n = max(1, min(int(body.get("limit") or 60), 500))
                     self._send_json({"audit": list(reversed(d.get("audit", [])))[:n]})
+            elif path == "/api/admin/moderation":
+                if _require_admin(self, body):
+                    try:
+                        self._send_json(community_service().admin_overview())
+                    except community.CommunitySetup:
+                        self._send_json({"setup_required": True, "cases": [], "reports": [], "stats": {},
+                                         "message": "Run the Patch 15 SQL in Supabase to activate community moderation."})
+            elif path == "/api/admin/moderation/review":
+                if _require_admin(self, body):
+                    try:
+                        self._send_json(community_service().admin_advisory_review(body.get("email")))
+                    except community.CommunitySetup:
+                        self._send_json({"error": "Community database is being set up (run the Patch 15 SQL in Supabase)."})
+            elif path == "/api/admin/moderation/confirm":
+                payload = _require_admin(self, body)
+                if payload:
+                    try:
+                        self._send_json(community_service().admin_confirm(body.get("case_id"), payload.get("sub", "")))
+                    except community.CommunitySetup:
+                        self._send_json({"error": "Community database is being set up (run the Patch 15 SQL in Supabase)."})
+            elif path == "/api/admin/moderation/overturn":
+                payload = _require_admin(self, body)
+                if payload:
+                    try:
+                        self._send_json(community_service().admin_overturn(body.get("case_id"), payload.get("sub", "")))
+                    except community.CommunitySetup:
+                        self._send_json({"error": "Community database is being set up (run the Patch 15 SQL in Supabase)."})
             elif path == "/api/admin/block":
                 payload = _require_admin(self, body)
                 if payload:
@@ -7163,7 +7230,7 @@ class Handler(BaseHTTPRequestHandler):
             # ---- auth (Supabase GoTrue)
             elif path == "/api/auth/signup":
                 self._send_json(auth_signup(body.get("email"), body.get("password"),
-                                            body.get("name", "")))
+                                            body.get("name", ""), body.get("username") or ""))
             elif path == "/api/auth/confirm":
                 self._send_json(auth_confirm(body.get("token_hash") or body.get("token")))
             elif path == "/api/auth/code/send":
@@ -7763,6 +7830,13 @@ class Handler(BaseHTTPRequestHandler):
             "an app password); you then honestly report unread counts, senders and subjects on request — never "
             "claim to read message bodies."}
         ] + messages
+        # Community identity: the AI knows this user's OraCool number + username.
+        try:
+            _brief = community_service().brief_for(chat_email) if chat_email else ""
+            if _brief:
+                messages = [{"role": "system", "content": _brief}] + messages
+        except Exception:
+            pass
         # Board grounding: for admin accounts a LIVE backend snapshot rides on
         # EVERY message, so the model never has to (or gets to) invent user
         # counts, names or revenue. These numbers are the only truth.
@@ -9200,6 +9274,104 @@ def communications_allowed(email):
 
 _COMMUNICATION_SERVICE = None
 _COMMUNICATION_SERVICE_LOCK = threading.Lock()
+
+
+_COMMUNITY_SERVICE = None
+_COMMUNITY_SERVICE_LOCK = threading.Lock()
+
+
+def community_rest(method, path, body=None, prefer=None):
+    """Service-role REST call into the Patch-15 community tables.
+
+    path is relative to /rest/v1 (table + query string); body is a list/dict.
+    Returns (status:int, data) where data is parsed JSON on 2xx and the error
+    payload otherwise. No client IP ever leaves this server; none is written
+    to any community table."""
+    url, svc = key("SUPABASE_URL"), key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return 503, {"message": "Supabase is not configured."}
+    try:
+        st, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/" + path, method=method,
+                                headers={"apikey": svc, "Authorization": "Bearer " + svc,
+                                         **({"Prefer": prefer} if prefer else {})},
+                                json_body=body if isinstance(body, (list, dict)) else None,
+                                timeout=25)
+    except urllib.error.HTTPError as e:
+        try:
+            data = json.loads(e.read() or b"{}")
+        except Exception:
+            data = {"message": "HTTP %s" % e.code}
+        return e.code, data
+    except Exception as e:
+        return 599, {"message": str(e)[:200]}
+    try:
+        data = json.loads(raw) if raw else []
+    except Exception:
+        data = str(raw)[:300]
+    return st, data
+
+
+def community_service():
+    """Member chat + reports + the AI moderator. Dependencies are late-bound so tests can patch them."""
+    global _COMMUNITY_SERVICE
+    with _COMMUNITY_SERVICE_LOCK:
+        if _COMMUNITY_SERVICE is None:
+            deps = {"is_admin": lambda e: is_admin(e),
+                    "block_user": lambda e, b, r="", by="": block_user(e, b, r, by),
+                    "is_blocked": lambda e: is_blocked(e),
+                    "load_users": lambda: load_users(),
+                    "check_tier": lambda e: check_tier(e),
+                    "llm_complete": lambda msgs, t=0.0, mx=700: llm_complete(msgs, temperature=t, max_tokens=mx),
+                    "notify_admins": lambda et, ti, bo="": notify_admins(et, ti, bo),
+                    "emit_event": lambda em, et, ti, bo="": emit_event(em, et, ti, bo)}
+            _COMMUNITY_SERVICE = community.Service(community_rest, deps)
+        return _COMMUNITY_SERVICE
+
+
+def community_route(action, body):
+    try:
+        svc = community_service()
+        me = body["email"]
+        if action == "setup":
+            return svc.setup_status()
+        if action == "me":
+            return svc.me(me)
+        if action == "profile":
+            return svc.update_profile(me, body.get("username", body.get("handle")), body.get("bio"))
+        if action == "rooms":
+            return {"rooms": svc.rooms(me)}
+        if action == "rooms/create":
+            pub = body.get("public")
+            return svc.create_room(me, body.get("name"), str(body.get("kind") or "group"),
+                                   body.get("description") or "", True if pub is None else bool(pub))
+        if action == "rooms/join":
+            return svc.join_room(me, str(body.get("slug") or body.get("room") or ""))
+        if action == "room/messages":
+            return svc.room_messages(me, str(body.get("room") or "lounge"), body.get("after"))
+        if action == "room/send":
+            return svc.room_send(me, str(body.get("room") or "lounge"), body.get("body"))
+        if action == "people":
+            return svc.people(me, body.get("q"))
+        if action == "lookup":
+            return svc.lookup(me, body.get("number"))
+        if action == "friends":
+            return svc.friends(me)
+        if action == "friend/add":
+            return svc.add_friend(me, body.get("number"))
+        if action == "dm/threads":
+            return svc.dm_threads(me)
+        if action == "dm/messages":
+            return svc.dm_messages(me, body.get("username") or body.get("handle"), body.get("after"))
+        if action == "dm/send":
+            return svc.dm_send(me, body.get("username") or body.get("handle"), body.get("body"))
+        if action == "report":
+            ids = body.get("message_ids") or ([body["message_id"]] if body.get("message_id") else [])
+            return svc.report(me, body.get("username") or body.get("handle"), body.get("reason"),
+                              [str(x) for x in ids if x], number=body.get("number"))
+        return {"error": "Unknown community action."}
+    except community.CommunitySetup:
+        return {"setup_required": True,
+                "message": "The community database is being set up. Run the Patch 15 SQL in Supabase (Dashboard → SQL Editor) and it will be live within a minute."}
 
 
 def communication_service():
