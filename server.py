@@ -87,6 +87,7 @@ def _load_keys():
                  "AGNES_API_KEY", "AGNES_BASE", "AGNES_MODEL", "AGNES_IMAGE_MODEL",
                  "AGNES_VIDEO_MODEL", "HIA_VIDEO_AUDIO_MODEL",
                  "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER",
+                 "TWILIO_API_KEY_SID", "TWILIO_API_KEY_SECRET",
                  "TWILIO_VERIFY_SERVICE_SID", "PUBLIC_BASE_URL", "REMINDER_CALLS_ENABLED",
                  "REMINDERS_ALWAYS_ON", "COMMUNICATIONS_ENABLED", "SENDGRID_ENABLED", "SENDGRID_API_KEY", "SENDGRID_FROM_EMAIL", "KAIROS_API_KEY", "KAIROS_APP_ID"):
         env = os.environ.get(name)
@@ -3674,6 +3675,7 @@ VAULT_STATUS_KEYS = ["OPENAI_API_KEY", "GROQ_API_KEY", "AGNES_API_KEY", "NEXAAPI
                      "DOMSCAN_API_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "HA_URL",
                      "KAIROS_API_KEY", "KAIROS_APP_ID", "ATLOS_MERCHANT_ID", "ATLOS_API_SECRET",
                      "CRYPTO_WALLET_EVM", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
+                     "TWILIO_API_KEY_SID", "TWILIO_API_KEY_SECRET",
                      "TWILIO_FROM_NUMBER", "TWILIO_VERIFY_SERVICE_SID", "SENDGRID_API_KEY",
                      "SENDGRID_FROM_EMAIL", "JWT_SECRET", "ENCRYPTION_KEY", "ENCRYPTION_IV"]
 
@@ -3755,7 +3757,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch12-admin-only-vault",
+        "build": "patch12b-twilio-api-key",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6518,7 +6520,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch12-admin-only-vault",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch12b-twilio-api-key",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -7257,6 +7259,10 @@ class Handler(BaseHTTPRequestHandler):
                 # Server Key Vault status — administrators only; booleans, never values.
                 if _require_admin(self, body):
                     self._send_json(admin_vault_status())
+            elif path == "/api/admin/twilio":
+                # Read-only Twilio readiness (credentials, numbers, Verify) — administrators only; never sends.
+                if _require_admin(self, body):
+                    self._send_json(twilio_readiness(force=bool(body.get("refresh"))))
             elif path == "/api/pay/crypto/check":
                 self._send_json(crypto_status(str(body.get("ref") or "")))
             elif path == "/api/chat":
@@ -8481,6 +8487,104 @@ def admin_online_payload(minutes=30):
     return {"window_minutes": minutes, "recent_count": len(recent), "accounts": rows[:25]}
 
 
+_TWILIO_READY_CACHE = {"at": 0.0, "value": None}
+
+
+def _twilio_get(url, user, pw, timeout=8):
+    """Read-only GET against Twilio with basic auth → (status, json_or_None)."""
+    auth = base64.b64encode((user + ":" + pw).encode()).decode()
+    try:
+        st, raw, _ = http_fetch(url, headers={"Authorization": "Basic " + auth}, timeout=timeout)
+        return st, (json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read() or b"{}")
+        except Exception:
+            return e.code, {}
+
+
+def _mask_number(n):
+    n = str(n or "")
+    return (n[:4] + "•••" + n[-3:]) if len(n) > 7 else n
+
+
+def twilio_readiness(force=False):
+    """Administrator diagnostics: read-only Twilio checks (never sends anything).
+
+    Reports which credential works (API key / Auth Token), the account type,
+    owned numbers, verified caller IDs, whether TWILIO_FROM_NUMBER is usable and
+    whether the Verify service exists — plus a plain list of blockers. Cached for
+    five minutes so the admin console stays fast."""
+    now = time.time()
+    if not force and _TWILIO_READY_CACHE["value"] is not None and now - _TWILIO_READY_CACHE["at"] < 300:
+        return _TWILIO_READY_CACHE["value"]
+    sid = str(key("TWILIO_ACCOUNT_SID") or "").strip()
+    tok = str(key("TWILIO_AUTH_TOKEN") or "").strip()
+    sk = str(key("TWILIO_API_KEY_SID") or "").strip()
+    secret = str(key("TWILIO_API_KEY_SECRET") or "").strip()
+    frm = str(key("TWILIO_FROM_NUMBER") or "").strip()
+    verify_sid = str(key("TWILIO_VERIFY_SERVICE_SID") or "").strip()
+    out = {"configured": bool(sid and (tok or (sk and secret))), "account_sid": (sid[:6] + "…" + sid[-4:]) if sid else "",
+           "api_key": {"configured": bool(sk and secret), "ok": None, "error": ""},
+           "auth_token": {"configured": bool(tok), "ok": None, "error": ""},
+           "account": {}, "owned_numbers": [], "caller_ids": 0,
+           "from_number": {"configured": bool(frm), "mask": _mask_number(frm), "owned": False, "verified_caller_id": False},
+           "verify_service": {"configured": bool(verify_sid), "ok": None},
+           "public_base_url": bool(str(key("PUBLIC_BASE_URL") or "").strip()),
+           "communications_enabled": str(key("COMMUNICATIONS_ENABLED") or "").lower() in ("true", "1", "yes"),
+           "blockers": [], "checked_at": _now()}
+    if not out["configured"]:
+        out["blockers"].append("Twilio credentials not configured (TWILIO_ACCOUNT_SID plus Auth Token or API key).")
+        _TWILIO_READY_CACHE.update(at=now, value=out)
+        return out
+    base = "https://api.twilio.com/2010-04-01/Accounts/" + sid
+    working = None
+    for label, user, pw in (("api_key", sk, secret), ("auth_token", sid, tok)):
+        if not (user and pw):
+            continue
+        st, d = _twilio_get(base + ".json", user, pw)
+        out[label]["ok"] = (st == 200)
+        if st == 200:
+            out["account"] = {"status": d.get("status"), "type": d.get("type")}
+            working = working or (user, pw)
+        else:
+            out[label]["error"] = ("HTTP %s %s" % (st, str((d or {}).get("message") or "")))[:140]
+    if not working:
+        out["blockers"].append("Neither the API key nor the Auth Token is accepted by Twilio.")
+        _TWILIO_READY_CACHE.update(at=now, value=out)
+        return out
+    if out["api_key"]["configured"] and out["api_key"]["ok"] is False:
+        out["blockers"].append("API key rejected (" + out["api_key"]["error"] + ") — finish the key creation wizard or create a Standard key; the Auth Token is being used meanwhile.")
+    user, pw = working
+    st, d = _twilio_get(base + "/IncomingPhoneNumbers.json?PageSize=50", user, pw)
+    numbers = [str(n.get("phone_number") or "") for n in (d.get("incoming_phone_numbers") or [])] if st == 200 else []
+    out["owned_numbers"] = [_mask_number(n) for n in numbers]
+    st, d = _twilio_get(base + "/OutgoingCallerIds.json?PageSize=50", user, pw)
+    caller_ids = [str(n.get("phone_number") or "") for n in (d.get("outgoing_caller_ids") or [])] if st == 200 else []
+    out["caller_ids"] = len(caller_ids)
+    out["from_number"]["owned"] = frm in numbers
+    out["from_number"]["verified_caller_id"] = frm in caller_ids
+    if (out["account"].get("type") or "").lower() == "trial":
+        out["blockers"].append("Trial account: calls/SMS only reach numbers verified in Twilio, and messages carry a trial notice. Upgrade to reach anyone.")
+    if not frm:
+        out["blockers"].append("TWILIO_FROM_NUMBER is not set.")
+    elif not out["from_number"]["owned"]:
+        out["blockers"].append("TWILIO_FROM_NUMBER " + _mask_number(frm) + " is not a number this Twilio account owns" + (" (it is only a verified caller ID — SMS from it will fail)." if out["from_number"]["verified_caller_id"] else ". Buy a number in Twilio → Phone Numbers, then set TWILIO_FROM_NUMBER to it."))
+    if verify_sid:
+        st, d = _twilio_get("https://verify.twilio.com/v2/Services/" + verify_sid, user, pw)
+        out["verify_service"]["ok"] = (st == 200)
+        if st != 200:
+            out["blockers"].append("TWILIO_VERIFY_SERVICE_SID is not accepted by Twilio Verify (HTTP %s)." % st)
+    else:
+        out["blockers"].append("No Verify service: create one in Twilio → Verify → Services and set TWILIO_VERIFY_SERVICE_SID (recipients cannot be verified without it).")
+    if not out["public_base_url"]:
+        out["blockers"].append("PUBLIC_BASE_URL is not set (status callbacks and STOP/START need it).")
+    if not out["communications_enabled"]:
+        out["blockers"].append("COMMUNICATIONS_ENABLED is false — nothing is sent until it is true.")
+    _TWILIO_READY_CACHE.update(at=now, value=out)
+    return out
+
+
 def platform_diagnostics():
     out = {"online": True, "time": _now(), "uptime_sec": int(time.time() - _BOOT_TS)}
     try:
@@ -8507,6 +8611,10 @@ def platform_diagnostics():
                         "openai": bool(key("OPENAI_API_KEY"))}
     except Exception:
         pass
+    try:
+        out["twilio"] = twilio_readiness()
+    except Exception as exc:
+        out["twilio"] = {"configured": False, "error": str(exc)[:120]}
     try:
         al = _alerts_all() or {}
         out["alerts"] = {"accounts": len(al),

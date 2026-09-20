@@ -79,3 +79,17 @@ Encrypted at rest (Fernet, `ENCRYPTION_KEY`): destinations, message bodies and c
 `tests/browser_patch11_check.py` runs a real Chromium session against the mocks to verify the console layout, the number→message→review→single-send flow, email readiness messaging, foreign-token denial and the mobile drawer.
 
 **No real call, SMS or email has been sent, and no Twilio number, Verify service or Chargebee/SendGrid sender has been created.**
+
+## Twilio API key (optional, recommended)
+
+You can authenticate outbound calls, SMS and Verify requests with a Twilio **API key** instead of the account Auth Token:
+
+| Setting | Value |
+|---|---|
+| `TWILIO_API_KEY_SID` | the key SID, starts with `SK…` |
+| `TWILIO_API_KEY_SECRET` | the secret shown once when the key is created |
+
+- Create it in Twilio Console → Account → **API keys & tokens** → *Create API key*. Choose **Standard** (a *Restricted* key must be granted Messages, Voice and Verify permissions or Twilio answers `401 actor doesn't have any assertions`). Click **Finish** — the key is not usable until the wizard completes.
+- When both are set, OraCool tries the API key first. If Twilio rejects it with 401 (unfinished, restricted, or revoked) the request automatically falls back to `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN`, so an unfinished key never takes calling down.
+- `TWILIO_AUTH_TOKEN` stays required: Twilio signs status callbacks and inbound STOP/START webhooks with the Auth Token, and OraCool rejects unsigned callbacks. If you rotate the Auth Token, update the row in Render.
+- The **Admin console → Diagnostics → Twilio readiness** card runs read-only checks (which credential works, account type, owned numbers, verified caller IDs, whether `TWILIO_FROM_NUMBER` is owned, Verify service) and lists the exact blockers. It never sends anything.

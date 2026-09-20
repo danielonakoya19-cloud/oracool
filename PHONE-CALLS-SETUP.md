@@ -8,7 +8,7 @@ For ordinary telephone calls, SMS and email to other consenting people, see `COM
 
 The interface shows phone reminders only to Enterprise/admin accounts; server-side checks remain authoritative. Losing eligibility cancels that account’s queued reminders. Every account still verifies its own recipient number and confirms each alarm. The configured Twilio number is the outgoing caller, not the recipient.
 
-- Build marker: `patch12-admin-only-vault` (Patch 11 communications unchanged).
+- Build marker: `patch12b-twilio-api-key` (Patch 11 communications unchanged).
 - Hands-free voice is opt-in. Tap **Start conversation**, allow the microphone, then speak after each reply. No repeated mic taps are needed.
 - Stop / mute releases the microphone. Interrupt reply cancels the current browser request and speech. Voice pauses when the page is hidden, locked, or signed out. Listening pauses during speech to avoid feedback; this is turn-taking, not uninterrupted full-duplex audio.
 - Replies are spoken sentence-by-sentence as they stream. Voice turns use the configured fast model when available. Ordinary admin small-talk no longer fetches the entire admin board first. Chat cloud syncing and periodic connection telemetry no longer block every first answer token.

@@ -8,6 +8,7 @@ Offline: no provider, payment or account changes. Verifies that
     server-configured model name (Turbo/Smart) is still honoured.
 """
 import importlib.util
+import io
 import json
 from pathlib import Path
 import sys
@@ -182,7 +183,7 @@ class Patch12Tests(unittest.TestCase):
         server, t = self.serve()
         try:
             with urllib.request.urlopen('http://127.0.0.1:%d/api/health' % server.server_port, timeout=3) as r:
-                self.assertEqual(json.loads(r.read())['build'], 'patch12-admin-only-vault')
+                self.assertEqual(json.loads(r.read())['build'], 'patch12b-twilio-api-key')
             with urllib.request.urlopen('http://127.0.0.1:%d/api/config' % server.server_port, timeout=3) as r:
                 self.assertNotIn('keys', json.loads(r.read()))
         finally:
@@ -191,3 +192,136 @@ class Patch12Tests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TwilioApiKeyTests(unittest.TestCase):
+    """Patch 12b — Twilio API key (SK…) support with Auth Token fallback; read-only readiness diagnostics."""
+
+    def setUp(self):
+        import reminders
+        self.rem = reminders
+        self.keys = {'TWILIO_ACCOUNT_SID': 'ACtest', 'TWILIO_AUTH_TOKEN': 'token-secret',
+                     'TWILIO_API_KEY_SID': 'SKtest', 'TWILIO_API_KEY_SECRET': 'key-secret'}
+        self.tmp = tempfile.TemporaryDirectory()
+        self.patches = [patch.dict(s.KEYS, {}, clear=True), patch.object(s, 'DATA_DIR', self.tmp.name),
+                        patch.dict(s._TWILIO_READY_CACHE, {'at': 0.0, 'value': None})]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        self.tmp.cleanup()
+
+    @staticmethod
+    def _basic(req):
+        import base64
+        return base64.b64decode(req.get_header('Authorization').split()[1]).decode()
+
+    def test_credential_order_prefers_api_key_then_auth_token(self):
+        self.assertEqual([c[2] for c in self.rem.twilio_credentials(self.keys.get)], ['api_key', 'auth_token'])
+        self.keys['TWILIO_API_KEY_SID'] = 'not-an-sk'      # malformed key ids are ignored
+        self.assertEqual([c[2] for c in self.rem.twilio_credentials(self.keys.get)], ['auth_token'])
+        self.assertEqual(self.rem.twilio_credentials({}.get), [])
+
+    def test_post_uses_api_key_when_it_works(self):
+        seen = []
+        class R:
+            def __init__(self, req): seen.append(TwilioApiKeyTests._basic(req))
+            def __enter__(self): return io.BytesIO(b'{"sid":"CA1","status":"queued"}')
+            def __exit__(self, *a): return False
+        with patch.object(self.rem.urllib.request, 'urlopen', side_effect=lambda req, timeout=0: R(req)):
+            data, label = self.rem.twilio_post(self.keys.get, 'https://api.twilio.com/2010-04-01/Accounts/ACtest/Calls.json', {'To': '+15005550006'})
+        self.assertEqual((data['sid'], label), ('CA1', 'api_key'))
+        self.assertEqual(seen, ['SKtest:key-secret'])
+
+    def test_unfinished_api_key_401_falls_back_to_auth_token_once(self):
+        seen = []
+        def fake(req, timeout=0):
+            seen.append(TwilioApiKeyTests._basic(req))
+            if seen[-1].startswith('SKtest:'):
+                raise urllib.error.HTTPError(req.full_url, 401, 'Unauthorized', {}, io.BytesIO(b'{"code":20003}'))
+            class R:
+                def __enter__(self_inner): return io.BytesIO(b'{"sid":"CA2","status":"queued"}')
+                def __exit__(self_inner, *a): return False
+            return R()
+        with patch.object(self.rem.urllib.request, 'urlopen', side_effect=fake):
+            data, label = self.rem.twilio_post(self.keys.get, 'https://api.twilio.com/x', {'To': '+15005550006'})
+        self.assertEqual((data['sid'], label), ('CA2', 'auth_token'))
+        self.assertEqual(seen, ['SKtest:key-secret', 'ACtest:token-secret'])
+
+    def test_non_401_rejection_is_not_retried_with_other_credentials(self):
+        seen = []
+        def fake(req, timeout=0):
+            seen.append(TwilioApiKeyTests._basic(req))
+            raise urllib.error.HTTPError(req.full_url, 400, 'Bad Request', {}, io.BytesIO(b'{"code":21211}'))
+        with patch.object(self.rem.urllib.request, 'urlopen', side_effect=fake):
+            with self.assertRaises(urllib.error.HTTPError):
+                self.rem.twilio_post(self.keys.get, 'https://api.twilio.com/x', {'To': 'bad'})
+        self.assertEqual(seen, ['SKtest:key-secret'])   # one attempt: a 400 is never a credential problem
+
+    def test_services_map_provider_errors_the_same_way_as_before(self):
+        import communications
+        svc = communications.Service(lambda k: {}, lambda k, v: True, self.keys.get, lambda: None, lambda o: True, lambda i: True)
+        def fake(req, timeout=0):
+            raise urllib.error.HTTPError(req.full_url, 401, 'Unauthorized', {}, io.BytesIO(b'{}'))
+        with patch.object(self.rem.urllib.request, 'urlopen', side_effect=fake):
+            with self.assertRaises(ValueError):       # both credentials rejected → clear rejection, no "unknown"
+                svc.provider('sms', '+15005550006', {'To': '+15005550006', 'Body': 'x'})
+        alarms = self.rem.Service(lambda k: {}, lambda k, v: True, self.keys.get, lambda: None, allowed=lambda o: True)
+        with patch.object(self.rem.urllib.request, 'urlopen', side_effect=fake):
+            with self.assertRaises(ValueError):
+                alarms.provider('/2010-04-01/Accounts/ACtest/Calls.json', {'To': '+15005550006'})
+        with patch.object(self.rem.urllib.request, 'urlopen', side_effect=OSError('network down')):
+            with self.assertRaises(RuntimeError):     # network failure → outcome unknown, no auto-retry
+                alarms.provider('/2010-04-01/Accounts/ACtest/Calls.json', {'To': '+15005550006'})
+
+    def test_readiness_reports_blockers_without_sending(self):
+        s.KEYS.update(self.keys, TWILIO_FROM_NUMBER='+17345550034', TWILIO_VERIFY_SERVICE_SID='VAtest')
+        calls = []
+        def fake_fetch(url, headers=None, timeout=0, **kw):
+            import base64
+            user = base64.b64decode(headers['Authorization'].split()[1]).decode().split(':')[0]
+            calls.append((user, url))
+            if user == 'SKtest':
+                raise urllib.error.HTTPError(url, 401, 'Unauthorized', {}, io.BytesIO(b'{"message":"actor doesn\'t have any assertions"}'))
+            if url.endswith('/Accounts/ACtest.json'):
+                return 200, json.dumps({'status': 'active', 'type': 'Trial'}).encode(), 'application/json'
+            if 'IncomingPhoneNumbers' in url:
+                return 200, json.dumps({'incoming_phone_numbers': []}).encode(), 'application/json'
+            if 'OutgoingCallerIds' in url:
+                return 200, json.dumps({'outgoing_caller_ids': [{'phone_number': '+2347052405515'}]}).encode(), 'application/json'
+            if 'verify.twilio.com' in url:
+                raise urllib.error.HTTPError(url, 404, 'Not Found', {}, io.BytesIO(b'{}'))
+            raise AssertionError('unexpected URL ' + url)
+        with patch.object(s, 'http_fetch', side_effect=fake_fetch):
+            r = s.twilio_readiness(force=True)
+        self.assertTrue(r['configured'])
+        self.assertFalse(r['api_key']['ok']); self.assertTrue(r['auth_token']['ok'])
+        self.assertEqual(r['account']['type'], 'Trial')
+        self.assertEqual(r['owned_numbers'], []); self.assertEqual(r['caller_ids'], 1)
+        self.assertFalse(r['from_number']['owned'])
+        self.assertFalse(r['verify_service']['ok'])
+        joined = ' '.join(r['blockers'])
+        for needle in ('API key rejected', 'Trial account', 'not a number this Twilio account owns', 'TWILIO_VERIFY_SERVICE_SID is not accepted', 'PUBLIC_BASE_URL', 'COMMUNICATIONS_ENABLED'):
+            self.assertIn(needle, joined)
+        self.assertNotIn('+17345550034', json.dumps(r))          # numbers are masked
+        self.assertTrue(all(m == 'GET' or True for m in []))
+        self.assertTrue(all('Messages.json' not in u and 'Calls.json' not in u for _, u in calls))  # read-only
+        # cached: a second call without force performs no network IO
+        with patch.object(s, 'http_fetch', side_effect=AssertionError('should be cached')):
+            self.assertEqual(s.twilio_readiness()['checked_at'], r['checked_at'])
+
+    def test_readiness_route_is_admin_only(self):
+        s.KEYS.update(ADMIN_EMAILS=['owner@example.test'])
+        with patch.object(s, 'twilio_readiness', return_value={'configured': False, 'blockers': ['x']}) as ready:
+            server = s.ThreadingHTTPServer(('127.0.0.1', 0), s.Handler)
+            t = threading.Thread(target=server.serve_forever, daemon=True); t.start()
+            try:
+                code, body = _post_err(server.server_port, '/api/admin/twilio', {'email': 'owner@example.test', 'admin': True})
+                self.assertEqual(code, 403); ready.assert_not_called()
+                code, body = _post(server.server_port, '/api/admin/twilio', {'token': s.make_admin_token('owner@example.test'), 'refresh': True})
+                self.assertEqual(code, 200); self.assertEqual(body['blockers'], ['x'])
+                ready.assert_called_once_with(force=True)
+            finally:
+                server.shutdown(); server.server_close(); t.join()

@@ -19,6 +19,51 @@ import urllib.error
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
+
+
+def twilio_credentials(key):
+    """Ordered (username, password, label) pairs for Twilio REST authentication.
+
+    A scoped API key (TWILIO_API_KEY_SID starting with 'SK' + TWILIO_API_KEY_SECRET)
+    is preferred when configured; the account Auth Token is the fallback. Webhook
+    signature validation always uses the Auth Token — that is what Twilio signs
+    with — so TWILIO_AUTH_TOKEN stays required for callbacks and STOP/START."""
+    out = []
+    sk = str(key('TWILIO_API_KEY_SID') or '').strip()
+    secret = str(key('TWILIO_API_KEY_SECRET') or '').strip()
+    if sk.startswith('SK') and secret:
+        out.append((sk, secret, 'api_key'))
+    sid = str(key('TWILIO_ACCOUNT_SID') or '').strip()
+    tok = str(key('TWILIO_AUTH_TOKEN') or '').strip()
+    if sid and tok:
+        out.append((sid, tok, 'auth_token'))
+    return out
+
+
+def twilio_post(key, url, fields, timeout=20):
+    """POST a form to Twilio, trying each configured credential in order.
+
+    A 401 from the API key (not finished, restricted without permissions, or
+    revoked) falls through to the Auth Token, so an unfinished key can never
+    take calling/SMS down. Any other rejection is raised unchanged for the
+    caller to map. Returns (parsed_json, credential_label)."""
+    creds = twilio_credentials(key)
+    if not creds:
+        raise ValueError('Twilio credentials are not configured.')
+    last = None
+    for i, (user, pw, label) in enumerate(creds):
+        auth = base64.b64encode((user + ':' + pw).encode()).decode()
+        req = urllib.request.Request(url, data=urllib.parse.urlencode(fields, doseq=True).encode(), method='POST',
+                                     headers={'Authorization': 'Basic ' + auth, 'Content-Type': 'application/x-www-form-urlencoded'})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.load(r), label
+        except urllib.error.HTTPError as e:
+            if e.code == 401 and i + 1 < len(creds):
+                last = e
+                continue
+            raise
+    raise last
 TERMINAL = {"completed", "busy", "failed", "no-answer", "canceled", "cancelled", "missed", "unknown"}
 
 
@@ -116,13 +161,13 @@ class Service:
 
     def provider(self, path, fields):
         origin='https://verify.twilio.com' if path.startswith('/v2/') else 'https://api.twilio.com'
-        auth=base64.b64encode((str(self.key('TWILIO_ACCOUNT_SID'))+':'+str(self.key('TWILIO_AUTH_TOKEN'))).encode()).decode()
-        req=urllib.request.Request(origin+path,data=urllib.parse.urlencode(fields,doseq=True).encode(),method='POST',
-                                   headers={'Authorization':'Basic '+auth,'Content-Type':'application/x-www-form-urlencoded'})
         try:
-            with urllib.request.urlopen(req,timeout=20) as r:return json.load(r)
+            data,_=twilio_post(self.key, origin+path, fields)
+            return data
         except urllib.error.HTTPError as e:
             raise ValueError('Calling provider rejected the request (HTTP '+str(e.code)+'). Check account credit, permissions and number configuration.') from None
+        except ValueError:
+            raise
         except Exception:
             raise RuntimeError('Provider outcome is unknown after a network error. No automatic retry; check the provider console.') from None
 

@@ -16,7 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from functools import wraps
-from reminders import E164
+from reminders import E164, twilio_post
 
 
 def normalize(channel, destination, country='international'):
@@ -99,15 +99,19 @@ class Service:
                 url='https://verify.twilio.com'+path
             else:
                 url='https://api.twilio.com/2010-04-01/Accounts/'+sid+('/Calls.json' if channel=='call' else '/Messages.json')
-            auth=base64.b64encode((sid+':'+str(self.key('TWILIO_AUTH_TOKEN'))).encode()).decode()
-            req=urllib.request.Request(url,data=urllib.parse.urlencode(fields,doseq=True).encode(),headers={'Authorization':'Basic '+auth,'Content-Type':'application/x-www-form-urlencoded'},method='POST')
+            req=None
         try:
-            with urllib.request.urlopen(req,timeout=20) as r:
-                if channel=='email':return {'sid':r.headers.get('X-Message-Id',''),'status':'accepted'}
-                return json.load(r)
+            if channel=='email':
+                with urllib.request.urlopen(req,timeout=20) as r:
+                    return {'sid':r.headers.get('X-Message-Id',''),'status':'accepted'}
+            # Twilio: API key first (if configured), Auth Token fallback on 401.
+            data,_=twilio_post(self.key,url,fields)
+            return data
         except urllib.error.HTTPError as e:
             if e.code>=500:raise RuntimeError('Provider outcome unknown. Check its console; do not resend automatically.') from None
             raise ValueError('Provider rejected the request (HTTP '+str(e.code)+'). Check sender authorization, verified recipients, opt-outs and credit.') from None
+        except ValueError:
+            raise
         except Exception:
             raise RuntimeError('Provider outcome unknown. Check its console; do not resend automatically.') from None
 
