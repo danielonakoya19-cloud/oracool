@@ -330,6 +330,9 @@ class Service:
         row = row or self._prof(email) or {}
         return {"username": row.get("username"), "number": row.get("oracool_number"),
                 "display_name": row.get("display_name", ""), "bio": row.get("bio", ""),
+                "avatar": row.get("avatar_url", ""),
+                "verified": bool(self.d.get("is_verified") and self.d["is_verified"](email)),
+                "verified_until": row.get("verified_until"),
                 "admin": bool(self.d["is_admin"](email)), "online": self._online(email),
                 "joined": str(row.get("created_at", ""))[:10]}
 
@@ -344,6 +347,7 @@ class Service:
         except Exception:
             unread = 0
         return {"profile": self._public_profile(email, row), "rooms": self.rooms(email),
+                "verified": bool(self.d.get("is_verified") and self.d["is_verified"](email)),
                 "unread_dm": unread, "threshold": REPORT_THRESHOLD,
                 "guidelines": ("Be respectful. Illegal activity — scams, threats, exploitation, hacking, selling "
                                "illegal goods — gets an account suspended after the OraCool moderator reviews reports "
@@ -428,6 +432,7 @@ class Service:
             owner = self.handle_of(r.get("owner_email") or "") if r.get("owner_email") else None
             out.append({"id": r.get("slug"), "name": r.get("name"), "about": r.get("description", ""),
                         "kind": r.get("kind"), "owner": owner,
+                        "banned": bool(r.get("banned")),
                         "yours": bool(viewer and (r.get("owner_email") == viewer))})
         out.sort(key=lambda x: (x["kind"] != "room", x["kind"] != "group", x["name"]))
         return out
@@ -515,7 +520,9 @@ class Service:
                     "mine": False, "admin": False, "mod": True}
         row = (pros or {}).get(sender) or {}
         return {"id": m.get("id"), "username": row.get("username") or "member",
-                "number": row.get("oracool_number"), "body": m.get("body", ""),
+                "number": row.get("oracool_number"), "avatar": row.get("avatar_url", ""),
+                "verified": bool(self.d.get("is_verified") and self.d["is_verified"](sender)),
+                "body": m.get("body", ""), "media_url": m.get("media_url", ""),
                 "t": m.get("created_at", ""), "mine": sender == viewer,
                 "admin": bool(sender and self.d["is_admin"](sender)), "mod": False}
 
@@ -526,6 +533,8 @@ class Service:
         r = self._room(str(room or "lounge"))
         if not r:
             return {"error": "Unknown room."}
+        if r.get("banned"):
+            return {"error": "This " + str(r.get("kind") or "room") + " has been banned by an administrator.", "banned": True}
         if r.get("kind") == "dm":
             return {"error": "Use the DM thread for that."}
         if not r.get("is_public") and r.get("owner_email") != email:
@@ -564,6 +573,8 @@ class Service:
         r = self._room(str(room or "lounge"))
         if not r:
             return {"error": "Unknown room."}
+        if r.get("banned"):
+            return {"error": "This " + str(r.get("kind") or "room") + " has been banned by an administrator.", "banned": True}
         if r.get("kind") == "dm":
             return {"error": "Use the DM thread for that."}
         body = _clean(body, MSG_MAX)
@@ -673,9 +684,11 @@ class Service:
                 continue
             last = self.store.one("comm_messages", "room_id=eq." + rid + "&order=id.desc&limit=1")
             unread = self._unread(email, rid)
-            peer_row = self.profile_by_username(self.handle_of(peer)) or {}
+            pro = self._prof(peer) or {}
             out.append({"username": self.handle_of(peer) or "member",
-                        "number": (self._prof(peer) or {}).get("oracool_number"),
+                        "avatar": pro.get("avatar_url", ""),
+                        "verified": bool(self.d.get("is_verified") and self.d["is_verified"](peer)),
+                        "number": pro.get("oracool_number"),
                         "mod": peer == MODERATOR, "t": last.get("created_at", "") if last else "",
                         "preview": ((last.get("body") or "")[:120]) if last else "",
                         "unread": unread, "online": self._online(peer),
@@ -705,30 +718,34 @@ class Service:
         return {"username": self.handle_of(peer), "mod": peer == MODERATOR, "online": self._online(peer),
                 "messages": [self._view(m, email, pros) for m in rows]}
 
-    def _dm_append(self, sender, recipient, body, mod=False):
+    def _dm_append(self, sender, recipient, body, mod=False, media_url=""):
         r = self._ensure_dm_room(sender if sender != MODERATOR else recipient, recipient if sender != MODERATOR else sender)
         m = self.store.insert("comm_messages",
                               {"room_id": r["id"], "sender_email": sender, "body": body,
-                               "kind": "mod" if mod else "chat"})
+                               "kind": "mod" if mod else ("voice" if media_url else "chat"),
+                               "media_url": media_url or ""})
         if sender != MODERATOR and m:
             self._mark_read(sender, r["id"], m.get("id"))
         return m
 
-    def dm_send(self, email, username, body):
+    def dm_send(self, email, username, body, media_url=""):
         self._need()
         email = email.lower()
         peer = self._resolve_peer(email, username)
         if not peer or peer == MODERATOR:
             return {"error": "No member with that username." if peer != MODERATOR
                     else "The moderator does not take replies. Use Report to reach it."}
-        body = _clean(body, MSG_MAX)
+        media_url = str(media_url or "")
+        if media_url and "storage/v1/object/public/" not in media_url:
+            return {"error": "Voice notes must be uploaded first."}
+        body = _clean(body, MSG_MAX) or ("🎤 Voice note" if media_url else "")
         if not body:
             return {"error": "Write a message first."}
         err = self._rate_ok(email)
         if err:
             return {"error": err}
         self.ensure_profile(email)
-        m = self._dm_append(email, peer, body)
+        m = self._dm_append(email, peer, body, media_url=media_url)
         if not m:
             return {"error": "Message could not be saved. Try again."}
         try:
@@ -796,6 +813,8 @@ class Service:
             return {"error": "You cannot report yourself."}
         if reported == MODERATOR or self.d["is_admin"](reported):
             return {"error": "Administrators and the moderator cannot be reported here. Use the Help desk."}
+        if self.d.get("is_verified") and self.d["is_verified"](reported):
+            return {"error": "Verified members (✦) can only be reviewed by an administrator."}
         reason = _clean(reason, REASON_MAX)
         if len(reason) < REASON_MIN:
             return {"error": "Describe what happened (at least %d characters)." % REASON_MIN}
@@ -858,6 +877,52 @@ class Service:
         elif cid:
             self.review_case(str(cid))
         return cid
+
+    # ------------------------------------------------------------ room reports & bans
+    def report_room(self, reporter, slug, reason):
+        self._need()
+        reporter = reporter.lower()
+        r = self._room(str(slug or ""))
+        if not r:
+            return {"error": "Unknown room."}
+        if r.get("kind") == "dm":
+            return {"error": "DM threads cannot be reported — report the member instead."}
+        if r.get("banned"):
+            return {"error": "This room has already been banned by an administrator."}
+        reason = _clean(reason, REASON_MAX)
+        if len(reason) < REASON_MIN:
+            return {"error": "Describe what is happening in this room (at least %d characters)." % REASON_MIN}
+        existing = self.store.one("comm_room_reports",
+                                  "room_id=eq." + r["id"] + "&reporter_email=eq." + reporter +
+                                  "&status=eq.open&limit=1")
+        if existing:
+            self.store.patch("comm_room_reports", "id=eq." + str(existing.get("id")), {"reason": reason})
+        else:
+            self.store.insert("comm_room_reports",
+                              {"room_id": r["id"], "reporter_email": reporter, "reason": reason, "status": "open"})
+        rows = self.store.get("comm_room_reports", "room_id=eq." + r["id"] + "&status=eq.open&limit=500")
+        return {"ok": True, "reports": len(rows),
+                "message": "Room report sent to the administrators. They can ban this room from Admin → Moderation."}
+
+    def admin_ban_room(self, slug, banned, reason, admin_email):
+        self._need()
+        r = self._room(str(slug or ""))
+        if not r:
+            return {"error": "Unknown room."}
+        if r.get("kind") == "dm":
+            return {"error": "DM threads cannot be banned."}
+        self.store.patch("comm_rooms", "id=eq." + r["id"],
+                         {"banned": bool(banned), "ban_reason": _clean(reason, 300) if banned else ""})
+        if banned:
+            self.store.patch("comm_room_reports", "room_id=eq." + r["id"] + "&status=eq.open", {"status": "banned"})
+            self._safe_notify("moderation", "Room banned: #%s" % r.get("name"),
+                              "Banned by %s: %s" % (admin_email, _clean(reason, 200) or "no reason given"))
+        else:
+            self.store.patch("comm_room_reports", "room_id=eq." + r["id"] + "&status=eq.banned", {"status": "dismissed"})
+            self._safe_notify("moderation", "Room unbanned: #%s" % r.get("name"), "By " + admin_email)
+        rr = self._room(str(slug or ""))
+        return {"ok": True, "room": {"id": rr.get("slug"), "name": rr.get("name"), "kind": rr.get("kind"),
+                                     "banned": bool(rr.get("banned")), "ban_reason": rr.get("ban_reason", "")}}
 
     # ------------------------------------------------------------ the AI review
     def dossier(self, reported, reporters):
@@ -1093,8 +1158,24 @@ class Service:
                  "warned": sum(1 for c in cases if c.get("status") == "warned"),
                  "dismissed": sum(1 for c in cases if c.get("status") == "dismissed"),
                  "reported_accounts": len(summary), "threshold": REPORT_THRESHOLD}
-        return {"cases": cases, "reports": summary[:50], "stats": stats,
-                "note": "Only the moderator AI (after %d member reports) or an administrator can suspend. Reporters never can." % REPORT_THRESHOLD}
+        room_rows = []
+        try:
+            groups = self.store.get("comm_rooms", "kind=in.(group,channel)&limit=200")
+            for g in groups:
+                try:
+                    reps = self.store.get("comm_room_reports", "room_id=eq." + str(g.get("id")) + "&limit=500")
+                except _StoreError:
+                    reps = []
+                room_rows.append({"slug": g.get("slug"), "name": g.get("name"), "kind": g.get("kind"),
+                                  "owner": self.handle_of(g.get("owner_email") or "") or "",
+                                  "reports": sum(1 for x in reps if x.get("status") == "open"),
+                                  "total_reports": len(reps), "banned": bool(g.get("banned")),
+                                  "ban_reason": g.get("ban_reason", "")})
+            room_rows.sort(key=lambda x: (-x["reports"], x["name"]))
+        except _StoreError:
+            room_rows = []
+        return {"cases": cases, "reports": summary[:50], "rooms": room_rows[:100], "stats": stats,
+                "note": "Only the moderator AI (after %d member reports) or an administrator can suspend. Reporters never can. Banned rooms are locked for everyone." % REPORT_THRESHOLD}
 
     def admin_advisory_review(self, email):
         """Human-requested opinion on an account with fewer than three reports: never suspends."""
@@ -1156,9 +1237,13 @@ class Service:
             row = self._prof(email)
             if not row:
                 return ""
-            return ("Community identity (server-authoritative): this user's OraCool number is %s and their username "
+            line = ("Community identity (server-authoritative): this user's OraCool number is %s and their username "
                     "is @%s. Other members can message them in the Community tab; new friends are added by typing "
-                    "this number there. If the user asks for their OraCool number or how to add friends, answer from "
-                    "these facts — never invent a number." % (row.get("oracool_number"), row.get("username")))
+                    "this number there. Their community messages are stored and they can scroll back to read them any "
+                    "time. If the user asks for their OraCool number or how to add friends, answer from these facts — "
+                    "never invent a number." % (row.get("oracool_number"), row.get("username")))
+            if self.d.get("is_verified") and self.d["is_verified"](email):
+                line += " This user is a VERIFIED member (✦)."
+            return line
         except Exception:
             return ""

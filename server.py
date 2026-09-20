@@ -304,6 +304,8 @@ def block_user(email, blocked, reason="", by=""):
         return {"error": "Email required."}
     if blocked and is_admin(email):
         return {"error": "Administrator accounts cannot be blocked."}
+    if blocked and is_verified(email) and not is_admin(by):
+        return {"error": "Verified members (✦) can only be blocked by an administrator."}
     users = load_users()
     rec = users.get(email) or supabase_get_flag(email) or {"created": time.strftime("%Y-%m-%d %H:%M:%S")}
     rec = dict(rec)
@@ -404,9 +406,8 @@ def block_status(email):
     Also retries any paid-but-pending reinstatement for that account."""
     email = (email or "").strip().lower()
     out = {"email": email, "blocked": False, "reason": "", "blocked_at": "",
-           "fine": {"usd": FINE_USD, "ngn": fine_ngn(), "currency": (KEYS.get("PAYSTACK_CURRENCY") or "NGN").upper()},
-           "paystack": bool(key("PAYSTACK_SECRET_KEY") or key("PAYSTACK_TEST_SECRET")),
-           "crypto": bool((key("ATLOS_MERCHANT_ID") and key("ATLOS_API_SECRET")) or crypto_wallet())}
+           "fine": {"cancelled": True},
+           "note": "No fine is collected. An administrator lifts the block from the Admin console."}
     if not email:
         return out
     pending = [r for r in fines_for(email) if not r.get("unblocked")]
@@ -3758,8 +3759,10 @@ def paystack_initialize(email, callback_url, plan="pro", currency=None):
         return {"error": "Paystack secret key not configured."}
     plan = (plan or "pro").lower()
     if plan == "fine":
-        # Reinstatement fine: not a plan, never grants a tier.
-        p = {"label": "Account reinstatement fine", "price_usd": FINE_USD, "price_ngn": fine_ngn(), "days": 0}
+        p = {"label": "Account reinstatement fine (no longer collected)", "price_usd": FINE_USD, "price_ngn": fine_ngn(), "days": 0}
+    elif plan == "verified":
+        # Verified badge (✦): paid monthly, grants no plan tier.
+        p = {"label": "OraCool Verified badge", "price_usd": BADGE_USD, "price_ngn": badge_ngn(), "days": 30}
     else:
         if plan not in PLANS:
             plan = "pro"
@@ -3780,6 +3783,8 @@ def paystack_initialize(email, callback_url, plan="pro", currency=None):
     metadata = {"product": "OraCool AI", "plan": plan}
     if plan == "fine":
         metadata.update({"purpose": "fine", "account": (email or "").strip().lower()})
+    if plan == "verified":
+        metadata.update({"purpose": "verified", "account": (email or "").strip().lower()})
     try:
         _, raw, _ = http_fetch("https://api.paystack.co/transaction/initialize",
                                method="POST", headers={"Authorization": "Bearer " + secret},
@@ -3812,6 +3817,16 @@ def record_paystack_success(data):
         return {"email": account, "reference": data.get("reference"), "fine": True,
                 "unblocked": bool(r.get("unblocked")), "amount_ngn": (data.get("amount") or 0) / 100,
                 "paid_at": data.get("paid_at"), "plan": "fine", "tier": "free"}
+    if plan == "verified" or meta.get("purpose") == "verified":
+        account = (meta.get("account") or email or "").strip().lower()
+        until = set_verified(account, months=1)
+        try:
+            notify_admins("payment", "✦ Verified badge: " + account,
+                          "₦{:,.0f} · ref {} · active until {}".format((data.get("amount") or 0) / 100, str(data.get("reference")), str(until)[:10]))
+        except Exception:
+            pass
+        return {"email": account, "reference": data.get("reference"), "badge": True,
+                "verified_until": until, "plan": "verified", "tier": "free"}
     if plan not in PLANS:
         plan = "pro"
     days = PLANS[plan]["days"]
@@ -3992,7 +4007,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch15-community-ai-moderation",
+        "build": "patch16-community-calls-badge",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6766,7 +6781,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch15-community-ai-moderation",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch16-community-calls-badge",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -6810,8 +6825,8 @@ class Handler(BaseHTTPRequestHandler):
         if not path.startswith(BLOCK_EXEMPT_PREFIXES):
             _who = request_identity(self, body) or (body.get("email") or "").strip().lower()
             if _who and is_blocked(_who):
-                self._send_json({"error": "This account is suspended. Pay the reinstatement fine to restore access.",
-                                 "suspended": True, "blocked": True, "fine_usd": FINE_USD}, 403)
+                self._send_json({"error": "This account is suspended by an administrator. Access is locked until an administrator lifts the block.",
+                                 "suspended": True, "blocked": True}, 403)
                 return
         protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/reminders/", "/api/comms/", "/api/community/")) or path in ("/api/image", "/api/video")
         if protected:
@@ -6837,7 +6852,8 @@ class Handler(BaseHTTPRequestHandler):
                 _tail = path.split("/")[3] if path.count("/") > 3 else path.split("/")[-1]
                 audit_log(_ae, path.replace("/api/", ""), _tail)
             if path.startswith("/api/community/"):
-                self._send_json(community_route(path[len("/api/community/"):], body))
+                self._send_json(community_route(path[len("/api/community/"):], body,
+                                                self.headers.get("Host") or ""))
             elif path.startswith("/api/comms/"):
                 service = communication_service(); owner = body["email"]
                 action = path[len("/api/comms/"):]
@@ -7130,7 +7146,17 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         self._send_json(community_service().admin_overturn(body.get("case_id"), payload.get("sub", "")))
                     except community.CommunitySetup:
-                        self._send_json({"error": "Community database is being set up (run the Patch 15 SQL in Supabase)."})
+                        self._send_json({"error": "Community database is being set up (run the Patch 16 SQL in Supabase)."})
+            elif path == "/api/admin/moderation/rooms/ban":
+                payload = _require_admin(self, body)
+                if payload:
+                    try:
+                        self._send_json(community_service().admin_ban_room(str(body.get("slug") or ""),
+                                                                           bool(body.get("banned")),
+                                                                           str(body.get("reason") or ""),
+                                                                           payload.get("sub", "")))
+                    except community.CommunitySetup:
+                        self._send_json({"error": "Community database is being set up (run the Patch 16 SQL in Supabase)."})
             elif path == "/api/admin/block":
                 payload = _require_admin(self, body)
                 if payload:
@@ -7547,15 +7573,7 @@ class Handler(BaseHTTPRequestHandler):
                 who = request_identity(self, body) or (body.get("email") or "").strip().lower()
                 self._send_json(block_status(who))
             elif path in ("/api/block/fine/paystack", "/api/block/fine/crypto"):
-                who = request_identity(self, body) or (body.get("email") or "").strip().lower()
-                if not who or not is_blocked(who):
-                    self._send_json({"error": "This account is not suspended — no fine is due."}, 400)
-                elif path.endswith("paystack"):
-                    self._send_json(paystack_initialize(who, body.get("callback_url"), "fine", body.get("currency")))
-                else:
-                    _host = (self.headers.get("Host") or "").split(":")[0]
-                    _site = str(body.get("site") or key("PUBLIC_BASE_URL") or (("https://" + _host) if "." in _host else "")).strip()
-                    self._send_json(crypto_invoice(who, "fine", _site))
+                self._send_json({"error": "Reinstatement fines are no longer collected. An administrator lifts blocks from the Admin console — the account keeps its e-mail, history and community identity."}, 410)
             elif path == "/api/admin/twilio":
                 # Read-only Twilio readiness (credentials, numbers, Verify) — administrators only; never sends.
                 if _require_admin(self, body):
@@ -9311,6 +9329,279 @@ def community_rest(method, path, body=None, prefer=None):
     return st, data
 
 
+# ================================================================ Patch 16
+# ---- verified badge (monthly, paid) --------------------------------------------
+BADGE_USD = 10
+
+
+def badge_ngn():
+    return int(KEYS.get("BADGE_PRICE_NGN") or os.environ.get("BADGE_PRICE_NGN") or 15500)
+
+
+_VERIFIED_CACHE = {}
+
+
+def _parse_iso(ts):
+    try:
+        from datetime import datetime, timezone
+        return datetime.strptime(str(ts)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+    except Exception:
+        return 0.0
+
+
+def is_verified(email):
+    """Administrators are verified by default; other members while their paid
+    badge is active. Verified members can only be blocked by an administrator
+    and can never be reported or AI-suspended by other members."""
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    if is_admin(email):
+        return True
+    now = time.time()
+    c = _VERIFIED_CACHE.get(email)
+    if c and c[0] > now:
+        return c[1]
+    ok = False
+    try:
+        row = community_service()._prof(email)
+        if row and row.get("verified_until"):
+            ok = _parse_iso(row["verified_until"]) > now
+    except Exception:
+        ok = False
+    _VERIFIED_CACHE[email] = (now + 60, ok)
+    return ok
+
+
+def set_verified(email, months=1):
+    email = (email or "").strip().lower()
+    base = time.time()
+    try:
+        row = community_service()._prof(email)
+        if row and row.get("verified_until") and _parse_iso(row["verified_until"]) > base:
+            base = _parse_iso(row["verified_until"])
+    except Exception:
+        pass
+    until = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(base + months * 30 * 86400))
+    try:
+        community_service().store.patch("comm_profiles", "email=eq." + email, {"verified_until": until})
+    except Exception:
+        pass
+    _VERIFIED_CACHE.pop(email, None)
+    return until
+
+
+def verified_status(email):
+    email = (email or "").strip().lower()
+    until = None
+    try:
+        row = community_service()._prof(email)
+        if row and row.get("verified_until"):
+            until = row["verified_until"]
+    except Exception:
+        until = None
+    active = is_verified(email)
+    return {"verified": active, "admin": bool(is_admin(email)),
+            "verified_until": until if active and not is_admin(email) else None,
+            "price_usd": BADGE_USD, "price_ngn": badge_ngn()}
+
+
+# ---- Supabase storage (profile pictures + voice notes) ---------------------------
+_STORAGE_BUCKETS = set()
+
+
+def storage_ensure_bucket(name):
+    url, svc = key("SUPABASE_URL"), key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return False
+    if name in _STORAGE_BUCKETS:
+        return True
+    try:
+        http_fetch(url.rstrip("/") + "/storage/v1/bucket", method="POST",
+                   headers={"apikey": svc, "Authorization": "Bearer " + svc,
+                            "Content-Type": "application/json"},
+                   json_body={"id": name, "public": True}, timeout=20)
+    except urllib.error.HTTPError as e:
+        if e.code not in (400, 409):
+            return False
+    except Exception:
+        return False
+    _STORAGE_BUCKETS.add(name)
+    return True
+
+
+def storage_put(bucket, path, data, content_type):
+    """Upload bytes to a public bucket; returns the public URL or None."""
+    url, svc = key("SUPABASE_URL"), key("SUPABASE_SERVICE_KEY")
+    if not url or not svc or not storage_ensure_bucket(bucket):
+        return None
+    try:
+        http_fetch(url.rstrip("/") + "/storage/v1/object/" + bucket + "/" + path, method="POST",
+                   headers={"apikey": svc, "Authorization": "Bearer " + svc,
+                            "Content-Type": content_type, "x-upsert": "true"},
+                   data=data, timeout=90)
+        return url.rstrip("/") + "/storage/v1/object/public/" + bucket + "/" + path
+    except Exception:
+        return None
+
+
+def data_url_decode(data_url):
+    """'data:<mime>;base64,<payload>' -> (mime, bytes) or (None, None)."""
+    try:
+        head, _, payload = str(data_url or "").partition(",")
+        if not head.startswith("data:") or "base64" not in head:
+            return None, None
+        mime = head[5:].split(";")[0].strip().lower()
+        return mime, base64.b64decode(payload)
+    except Exception:
+        return None, None
+
+
+# ---- audio/video call signaling (P2P WebRTC; OraCool is the signal server) --------
+_CALLS_LOCK = threading.Lock()
+_CALLS = {}   # call_id -> dict
+
+
+def _call_prune():
+    now = time.time()
+    with _CALLS_LOCK:
+        for cid in [c for c, v in _CALLS.items()
+                    if now > v.get("expires", 0) or (v.get("state") == "closed"
+                                                     and now - v.get("closed_at", now) > 3600)]:
+            _CALLS.pop(cid, None)
+
+
+def call_start(a, b, kind):
+    _call_prune()
+    cid = "call-" + os.urandom(6).hex()
+    with _CALLS_LOCK:
+        _CALLS[cid] = {"a": a, "b": b, "kind": kind, "state": "ringing", "offer": None,
+                       "answer": None, "ice_a": [], "ice_b": [], "seq_a": 0, "seq_b": 0,
+                       "expires": time.time() + 300}
+    return cid
+
+
+def call_set_sdp(cid, who, sdp):
+    with _CALLS_LOCK:
+        c = _CALLS.get(cid)
+        if not c or who not in (c["a"], c["b"]):
+            return False
+        if who == c["a"]:
+            c["offer"] = sdp
+            c["expires"] = time.time() + 300
+        else:
+            c["answer"] = sdp
+            c["state"] = "active"
+            c["expires"] = time.time() + 7200
+    return True
+
+
+def call_add_ice(cid, who, candidate):
+    with _CALLS_LOCK:
+        c = _CALLS.get(cid)
+        if not c or who not in (c["a"], c["b"]):
+            return False
+        if who == c["a"]:
+            c["ice_a"].append(candidate)
+            c["seq_b"] += 1
+        else:
+            c["ice_b"].append(candidate)
+            c["seq_a"] += 1
+    return True
+
+
+def call_close(cid, by):
+    with _CALLS_LOCK:
+        c = _CALLS.get(cid)
+        if not c:
+            return False
+        c["state"] = "closed"
+        c["closed_by"] = by
+        c["closed_at"] = time.time()
+        c["expires"] = time.time() + 60
+    return True
+
+
+def call_poll(email):
+    """(incoming_call, updates) for this member. ICE batches are delivered once."""
+    _call_prune()
+    incoming = None
+    updates = []
+    with _CALLS_LOCK:
+        for cid, c in _CALLS.items():
+            if email not in (c.get("a"), c.get("b")):
+                continue
+            if c.get("state") == "closed":
+                updates.append({"call_id": cid, "event": "closed", "by": c.get("closed_by")})
+                continue
+            if email == c.get("b") and c.get("state") == "ringing" and c.get("offer"):
+                incoming = {"call_id": cid, "from": c.get("a"), "kind": c.get("kind"),
+                            "offer": c.get("offer")}
+            if c.get("state") == "active":
+                mine = "a" if email == c.get("a") else "b"
+                theirs = "b" if mine == "a" else "a"
+                if mine == "a" and c.get("answer"):
+                    updates.append({"call_id": cid, "event": "answer", "sdp": c.get("answer")})
+                if c.get("ice_" + theirs):
+                    updates.append({"call_id": cid, "event": "ice",
+                                    "candidates": c["ice_" + theirs]})
+                    c["ice_" + theirs] = []
+    return incoming, updates
+
+
+def record_paystack_success_from_reference(reference):
+    """Verify a Paystack charge by reference and apply its effects (plan or
+    verified badge). Used by the badge return/status flow."""
+    secret = (key("PAYSTACK_TEST_SECRET") if key("PAYSTACK_TEST")
+              else key("PAYSTACK_SECRET_KEY"))
+    if not secret or not reference:
+        return {"error": "Provide the payment reference."}
+    try:
+        _, raw, _ = http_fetch("https://api.paystack.co/transaction/verify/" + urllib.parse.quote(reference),
+                               headers={"Authorization": "Bearer " + secret}, timeout=30)
+        d = json.loads(raw)
+    except Exception as e:
+        return {"error": "Could not verify the payment: " + str(e)[:120]}
+    data = d.get("data") or {}
+    if not d.get("status") or str(data.get("status")) not in ("success", "authorized"):
+        return {"error": "Payment not confirmed yet — wait a moment and check again."}
+    r = record_paystack_success(data)
+    acct = r.get("email") or ""
+    return {"ok": True, "badge": bool(r.get("badge")), "verified": is_verified(acct),
+            "verified_until": r.get("verified_until"), "email": acct}
+
+
+def set_community_avatar(email, data_url):
+    mime, data = data_url_decode(data_url)
+    if mime not in ("image/jpeg", "image/png", "image/webp"):
+        return {"error": "Use a JPG, PNG or WebP picture."}
+    if not data or len(data) > 2 * 1024 * 1024:
+        return {"error": "Picture is too large (max 2 MB)."}
+    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[mime]
+    url = storage_put("avatars", hashlib.sha1((email or "").encode()).hexdigest()[:16] + "." + ext, data, mime)
+    if not url:
+        return {"error": "Could not save the picture. Try again in a moment."}
+    try:
+        community_service().store.patch("comm_profiles", "email=eq." + email.lower(), {"avatar_url": url})
+    except Exception:
+        pass
+    return {"ok": True, "avatar_url": url}
+
+
+def upload_community_media(email, data_url):
+    mime, data = data_url_decode(data_url)
+    if mime not in ("audio/webm", "audio/ogg", "audio/mp4"):
+        return {"error": "Unsupported voice note format."}
+    if not data or len(data) > 8 * 1024 * 1024:
+        return {"error": "Voice note is too large (max about one minute)."}
+    ext = "webm" if "webm" in mime else ("ogg" if "ogg" in mime else "m4a")
+    path = "dm/%s_%d.%s" % (hashlib.sha1((email or "").encode()).hexdigest()[:8], int(time.time()), ext)
+    url = storage_put("media", path, data, mime)
+    if not url:
+        return {"error": "Could not save the voice note. Try again."}
+    return {"ok": True, "media_url": url}
+
+
 def community_service():
     """Member chat + reports + the AI moderator. Dependencies are late-bound so tests can patch them."""
     global _COMMUNITY_SERVICE
@@ -9321,6 +9612,7 @@ def community_service():
                     "is_blocked": lambda e: is_blocked(e),
                     "load_users": lambda: load_users(),
                     "check_tier": lambda e: check_tier(e),
+                    "is_verified": lambda e: is_verified(e),
                     "llm_complete": lambda msgs, t=0.0, mx=700: llm_complete(msgs, temperature=t, max_tokens=mx),
                     "notify_admins": lambda et, ti, bo="": notify_admins(et, ti, bo),
                     "emit_event": lambda em, et, ti, bo="": emit_event(em, et, ti, bo)}
@@ -9328,7 +9620,7 @@ def community_service():
         return _COMMUNITY_SERVICE
 
 
-def community_route(action, body):
+def community_route(action, body, self_host=""):
     try:
         svc = community_service()
         me = body["email"]
@@ -9363,11 +9655,48 @@ def community_route(action, body):
         if action == "dm/messages":
             return svc.dm_messages(me, body.get("username") or body.get("handle"), body.get("after"))
         if action == "dm/send":
-            return svc.dm_send(me, body.get("username") or body.get("handle"), body.get("body"))
+            return svc.dm_send(me, body.get("username") or body.get("handle"), body.get("body"),
+                               body.get("media_url"))
         if action == "report":
             ids = body.get("message_ids") or ([body["message_id"]] if body.get("message_id") else [])
             return svc.report(me, body.get("username") or body.get("handle"), body.get("reason"),
                               [str(x) for x in ids if x], number=body.get("number"))
+        if action == "rooms/report":
+            return svc.report_room(me, str(body.get("slug") or body.get("room") or ""), body.get("reason"))
+        if action == "avatar":
+            return set_community_avatar(me, body.get("data_url"))
+        if action == "media":
+            return upload_community_media(me, body.get("data_url"))
+        if action == "badge":
+            return verified_status(me)
+        if action == "badge/pay":
+            _host = (self_host or "").split(":")[0]
+            _site = str(body.get("callback_url") or key("PUBLIC_BASE_URL") or (("https://" + _host) if "." in _host else "")).strip()
+            return paystack_initialize(me, _site, "verified", body.get("currency"))
+        if action == "badge/status":
+            return record_paystack_success_from_reference(str(body.get("reference") or ""))
+        if action == "call/start":
+            peer = svc.email_of(str(body.get("peer") or ""))
+            if not peer or peer == me:
+                return {"error": "No member with that username to call."}
+            cid = call_start(me, peer, "video" if body.get("video") else "audio")
+            return {"ok": True, "call_id": cid, "peer": svc.handle_of(peer), "kind": "video" if body.get("video") else "audio"}
+        if action == "call/sdp":
+            if not call_set_sdp(str(body.get("call_id") or ""), me, str(body.get("sdp") or "")):
+                return {"error": "Call not found (it may have expired)."}
+            return {"ok": True}
+        if action == "call/ice":
+            if not call_add_ice(str(body.get("call_id") or ""), me, body.get("candidate")):
+                return {"error": "Call not found."}
+            return {"ok": True}
+        if action == "call/hangup":
+            call_close(str(body.get("call_id") or ""), me)
+            return {"ok": True}
+        if action == "call/poll":
+            inc, ups = call_poll(me)
+            if inc:
+                inc["from_name"] = svc.handle_of(inc.get("from"))
+            return {"incoming": inc, "updates": ups}
         return {"error": "Unknown community action."}
     except community.CommunitySetup:
         return {"setup_required": True,

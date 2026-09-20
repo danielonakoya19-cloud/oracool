@@ -137,22 +137,20 @@ class Patch13Tests(unittest.TestCase):
                     code, body = _post(port, path, {'messages': [{'role': 'user', 'content': 'hi'}], 'email': self.user, 'plan': 'pro'})
                     if path == '/api/paystack/initialize':
                         continue   # payment confirmation routes stay reachable; plan purchase itself does not unblock (tested below)
-                    self.assertEqual(code, 403, path); self.assertTrue(body.get('suspended'), path); self.assertEqual(body.get('fine_usd'), 20)
+                    self.assertEqual(code, 403, path); self.assertTrue(body.get('suspended'), path); self.assertIsNone(body.get('fine_usd'))
                 code, st = _post(port, '/api/block/status', {})
                 self.assertEqual(code, 200); self.assertTrue(st['blocked']); self.assertEqual(st['reason'], 'Misuse of the AI')
-                self.assertEqual(st['fine']['usd'], 20); self.assertGreater(st['fine']['ngn'], 0)
-                with patch.object(s, 'paystack_initialize', return_value={'authorization_url': 'https://pay.example/x', 'reference': 'FINE1'}) as init:
-                    code, body = _post(port, '/api/block/fine/paystack', {'callback_url': 'https://app.example/app'})
-                    self.assertEqual(code, 200); self.assertEqual(body['reference'], 'FINE1')
-                    self.assertEqual(init.call_args.args[:3], (self.user, 'https://app.example/app', 'fine'))
+                self.assertTrue(st['fine'].get('cancelled'))   # Patch 16: fines are no longer collected
+                code, body = _post(port, '/api/block/fine/paystack', {'callback_url': 'https://app.example/app'})
+                self.assertEqual(code, 410); self.assertIn('no longer collected', body['error'])
             # a modified client that strips its token but still names the email is refused too
             with patch.object(s, 'request_identity', return_value=''):
                 code, body = _post(port, '/api/osint/email', {'email': self.user})
                 self.assertEqual(code, 403); self.assertTrue(body['suspended'])
-            # a non-suspended account is untouched and owes no fine
+            # a non-suspended account owes no fine either — the route is retired
             with patch.object(s, 'request_identity', return_value='fine@example.test'):
                 code, body = _post(port, '/api/block/fine/paystack', {})
-                self.assertEqual(code, 400)
+                self.assertEqual(code, 410)
                 code, st = _post(port, '/api/block/status', {})
                 self.assertFalse(st['blocked'])
         finally:
@@ -221,7 +219,7 @@ class Patch13Tests(unittest.TestCase):
         server, t = self.serve()
         try:
             with urllib.request.urlopen('http://127.0.0.1:%d/api/health' % server.server_port, timeout=3) as r:
-                self.assertEqual(json.loads(r.read())['build'], 'patch15-community-ai-moderation')
+                self.assertEqual(json.loads(r.read())['build'], 'patch16-community-calls-badge')
         finally:
             server.shutdown(); server.server_close(); t.join()
 

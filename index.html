@@ -181,6 +181,40 @@
   .tab.active{color:var(--cyan2); background:rgba(0,229,255,.08); border-color:var(--line); text-shadow:0 0 8px rgba(0,229,255,.5);}
   .panelbody{flex:1; overflow-y:auto; padding:16px; display:none;}
   .panelbody.active{display:block;}
+  .railwrap{display:flex; gap:8px; align-items:stretch; flex:1; min-height:0;}
+  .sidenav{display:flex; flex-direction:column; gap:5px; flex:none; width:48px; padding:8px 0; align-items:center; position:sticky; top:64px; max-height:calc(100vh - 84px); overflow-y:auto; scrollbar-width:none;}
+  .sidenav::-webkit-scrollbar{display:none;}
+  .snav{position:relative; width:40px; height:40px; border-radius:13px; display:grid; place-items:center; font-size:17px; cursor:pointer; color:var(--dim); border:1px solid transparent; transition:all .16s; flex:none;}
+  .snav:hover{color:var(--ink); background:rgba(126,148,193,.10); transform:translateY(-1px);}
+  .snav.active{color:var(--cyan2); background:rgba(0,229,255,.10); border-color:rgba(0,229,255,.35); box-shadow:0 0 16px rgba(0,229,255,.22), inset 0 0 10px rgba(0,229,255,.06);}
+  .snav .tabbadge{position:absolute; top:1px; right:1px;}
+  .snav.locked{opacity:.45;}
+  .snav.locked:after{content:"🔒"; position:absolute; top:-4px; right:-4px; font-size:10px;}
+  .panels{flex:1; min-width:0; display:flex; flex-direction:column;}
+  .chatinput, #input, input[type=text], textarea, .bubble, .cbody, .cmeta, .kv .val, .errbox, .okbox, .warnbox{overflow-wrap:anywhere; word-break:break-word;}
+  .avatar{width:30px; height:30px; border-radius:50%; object-fit:cover; flex:none; border:1px solid var(--line); background:#101725; display:inline-grid; place-items:center; font-size:12px; font-weight:700; color:var(--cyan2);}
+  .avatar.sm{width:24px; height:24px; font-size:10px;}
+  .vbadge{color:var(--gold); font-size:12px; text-shadow:0 0 8px rgba(255,200,80,.6);}
+  .voicebtn.rec{background:rgba(255,80,80,.2)!important; border-color:var(--danger)!important;}
+  .cmessaudio{width:100%; max-width:260px; margin-top:4px;}
+  /* audio / video call overlay */
+  #callOverlay{position:fixed; inset:0; z-index:99998; display:none; align-items:center; justify-content:center; background:rgba(4,8,18,.92); backdrop-filter:blur(10px);}
+  #callOverlay.open{display:flex;}
+  .callcard{position:relative; width:min(720px,94vw); background:linear-gradient(150deg,#0d1526,#141024); border:1px solid rgba(0,229,255,.3); border-radius:20px; padding:18px; box-shadow:0 0 60px rgba(0,229,255,.15);}
+  .callcard .who{font-size:15px; font-weight:800; letter-spacing:1px; color:var(--cyan2); text-align:center;}
+  .callcard .sub{font-size:11px; color:var(--muted); text-align:center; margin-top:2px;}
+  .remotevid{width:100%; aspect-ratio:16/9; background:#05070d; border-radius:14px; margin-top:12px; display:grid; place-items:center; overflow:hidden;}
+  .remotevid video{width:100%; height:100%; object-fit:contain; background:#05070d;}
+  .calllocal{position:absolute; right:26px; bottom:84px; width:110px; height:74px; border-radius:10px; overflow:hidden; border:1px solid rgba(0,229,255,.4); box-shadow:0 6px 20px #000a; transform:scaleX(-1); background:#05070d;}
+  .calllocal video{width:100%; height:100%; object-fit:cover; transform:scaleX(-1);}
+  .callctrls{display:flex; gap:10px; justify-content:center; margin-top:14px;}
+  .callctrls button{width:48px; height:48px; border-radius:50%; border:1px solid var(--line); background:#111a2c; font-size:18px; cursor:pointer; transition:.15s;}
+  .callctrls button:hover{transform:translateY(-2px);}
+  .callctrls .end{background:linear-gradient(120deg,#ff5f6d,#d33); border:none; color:#fff;}
+  .incomingcard{width:min(360px,92vw); background:linear-gradient(150deg,#0d1526,#141024); border:1px solid rgba(0,229,255,.4); border-radius:20px; padding:26px; text-align:center; box-shadow:0 0 70px rgba(0,229,255,.2); animation:callpulse 1.6s infinite;}
+  @keyframes callpulse{50%{box-shadow:0 0 100px rgba(0,229,255,.45);}}
+  .incomingcard .big{font-size:44px; animation:breathe2 1.2s infinite;}
+  @keyframes breathe2{50%{transform:scale(1.12);}}
 
   h3.ptitle{font-size:11px; letter-spacing:3px; color:var(--cyan2); text-transform:uppercase; margin:4px 0 12px; text-shadow:0 0 10px rgba(0,229,255,.4);}
   label.lbl{display:block; font-size:10px; letter-spacing:1.5px; color:var(--dim); text-transform:uppercase; margin:12px 0 5px;}
@@ -509,16 +543,12 @@
   <div class="holo-card">
     <h2>Your account has been suspended</h2>
     <p id="blockedReason">An administrator suspended this account.</p>
-    <p>Access to OraCool is locked. Pay the one-time reinstatement fine to restore it immediately.</p>
-    <div class="holo-fine" id="blockedFine">$20</div>
+    <p>Access to OraCool is locked until an administrator lifts the block. <b>No fine is collected</b> — your e-mail, history and community identity all stay with this account.</p>
     <div class="holo-actions">
-      <button class="btn primary" id="blockedPayCard">💳 Pay $20 fine (card)</button>
-      <button class="btn ghost" id="blockedPayCrypto">🪙 Pay with crypto</button>
-      <button class="btn ghost" id="blockedRecheck">↻ I have paid — check</button>
+      <button class="btn ghost" id="blockedRecheck">↻ Check status</button>
       <button class="btn ghost" id="blockedSignOut">Sign out</button>
     </div>
     <div class="holo-status" id="blockedStatus"></div>
-    <div class="holo-crypto" id="blockedCrypto"></div>
   </div>
 </div>
 
@@ -573,24 +603,26 @@
     </section>
 
     <aside class="right card">
-      <div class="tabs">
-        <div class="tab active" data-p="status">Status</div>
-        <div class="tab" data-p="community" id="communityTab">💬 Community<span class="tabbadge" id="commTabBadge"></span></div>
-        <div class="tab" data-p="intel">Intel</div>
-      <div class="tab" data-p="cases" id="casesTab" title="Cases & evidence — PRO">🗂 Cases</div>
-        <div class="tab" data-p="markets">Markets</div>
-        <div class="tab" data-p="trading">Trading</div>
-        <div class="tab" data-p="space">Space</div>
-        <div class="tab" data-p="create">Create</div>
-        <div class="tab" data-p="cores">Cores</div>
-        <div class="tab" data-p="plans">Plans</div>
-        <div class="tab" data-p="devices">Devices</div>
-        <div class="tab" data-p="code">Code</div>
-        <div class="tab" data-p="account">Account</div>
-        <div class="tab" data-p="admin" id="adminTab" style="display:none">Admin</div>
-        <div class="tab" data-p="settings">Settings</div>
-        <div class="tab" id="lockTab" title="Lock the whole app right now">🔒</div>
-      </div>
+      <div class="railwrap">
+      <nav class="sidenav" aria-label="OraCool panels">
+        <div class="snav active" data-p="status" title="Status">▣</div>
+        <div class="snav" data-p="community" id="communityTab" title="Community — chat, friends, calls">💬<span class="tabbadge" id="commTabBadge"></span></div>
+        <div class="snav" data-p="intel" title="Intel">🧭</div>
+        <div class="snav" data-p="cases" id="casesTab" title="Cases & evidence — PRO">🗂</div>
+        <div class="snav" data-p="markets" title="Markets">📈</div>
+        <div class="snav" data-p="trading" title="Trading desk">💹</div>
+        <div class="snav" data-p="space" title="Space">🪐</div>
+        <div class="snav" data-p="create" title="Create — images & video">✨</div>
+        <div class="snav" data-p="cores" title="Cores">⚡</div>
+        <div class="snav" data-p="plans" title="Plans">💎</div>
+        <div class="snav" data-p="devices" title="Devices & connectors">🔗</div>
+        <div class="snav" data-p="code" title="Code console">💻</div>
+        <div class="snav" data-p="account" title="Account">👤</div>
+        <div class="snav" data-p="admin" id="adminTab" title="Admin console" style="display:none">🛡</div>
+        <div class="snav" data-p="settings" title="Settings">⚙</div>
+        <div class="snav" id="lockTab" title="Lock the whole app right now">🔒</div>
+      </nav>
+      <div class="panels">
       <div class="panelbody active" id="p-status"></div>
       <div class="panelbody" id="p-community"></div>
       <div class="panelbody" id="p-intel"></div>
@@ -606,6 +638,7 @@
       <div class="panelbody" id="p-account"></div>
       <div class="panelbody" id="p-admin"></div>
       <div class="panelbody" id="p-settings"></div>
+      </div>
     </aside>
   </main>
 </div>
@@ -870,14 +903,9 @@ function showBlockedScreen(info){
   if(info) blockedInfo=info;
   if(session && !session.blocked){ session.blocked=true; saveSession(); }
   try{ if(window.OraVoice && window.OraVoice.stop) window.OraVoice.stop('Microphone off — account suspended'); }catch(e){}
-  const inp=$('#input'); if(inp){ inp.disabled=true; inp.placeholder='Account suspended — pay the reinstatement fine to continue'; }
-  const fine=(blockedInfo&&blockedInfo.fine)||{usd:20};
-  $('#blockedFine').textContent='$'+(fine.usd||20)+(fine.ngn&&fine.currency!=='USD'?' · ≈ ₦'+Number(fine.ngn).toLocaleString():'');
-  $('#blockedPayCard').textContent='💳 Pay $'+(fine.usd||20)+' fine (card)';
+  const inp=$('#input'); if(inp){ inp.disabled=true; inp.placeholder='Account suspended — an administrator will lift the block'; }
   const why=(blockedInfo&&blockedInfo.reason)?('Reason given: '+blockedInfo.reason):'An administrator suspended this account.';
   $('#blockedReason').textContent=why+(blockedInfo&&blockedInfo.blocked_at?(' ('+blockedInfo.blocked_at+' UTC)'):'');
-  $('#blockedPayCard').style.display=(blockedInfo&&blockedInfo.paystack===false)?'none':'';
-  $('#blockedPayCrypto').style.display=(blockedInfo&&blockedInfo.crypto===false)?'none':'';
   el.classList.add('open');
   if(!blockedPoll) blockedPoll=setInterval(()=>checkBlockedStatus(false), 20000);
   // first display without details (e.g. triggered by a 403): fetch reason + fine once
@@ -893,9 +921,9 @@ async function checkBlockedStatus(manual){
   const st=$('#blockedStatus'); if(manual && st) st.textContent='Checking…';
   const r=await post('/api/block/status',{email:myEmail()}).catch(()=>null);
   if(!r || r.error){ if(manual && st) st.textContent='Could not check right now. Try again in a moment.'; return false; }
-  if(r.blocked){ showBlockedScreen(r); if(manual && st) st.textContent='Still suspended. The block lifts automatically the moment the fine is confirmed.'; return true; }
+  if(r.blocked){ showBlockedScreen(r); if(manual && st) st.textContent='Still suspended. An administrator lifts the block from the Admin console — your account and history are kept.'; return true; }
   session.blocked=false; saveSession(); hideBlockedScreen();
-  addAI('✅ Reinstatement confirmed — thank you. Your access has been restored.');
+  addAI('✅ An administrator lifted the block — your access has been restored. Welcome back.');
   return false;
 }
 async function payFineCard(){
@@ -925,8 +953,11 @@ async function recheckFine(){
 }
 document.addEventListener('DOMContentLoaded',()=>{
   const on=(id,fn)=>{ const e=document.getElementById(id); if(e) e.onclick=fn; };
-  on('blockedPayCard',payFineCard); on('blockedPayCrypto',payFineCrypto); on('blockedRecheck',recheckFine);
+  on('blockedRecheck',()=>checkBlockedStatus(true));
   on('blockedSignOut',()=>{ clearSession(); location.reload(); });
+  const _di=document.getElementById('input');
+  if(_di) _di.addEventListener('input',()=>{ try{ if(_di.value) localStorage.setItem('oracool_draft', _di.value); else localStorage.removeItem('oracool_draft'); }catch(e){} });
+  setTimeout(()=>{ try{ const d=localStorage.getItem('oracool_draft'); const i2=document.getElementById('input'); if(d && i2 && !i2.value) i2.value=d; if(session && localStorage.getItem('oracool_badge_ref')) badgePoll(null); }catch(e){} }, 2500);
 });
 async function verifyAdminTab(){
   try{
@@ -1723,25 +1754,59 @@ function kv(title,pairs){
 
 
 /* ---------- community: numbers, rooms, groups & channels, DMs, friends, reports → AI moderator ---------- */
+function avatarHtml(p, cls){
+  if(p && p.avatar) return `<span class="avatar ${cls||''}"><img src="${escapeHtml(p.avatar)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block"></span>`;
+  const nm=(p && (p.display_name || p.username)) || '?';
+  return `<span class="avatar ${cls||''}">${escapeHtml(String(nm).slice(0,1).toUpperCase())}</span>`;
+}
+function vBadge(p){ return (p && p.verified) ? '<span class="vbadge" title="Verified member">✦</span>' : ''; }
 const COMM={view:'rooms', room:'lounge', peer:null, lastRoomId:null, lastDmId:null, me:null, timer:null, busy:false};
-function commActive(){ const t=document.querySelector('.tab.active'); return !!(t && t.dataset.p==='community') && !isBlockedSession(); }
+function commActive(){ const t=document.querySelector('.snav.active'); return !!(t && t.dataset.p==='community') && !isBlockedSession(); }
 function fmtCommTime(t){ try{ const sx=String(t||''); const d=/T/.test(sx)?new Date(sx):new Date(sx.replace(' ','T')+'Z'); if(isNaN(d)) return sx||''; const now=new Date(); const same=d.toDateString()===now.toDateString(); return (same?'':d.toLocaleDateString([], {month:'short',day:'numeric'})+' ')+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }catch(e){ return t||''; } }
 function updateCommBadge(n){ const b=$('#commTabBadge'); if(!b) return; n=Number(n)||0; b.textContent=n>99?'99+':String(n); b.classList.toggle('on', n>0); const d=$('#commDmBadge'); if(d) d.innerHTML=n>0?`<span class="cunread">${n}</span>`:''; }
 async function renderCommunity(){
   const box=$('#p-community'); if(!box) return;
   if(!session){ box.innerHTML='<h3 class="ptitle">💬 Community</h3><div class="warnbox">Sign in to chat with other OraCool members.</div>'; return; }
   box.innerHTML=`<h3 class="ptitle">💬 Community</h3>
-    <div class="commhead"><div style="font-size:12px">You are <b id="commHandle" style="color:var(--cyan2)">…</b> <span class="muted">· OraCool number</span> <b id="commNum" style="color:var(--gold); letter-spacing:1px">…</b> <button class="btn small ghost" id="commCopy" title="Copy your OraCool number">⧉ copy</button> <button class="btn small ghost" id="commEdit" title="Edit username & bio">✎</button></div>
-      <div class="commnav"><button class="btn small ${COMM.view==='rooms'?'primary':'ghost'}" data-v="rooms">Rooms</button><button class="btn small ${COMM.view==='dms'?'primary':'ghost'}" data-v="dms">Messages <span id="commDmBadge"></span></button><button class="btn small ${COMM.view==='people'?'primary':'ghost'}" data-v="people">People & Friends</button></div></div>
+    <div style="display:flex;gap:10px;align-items:center;border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:8px;background:linear-gradient(140deg,rgba(0,229,255,.05),transparent)">
+      <span class="avatar" id="commAvatar" style="width:42px;height:42px;font-size:16px">…</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px">You are <b id="commHandle" style="color:var(--cyan2)">…</b> <span id="commVBadge"></span></div>
+        <div style="font-size:11px" class="muted">OraCool number <b id="commNum" style="color:var(--gold);letter-spacing:1px">…</b>
+          <button class="btn small ghost" id="commCopy" title="Copy your OraCool number" style="padding:1px 8px">⧉ copy</button></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;flex:none">
+        <button class="btn small ghost" id="commPhoto" title="Set your profile picture">📷 Photo</button>
+        <button class="btn small ghost" id="commEdit" title="Edit username & bio">✎ Edit</button>
+      </div>
+    </div>
+    <div id="commBadgeCard" style="margin-bottom:8px"></div>
+    <div class="commhead" style="margin-bottom:6px">
+      <div class="commnav"><button class="btn small ${COMM.view==='rooms'?'primary':'ghost'}" data-v="rooms">Rooms</button><button class="btn small ${COMM.view==='dms'?'primary':'ghost'}" data-v="dms">Messages <span id="commDmBadge"></span></button><button class="btn small ${COMM.view==='people'?'primary':'ghost'}" data-v="people">People & Friends</button></div>
+    </div>
     <div id="commGuide" class="muted" style="font-size:11px;margin:0 0 8px"></div>
     <div id="commBody"><div class="muted">Loading…</div></div>`;
   box.querySelectorAll('.commnav [data-v]').forEach(b=>{ b.onclick=()=>{ COMM.view=b.dataset.v; COMM.peer=null; COMM.lastDmId=null; renderCommunity(); }; });
   $('#commEdit').onclick=editCommProfile;
+  $('#commPhoto').onclick=commPhotoPick;
   $('#commCopy').onclick=async()=>{ const n=$('#commNum').textContent; try{ await navigator.clipboard.writeText(n); addSystemNote('Your OraCool number <b>'+escapeHtml(n)+'</b> is copied — share it so friends can add you.'); }catch(e){ prompt('Copy your OraCool number:', n); } };
   const me=await post('/api/community/me',{});
   if(me.setup_required){ $('#commBody').innerHTML='<div class="warnbox">🛠 <b>Community is being set up.</b> Its database script is running in Supabase — check back in about a minute.</div>'; return; }
   if(me.error||me.suspended||!me.profile){ $('#commBody').innerHTML='<div class="errbox">'+escapeHtml(me.error||'Community unavailable right now.')+'</div>'; return; }
-  COMM.me=me; $('#commHandle').textContent='@'+(me.profile.username||'member'); $('#commNum').textContent=me.profile.number||'…'; $('#commGuide').textContent=me.guidelines||''; updateCommBadge(me.unread_dm);
+  COMM.me=me;
+  $('#commHandle').textContent='@'+(me.profile.username||'member');
+  $('#commNum').textContent=me.profile.number||'…';
+  $('#commVBadge').innerHTML=vBadge(me.profile);
+  $('#commAvatar').outerHTML=avatarHtml(me.profile).replace('class="avatar','id="commAvatar" class="avatar');
+  $('#commGuide').textContent=me.guidelines||'';
+  updateCommBadge(me.unread_dm);
+  const bc=$('#commBadgeCard');
+  if(me.verified){
+    bc.innerHTML=`<div style="display:flex;align-items:center;gap:8px;border:1px solid rgba(255,200,80,.35);border-radius:12px;padding:8px 12px;font-size:12px;background:rgba(255,200,80,.06)"><span class="vbadge">✦</span><span><b>Verified member</b>${me.profile.verified_until&&!me.profile.admin?(' · active until '+escapeHtml(String(me.profile.verified_until).slice(0,10))):' · administrator'}</span></div>`;
+  } else {
+    bc.innerHTML=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid var(--line);border-radius:12px;padding:8px 12px;font-size:12px"><span class="vbadge">✦</span><span><b>Get the verified badge</b> — $10/month (≈ ₦${Number(me.badge&&me.badge.price_ngn||15500).toLocaleString()}). Verified members stand out and can only be reviewed by an administrator.</span><button class="btn small primary" id="commBadgeBuy" style="margin-left:auto">Get verified</button></div>`;
+    const bb=$('#commBadgeBuy'); if(bb) bb.onclick=commBadgeBuy;
+  }
   if(COMM.view==='rooms') renderCommRooms(); else if(COMM.view==='dms') renderCommDms(); else renderCommPeople();
   if(!COMM.timer) COMM.timer=setInterval(commPoll, 4000);
 }
@@ -1767,15 +1832,22 @@ setInterval(async()=>{ try{ if(session && !isBlockedSession() && !commActive() &
 function kindTag(k){ return k==='room'?'<span class="tag" style="color:var(--cyan2)">ROOM</span> ':(k==='channel'?'<span class="tag" style="color:var(--gold)">CHANNEL</span> ':(k==='group'?'<span class="tag" style="color:var(--ok)">GROUP</span> ':'')); }
 function renderCommRooms(){
   const rooms=(COMM.me&&COMM.me.rooms)||[]; const cur=rooms.find(r=>r.id===COMM.room)||rooms[0]||{id:'lounge',name:'Lounge'}; COMM.room=cur.id;
-  $('#commBody').innerHTML=`<div class="chiprow" style="padding:0 0 8px; align-items:center">${rooms.map(r=>`<span class="chip ${r.id===COMM.room?'on':''}" data-r="${escapeHtml(r.id)}" title="${escapeHtml(r.about||'')}">${kindTag(r.kind)}#${escapeHtml(r.name)}</span>`).join('')}<button class="btn small ghost" id="commNewRoom" title="Create a group or channel">+ New group/channel</button></div>
-    <div class="muted" style="font-size:11px;margin-bottom:6px">${escapeHtml(cur.about||'')}${cur.owner?(' · by @'+escapeHtml(cur.owner)):''}</div>
-    <div class="commmsgs" id="commMsgs"><div class="muted">Loading…</div></div>
-    <div class="commcompose"><input type="text" id="commInput" maxlength="800" autocomplete="off" placeholder="Message #${escapeHtml(cur.name)} — be kind"><button class="btn primary" id="commSend">Send</button></div>`;
+  $('#commBody').innerHTML=`<div class="chiprow" style="padding:0 0 8px; align-items:center">${rooms.map(r=>`<span class="chip ${r.id===COMM.room?'on':''}" data-r="${escapeHtml(r.id)}" title="${escapeHtml(r.about||'')}">${r.banned?'🚫 ':''}${kindTag(r.kind)}#${escapeHtml(r.name)}</span>`).join('')}<button class="btn small ghost" id="commNewRoom" title="Create a group or channel">+ New group/channel</button></div>
+    <div class="muted" style="font-size:11px;margin-bottom:6px;display:flex;align-items:center;gap:8px"><span style="flex:1">${escapeHtml(cur.about||'')}${cur.owner?(' · by @'+escapeHtml(cur.owner)):''}</span>${cur.kind!=='room'&&!cur.banned?`<button class="btn small ghost" id="commRoomRep" style="color:var(--danger)" title="Report this group/channel to the administrators">⚑</button>`:''}</div>
+    ${cur.banned?`<div class="warnbox" style="margin-bottom:8px">🚫 This ${escapeHtml(cur.kind||'room')} has been <b>banned by an administrator</b>${cur.ban_reason?' — reason: '+escapeHtml(cur.ban_reason):''}. Posting is disabled.</div>`:''}
+    <div class="commmsgs" id="commMsgs"><div class="muted">${cur.banned?'This room is locked.':'Loading…'}</div></div>
+    ${cur.banned?`<div class="muted" style="font-size:12px;text-align:center;padding:8px"> Posting is disabled in banned rooms.</div>`:`<div class="commcompose"><input type="text" id="commInput" maxlength="800" autocomplete="off" placeholder="Message #${escapeHtml(cur.name)} — be kind"><button class="btn primary" id="commSend">Send</button></div>`}
+  `;
   $('#commBody').querySelectorAll('.chip[data-r]').forEach(c=>{ c.onclick=()=>{ COMM.room=c.dataset.r; COMM.lastRoomId=null; renderCommRooms(); }; });
   $('#commNewRoom').onclick=openNewRoomModal;
+  const rr=$('#commRoomRep'); if(rr) rr.onclick=async()=>{
+    const why=prompt('Report #'+cur.name+' to the administrators (what is happening here?):',''); if(why===null) return;
+    const r=await post('/api/community/rooms/report',{slug:COMM.room, reason:why});
+    if(r.error) addErr('Room report: '+r.error); else addSystemNote(' Room report about <b>#'+escapeHtml(cur.name)+'</b> sent to the administrators.');
+  };
   const send=async()=>{ const inp=$('#commInput'); const body=(inp.value||'').trim(); if(!body) return; inp.value=''; const r=await post('/api/community/room/send',{room:COMM.room, body}); if(r.error){ addErr('Community: '+r.error); inp.value=body; return; } const el=$('#commMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); COMM.lastRoomId=r.message.id; el.scrollTop=el.scrollHeight; } };
   $('#commSend').onclick=send; $('#commInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
-  COMM.lastRoomId=null; loadCommRoom(true);
+  COMM.lastRoomId=null; if(!cur.banned) loadCommRoom(true);
 }
 function openNewRoomModal(){
   let m=document.getElementById('newRoomModal'); if(m) m.remove();
@@ -1813,7 +1885,9 @@ function appendCommMsg(el,m){
   if(!m || el.querySelector('[data-mid="'+m.id+'"]')) return;
   if(el.firstElementChild && el.firstElementChild.classList.contains('muted')) el.innerHTML='';
   const d=document.createElement('div'); d.className='cmsg'+(m.mine?' mine':'')+(m.mod?' mod':''); d.dataset.mid=m.id;
-  d.innerHTML=`<div class="cmeta"><b>${m.mod?'🛡 ':''}${escapeHtml(m.username||'member')}</b>${m.admin?'<span class="tag" style="color:var(--gold)">ADMIN</span>':''}<span>${escapeHtml(fmtCommTime(m.t))}</span>${(!m.mine&&!m.mod)?`<a class="cdm" data-h="${escapeHtml(m.username||'')}" title="Message privately">✉</a><a class="crep" data-h="${escapeHtml(m.username||'')}" data-id="${escapeHtml(m.id)}" title="Report this message to the moderator">⚑ report</a>`:''}</div><div class="cbody">${escapeHtml(m.body)}</div>`;
+  const av=m.mod?'<span class="avatar sm">🛡</span>':avatarHtml({username:m.username, avatar:m.avatar}, 'sm');
+  const bodyHtml=m.media_url?`<audio class="cmessaudio" controls preload="metadata" src="${escapeHtml(m.media_url)}"></audio>`:`<div class="cbody">${escapeHtml(m.body)}</div>`;
+  d.innerHTML=`<div class="cmeta">${av}<b>${m.mod?'🛡 ':''}${escapeHtml(m.username||'member')}</b>${vBadge(m)}${m.admin?'<span class="tag" style="color:var(--gold)">ADMIN</span>':''}<span>${escapeHtml(fmtCommTime(m.t))}</span>${(!m.mine&&!m.mod)?`<a class="cdm" data-h="${escapeHtml(m.username||'')}" title="Message privately">✉</a><a class="crep" data-h="${escapeHtml(m.username||'')}" data-id="${escapeHtml(m.id)}" title="Report this message to the moderator">⚑ report</a>`:''}</div>`+bodyHtml;
   el.appendChild(d);
   const rep=d.querySelector('.crep'); if(rep) rep.onclick=()=>openCommReport(rep.dataset.h, rep.dataset.id);
   const dm=d.querySelector('.cdm'); if(dm) dm.onclick=()=>{ COMM.view='dms'; COMM.peer=dm.dataset.h; COMM.lastDmId=null; renderCommunity(); };
@@ -1823,16 +1897,20 @@ async function renderCommDms(){
   if(!COMM.peer){
     const r=await post('/api/community/dm/threads',{});
     const th=(r.threads||[]);
-    body.innerHTML=`<div class="muted" style="font-size:11px;margin-bottom:8px">Private messages between you and one member. Start one from <b>People &amp; Friends</b>, the ✉ icon, or add a friend by their OraCool number.</div>`+
-      (th.length? th.map(t=>`<div class="cthread" data-h="${escapeHtml(t.username||'')}"><div style="min-width:0"><b style="color:var(--cyan2)">${t.mod?'🛡 ':'<span class="conl '+(t.online?'on':'')+'"></span>'}${escapeHtml(t.username||'member')}</b>${t.admin?' <span class="tag" style="color:var(--gold)">ADMIN</span>':''}${t.unread?` <span class="cunread">${t.unread}</span>`:''}<div class="muted" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.preview||'')}</div></div><div class="muted" style="font-size:10px;flex:none">${escapeHtml(fmtCommTime(t.t))}</div></div>`).join('') : '<div class="muted">No conversations yet.</div>');
+    body.innerHTML=`<div class="muted" style="font-size:11px;margin-bottom:8px">Private messages between you and one member — text, <b>voice notes</b>, <b>audio</b> and <b>video calls</b>. Start one from <b>People &amp; Friends</b>, the ✉ icon, or add a friend by their OraCool number.</div>`+
+      (th.length? th.map(t=>`<div class="cthread" data-h="${escapeHtml(t.username||'')}">${avatarHtml({username:t.username, avatar:t.avatar}, 'sm')}<div style="min-width:0"><b style="color:var(--cyan2)">${t.mod?'🛡 ':''}${escapeHtml(t.username||'member')}</b>${vBadge(t)}${t.admin?' <span class="tag" style="color:var(--gold)">ADMIN</span>':''}${t.unread?` <span class="cunread">${t.unread}</span>`:''}<div class="muted" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.preview||'')}</div></div><div class="muted" style="font-size:10px;flex:none">${escapeHtml(fmtCommTime(t.t))}</div></div>`).join('') : '<div class="muted">No conversations yet.</div>');
     body.querySelectorAll('.cthread').forEach(el=>{ el.onclick=()=>{ COMM.peer=el.dataset.h; COMM.lastDmId=null; renderCommDms(); }; });
     return;
   }
-  body.innerHTML=`<div class="commhead" style="margin-bottom:6px"><button class="btn small ghost" id="dmBack">← Messages</button><b style="color:var(--cyan2)">@${escapeHtml(COMM.peer)}</b><span class="muted" id="dmOnline" style="font-size:10px"></span><span style="flex:1"></span><button class="btn small ghost" id="dmReport" style="color:var(--danger)">⚑ Report</button></div>
+  body.innerHTML=`<div class="commhead" style="margin-bottom:6px"><button class="btn small ghost" id="dmBack">← Messages</button><b style="color:var(--cyan2)">@${escapeHtml(COMM.peer)}</b><span class="muted" id="dmOnline" style="font-size:10px"></span><span style="flex:1"></span>${r && r.mod==='undefined' ? '' : ''}<button class="btn small ghost" id="dmCallA" title="Audio call">📞</button><button class="btn small ghost" id="dmCallV" title="Video call">📹</button><button class="btn small ghost" id="dmReport" style="color:var(--danger)">⚑ Report</button></div>
     <div class="commmsgs" id="dmMsgs"><div class="muted">Loading…</div></div>
-    <div class="commcompose" id="dmCompose"><input type="text" id="dmInput" maxlength="800" autocomplete="off" placeholder="Message @${escapeHtml(COMM.peer)}"><button class="btn primary" id="dmSend">Send</button></div>`;
+    <div class="commcompose" id="dmCompose"><input type="text" id="dmInput" maxlength="800" autocomplete="off" placeholder="Message @${escapeHtml(COMM.peer)}"><button class="btn ghost voicebtn" id="dmVoice" title="Record a voice note">🎤</button><button class="btn primary" id="dmSend">Send</button></div>`;
   $('#dmBack').onclick=()=>{ COMM.peer=null; COMM.lastDmId=null; renderCommDms(); };
   $('#dmReport').onclick=()=>openCommReport(COMM.peer, null);
+  const ca=$('#dmCallA'), cv=$('#dmCallV');
+  if(ca) ca.onclick=()=>callStart(COMM.peer, false);
+  if(cv) cv.onclick=()=>callStart(COMM.peer, true);
+  const dv=$('#dmVoice'); if(dv) dv.onclick=commVoiceToggle;
   const send=async()=>{ const inp=$('#dmInput'); const text=(inp.value||'').trim(); if(!text) return; inp.value=''; const r=await post('/api/community/dm/send',{handle:COMM.peer, body:text}); if(r.error){ addErr('Community: '+r.error); inp.value=text; return; } const el=$('#dmMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); COMM.lastDmId=r.message.id; el.scrollTop=el.scrollHeight; } };
   $('#dmSend').onclick=send; $('#dmInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
   loadCommDm(true);
@@ -1850,7 +1928,7 @@ async function renderCommFriends(){
   const el=$('#commFriends'); if(!el) return;
   const r=await post('/api/community/friends',{});
   const fs=r.friends||[];
-  el.innerHTML=fs.length? fs.map(p=>`<div class="cperson"><div style="min-width:0"><span class="conl ${p.online?'on':''}"></span><b style="color:var(--cyan2)">@${escapeHtml(p.username||'member')}</b> <span class="muted" style="font-size:10px" title="OraCool number">${escapeHtml(String(p.number||''))}</span>${p.admin?' <span class="tag" style="color:var(--gold)">ADMIN</span>':''}</div><div style="display:flex;gap:6px;flex:none"><button class="btn small ghost" data-fdm="${escapeHtml(p.username||'')}">✉ Message</button></div></div>`).join('') : '<div class="muted">No friends yet — add one by their OraCool number below.</div>';
+  el.innerHTML=fs.length? fs.map(p=>`<div class="cperson">${avatarHtml(p,'sm')}<div style="min-width:0"><span class="conl ${p.online?'on':''}"></span><b style="color:var(--cyan2)">@${escapeHtml(p.username||'member')}</b>${vBadge(p)} <span class="muted" style="font-size:10px" title="OraCool number">${escapeHtml(String(p.number||''))}</span>${p.admin?' <span class="tag" style="color:var(--gold)">ADMIN</span>':''}</div><div style="display:flex;gap:6px;flex:none"><button class="btn small ghost" data-fdm="${escapeHtml(p.username||'')}">✉ Message</button></div></div>`).join('') : '<div class="muted">No friends yet — add one by their OraCool number below.</div>';
   el.querySelectorAll('[data-fdm]').forEach(b=>{ b.onclick=()=>{ COMM.view='dms'; COMM.peer=b.dataset.fdm; COMM.lastDmId=null; renderCommunity(); }; });
 }
 async function commAddFriend(){
@@ -1881,7 +1959,7 @@ async function renderCommPeople(q){
   const r=await post('/api/community/people',{q:q||''});
   const list=$('#commPeople'); if(!list) return;
   const ppl=r.people||[];
-  list.innerHTML=ppl.length? ppl.map(p=>`<div class="cperson"><div style="min-width:0"><span class="conl ${p.online?'on':''}"></span><b style="color:var(--cyan2)">@${escapeHtml(p.username||'member')}</b> <span class="muted" style="font-size:10px" title="OraCool number">${escapeHtml(String(p.number||''))}</span>${p.admin?' <span class="tag" style="color:var(--gold)">ADMIN</span>':''}<div class="muted" style="font-size:11px">${escapeHtml(p.bio||'')}${p.bio?' · ':''}joined ${escapeHtml(p.joined||'')}</div></div><div style="display:flex;gap:6px;flex:none"><button class="btn small ghost" data-dm="${escapeHtml(p.username||'')}">✉ Message</button>${p.admin?'':`<button class="btn small ghost" data-rep="${escapeHtml(p.username||'')}" style="color:var(--danger)">⚑</button>`}</div></div>`).join('') : '<div class="muted">No members found yet. Say hello in the Lounge — members appear here once they open the Community.</div>';
+  list.innerHTML=ppl.length? ppl.map(p=>`<div class="cperson">${avatarHtml(p,'sm')}<div style="min-width:0"><span class="conl ${p.online?'on':''}"></span><b style="color:var(--cyan2)">@${escapeHtml(p.username||'member')}</b>${vBadge(p)} <span class="muted" style="font-size:10px" title="OraCool number">${escapeHtml(String(p.number||''))}</span>${p.admin?' <span class="tag" style="color:var(--gold)">ADMIN</span>':''}<div class="muted" style="font-size:11px">${escapeHtml(p.bio||'')}${p.bio?' · ':''}joined ${escapeHtml(p.joined||'')}</div></div><div style="display:flex;gap:6px;flex:none"><button class="btn small ghost" data-dm="${escapeHtml(p.username||'')}">✉ Message</button>${(p.admin||p.verified)?'':`<button class="btn small ghost" data-rep="${escapeHtml(p.username||'')}" style="color:var(--danger)" title="${p.verified?'Verified members can only be reviewed by an administrator':'Report'}'>⚑</button>`}</div></div>`).join('') : '<div class="muted">No members found yet. Say hello in the Lounge — members appear here once they open the Community.</div>';
   list.querySelectorAll('[data-dm]').forEach(b=>{ b.onclick=()=>{ COMM.view='dms'; COMM.peer=b.dataset.dm; COMM.lastDmId=null; renderCommunity(); }; });
   list.querySelectorAll('[data-rep]').forEach(b=>{ b.onclick=()=>openCommReport(b.dataset.rep, null); });
 }
@@ -1909,6 +1987,196 @@ function openCommReport(handle, messageId){
   setTimeout(()=>{ const t=$('#commReason'); if(t) t.focus(); }, 50);
 }
 
+/* ---------- community calls: audio & video (P2P WebRTC, OraCool signals) ---------- */
+const CALL={pc:null, stream:null, callId:null, peer:null, kind:'audio', active:false, ringing:null, tick:null, secs:0, beepTimer:null};
+function callIceServers(){ return [{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}]; }
+function callBeep(){ try{ const ctx=new (window.AudioContext||window.webkitAudioContext)(); const o=ctx.createOscillator(); const g=ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.frequency.value=880; g.gain.value=0.05; o.start(); setTimeout(()=>{ try{o.stop(); ctx.close();}catch(e){} }, 800); }catch(e){} }
+function showCallUi(sub, who){
+  let ov=document.getElementById('callOverlay');
+  if(!ov){ ov=document.createElement('div'); ov.id='callOverlay'; document.body.appendChild(ov); }
+  const isVideo=CALL.kind==='video';
+  ov.innerHTML=`<div class="callcard"><div class="who" id="callWho">${escapeHtml(who||CALL.peer||'')}</div><div class="sub" id="callSub">${sub}</div>
+    <div class="remotevid" id="callRemote">${isVideo?'<video id="remoteVid" autoplay playsinline></video>':'<div style="font-size:42px">📞</div>'}</div>
+    ${isVideo?'<div class="calllocal"><video id="localVid" autoplay playsinline muted></video></div>':''}
+    <div class="callctrls">
+      <button id="callMic" title="Mute / unmute">🎙️</button>
+      ${isVideo?'<button id="callCam" title="Camera on / off">📷</button>':''}
+      <button class="end" id="callEnd" title="End call">📵</button>
+    </div></div>`;
+  ov.classList.add('open');
+  if(isVideo && CALL.stream){ const lv=document.getElementById('localVid'); if(lv) lv.srcObject=CALL.stream; }
+  document.getElementById('callMic').onclick=()=>{ const t=CALL.stream.getAudioTracks(); if(!t.length) return; t.forEach(x=>x.enabled=!x.enabled); document.getElementById('callMic').textContent=t[0].enabled?'🎙️':'🔇'; };
+  const cam=document.getElementById('callCam'); if(cam) cam.onclick=()=>{ const t=CALL.stream.getVideoTracks(); if(!t.length) return; t.forEach(x=>x.enabled=!x.enabled); cam.textContent=t[0].enabled?'📷':'🚫'; };
+  document.getElementById('callEnd').onclick=()=>{ post('/api/community/call/hangup',{call_id:CALL.callId}).catch(()=>null); callTeardown(); addSystemNote('📵 Call ended.'); };
+  CALL.tick=setInterval(()=>{ const sb=document.getElementById('callSub'); if(sb && !sb.dataset.waiting) sb.textContent=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}); }, 1000);
+}
+function callTeardown(){
+  if(CALL.tick){ clearInterval(CALL.tick); CALL.tick=null; }
+  if(CALL.beepTimer){ clearInterval(CALL.beepTimer); CALL.beepTimer=null; }
+  if(CALL.pc){ try{ CALL.pc.close(); }catch(e){} CALL.pc=null; }
+  if(CALL.stream){ CALL.stream.getTracks().forEach(t=>t.stop()); CALL.stream=null; }
+  const ov=document.getElementById('callOverlay'); if(ov) ov.classList.remove('open');
+  const ic=document.getElementById('incomingCall'); if(ic) ic.remove();
+  CALL.active=false; CALL.ringing=null; CALL.callId=null; CALL.peer=null;
+}
+async function callStart(peerUsername, video){
+  if(CALL.active||CALL.ringing) return addErr('You are already on a call.');
+  try{ CALL.stream=await navigator.mediaDevices.getUserMedia({audio:true, video:!!video}); }
+  catch(e){ return addErr('Microphone/camera unavailable: '+(e.message||e)); }
+  CALL.kind=video?'video':'audio'; CALL.peer=peerUsername; CALL.active=true;
+  try{
+    const r=await post('/api/community/call/start',{peer:peerUsername, video:!!video});
+    if(r.error) throw new Error(r.error);
+    CALL.callId=r.call_id;
+  }catch(e){ callTeardown(); return addErr('Call: '+(e.message||e)); }
+  try{
+    CALL.pc=new RTCPeerConnection({iceServers:callIceServers()});
+    CALL.stream.getTracks().forEach(t=>CALL.pc.addTrack(t, CALL.stream));
+    CALL.pc.onicecandidate=e=>{ if(e.candidate) post('/api/community/call/ice',{call_id:CALL.callId, candidate:e.candidate}).catch(()=>null); };
+    CALL.pc.onconnectionstatechange=()=>{ if(CALL.pc && CALL.pc.connectionState==='failed'){ callTeardown(); addErr('Call failed — no connection could be established.'); } };
+    const offer=await CALL.pc.createOffer(); await CALL.pc.setLocalDescription(offer);
+    await post('/api/community/call/sdp',{call_id:CALL.callId, sdp:JSON.stringify(offer)});
+    showCallUi('Calling…', '@'+peerUsername);
+  }catch(e){ callTeardown(); addErr('Call: '+(e.message||e)); }
+}
+async function callSetRemote(sd){
+  try{
+    const d=(typeof sd==='string')?JSON.parse(sd):sd;
+    if(d.type==='offer'){
+      CALL.pc=new RTCPeerConnection({iceServers:callIceServers()});
+      if(CALL.stream) CALL.stream.getTracks().forEach(t=>CALL.pc.addTrack(t, CALL.stream));
+      CALL.pc.onicecandidate=e=>{ if(e.candidate) post('/api/community/call/ice',{call_id:CALL.callId, candidate:e.candidate}).catch(()=>null); };
+      CALL.pc.onconnectionstatechange=()=>{ if(CALL.pc && CALL.pc.connectionState==='failed'){ callTeardown(); addErr('Call failed — no connection could be established.'); } };
+      await CALL.pc.setRemoteDescription(d);
+      const ans=await CALL.pc.createAnswer(); await CALL.pc.setLocalDescription(ans);
+      await post('/api/community/call/sdp',{call_id:CALL.callId, sdp:JSON.stringify(ans)});
+    } else if(CALL.pc){ await CALL.pc.setRemoteDescription(d); }
+    const rv=document.getElementById('remoteVid'); if(rv) rv.srcObject=CALL.pc;
+    const sub=document.getElementById('callSub'); if(sub) delete sub.dataset.waiting;
+  }catch(e){ console.warn('call sdp', e); }
+}
+function showIncomingCall(c){
+  if(CALL.active){ post('/api/community/call/hangup',{call_id:c.call_id}).catch(()=>null); return; }
+  let m=document.getElementById('incomingCall');
+  if(!m){ m=document.createElement('div'); m.id='incomingCall'; m.className='modal open'; document.body.appendChild(m); }
+  m.innerHTML=`<div class="incomingcard"><div class="big">${c.kind==='video'?'📹':''}</div>
+    <div style="font-size:15px;font-weight:700;margin-top:10px">${c.kind==='video'?'Video call':'Call'} from <b style="color:var(--cyan2)">@${escapeHtml(c.from_name||c.from||'member')}</b></div>
+    <div style="display:flex;gap:10px;justify-content:center;margin-top:18px">
+      <button class="btn primary" id="incAccept">Accept</button><button class="btn ghost" id="incDecline">Decline</button>
+    </div></div>`;
+  CALL.ringing=c; callBeep(); CALL.beepTimer=setInterval(callBeep, 2400);
+  document.getElementById('incDecline').onclick=()=>{ post('/api/community/call/hangup',{call_id:c.call_id}).catch(()=>null); callTeardown(); };
+  document.getElementById('incAccept').onclick=async()=>{
+    m.remove(); clearInterval(CALL.beepTimer); CALL.beepTimer=null;
+    try{ CALL.stream=await navigator.mediaDevices.getUserMedia({audio:true, video:c.kind==='video'}); }
+    catch(e){ addErr('Microphone/camera unavailable: '+(e.message||e)); post('/api/community/call/hangup',{call_id:c.call_id}).catch(()=>null); CALL.ringing=null; return; }
+    CALL.callId=c.call_id; CALL.peer=c.from_name||c.from; CALL.kind=c.kind; CALL.active=true;
+    showCallUi('Connecting…','@'+CALL.peer);
+    const sub=document.getElementById('callSub'); if(sub) sub.dataset.waiting='1';
+    CALL.ringing=null;
+    await callSetRemote(c.offer);
+  };
+}
+async function callPollTick(){
+  if(!session || isBlockedSession()) return;
+  try{
+    const r=await post('/api/community/call/poll',{});
+    if(!r) return;
+    if(r.incoming && !CALL.active){ showIncomingCall(r.incoming); return; }
+    (r.updates||[]).forEach(u=>{
+      if(u.event==='closed'){
+        if(u.call_id===CALL.callId || (CALL.ringing && u.call_id===CALL.ringing.call_id)){ callTeardown(); addSystemNote('📵 Call ended.'); }
+        return;
+      }
+      if(u.call_id!==CALL.callId) return;
+      if(u.event==='answer'){ callSetRemote(u.sdp); }
+      if(u.event==='ice'){ (u.candidates||[]).forEach(cd=>{ try{ if(CALL.pc) CALL.pc.addIceCandidate(cd); }catch(e){} }); }
+    });
+  }catch(e){}
+}
+setInterval(callPollTick, 3000);
+
+/* ---------- voice notes in DMs ---------- */
+const REC={mr:null, chunks:[], timer:null, secs:0};
+async function commVoiceToggle(){
+  const btn=$('#dmVoice'); if(!btn) return;
+  if(REC.mr){ try{ REC.mr.stop(); }catch(e){} return; }
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const mime=(window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm'))?'audio/webm':undefined;
+    REC.mr=new MediaRecorder(stream, mime?{mimeType:mime}:undefined);
+    REC.chunks=[]; REC.secs=0;
+    REC.mr.ondataavailable=e=>{ if(e.data && e.data.size) REC.chunks.push(e.data); };
+    REC.mr.onstop=async()=>{
+      stream.getTracks().forEach(t=>t.stop());
+      btn.classList.remove('rec'); btn.textContent='🎤';
+      if(REC.timer){ clearInterval(REC.timer); REC.timer=null; }
+      const blob=new Blob(REC.chunks,{type:mime||'audio/webm'}); REC.chunks=[];
+      if(blob.size<2000) return;
+      const f=new FileReader();
+      f.onload=async()=>{
+        btn.textContent='⏫';
+        const up=await post('/api/community/media',{data_url:f.result});
+        if(up.error){ addErr('Voice note: '+up.error); btn.textContent='🎤'; return; }
+        const r=await post('/api/community/dm/send',{handle:COMM.peer, body:'', media_url:up.media_url});
+        btn.textContent='🎤';
+        if(r.error){ addErr('Voice note: '+r.error); return; }
+        const el=$('#dmMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); el.scrollTop=el.scrollHeight; }
+      };
+      f.onerror=()=>{ btn.textContent='🎤'; };
+      f.readAsDataURL(blob);
+    };
+    REC.mr.start();
+    btn.classList.add('rec'); btn.textContent='⏹';
+    REC.timer=setInterval(()=>{ REC.secs+=1; btn.textContent=REC.secs+'s'; if(REC.secs>=60){ try{ REC.mr.stop(); }catch(e){} } }, 1000);
+  }catch(e){ addErr('Microphone unavailable: '+(e.message||e)); }
+}
+
+/* ---------- profile picture ---------- */
+function commPhotoPick(){
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='image/jpeg,image/png,image/webp';
+  inp.onchange=async()=>{
+    const f=inp.files && inp.files[0]; if(!f) return;
+    if(f.size>2*1024*1024){ addErr('Profile picture must be under 2 MB.'); return; }
+    const dataUrl=await new Promise(res=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=()=>res(null); fr.readAsDataURL(f); });
+    if(!dataUrl) return;
+    const up=await post('/api/community/avatar',{data_url:dataUrl});
+    if(up.error){ addErr('Profile picture: '+up.error); return; }
+    if(COMM.me && COMM.me.profile) COMM.me.profile.avatar=up.avatar_url;
+    addSystemNote('📷 Profile picture updated.');
+    renderCommunity();
+  };
+  inp.click();
+}
+
+/* ---------- verified badge (monthly) ---------- */
+async function commBadgeBuy(){
+  const b=$('#commBadgeBuy'); if(b) b.disabled=true;
+  const cb=window.location.origin+window.location.pathname;
+  const r=await post('/api/community/badge/pay',{callback_url:cb});
+  if(b) b.disabled=false;
+  if(r.error){ addErr('Badge: '+r.error); return; }
+  try{ localStorage.setItem('oracool_badge_ref', r.reference); }catch(e){}
+  addSystemNote('💳 Finishing your verified badge payment — it activates within a minute after payment.');
+  if(r.authorization_url) window.open(r.authorization_url, '_blank');
+  badgePoll(r.reference);
+}
+async function badgePoll(ref){
+  ref=ref || (function(){ try{ return localStorage.getItem('oracool_badge_ref'); }catch(e){ return null; } })();
+  if(!ref) return;
+  for(let i=0;i<40;i++){
+    await new Promise(r=>setTimeout(r, 4000));
+    if(!session) return;
+    const r2=await post('/api/community/badge/status',{reference:ref}).catch(()=>null);
+    if(r2 && r2.ok){
+      try{ localStorage.removeItem('oracool_badge_ref'); }catch(e){}
+      addSystemNote('✦ You are now a <b>verified member</b> — verified members can only be reviewed by an administrator.');
+      if(COMM.me){ COMM.me.verified=true; renderCommunity(); }
+      return;
+    }
+  }
+}
+
 /* ---------- tabs ---------- */
 const TAB_TIER={cases:'pro', trading:'pro', code:'pro'};
 function tabLockPanel(p, need){
@@ -1921,15 +2189,15 @@ function tabLockPanel(p, need){
     <button class="btn gold" id="tabUp_${p}" style="margin-top:10px">⚡ Unlock ${need.toUpperCase()}</button>`;
   const b=$('#tabUp_'+p); if(b) b.onclick=()=>openUpgrade(need);
 }
-document.querySelectorAll('.tab').forEach(t=>{
+document.querySelectorAll('.snav').forEach(t=>{
   t.onclick=()=>{
     if(!t.dataset.p){ if(t.id==='lockTab') showLockScreen(); return; }
     const need=TAB_TIER[t.dataset.p];
     const locked=!!(need && !tierGte(need));
-    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.snav').forEach(x=>{ x.classList.remove('active'); x.classList.toggle('locked', false); });
     document.querySelectorAll('.panelbody').forEach(x=>x.classList.remove('active'));
     t.classList.add('active'); $('#p-'+t.dataset.p).classList.add('active');
-    if(locked){ tabLockPanel(t.dataset.p, need); return; }   // plan lock — nothing above your tier opens
+    if(locked){ t.classList.add('locked'); tabLockPanel(t.dataset.p, need); return; }   // plan lock — nothing above your tier opens
     if(t.dataset.p==='status')renderStatus();
     if(t.dataset.p==='community')renderCommunity();
     if(t.dataset.p==='cases')renderCases();
@@ -2595,7 +2863,7 @@ async function renderFilesAgent(){
 }
 
 function startCamera(){
-  const t=document.querySelector('.tab[data-p="devices"]'); if(t) t.click();
+  const t=document.querySelector('.snav[data-p="devices"]'); if(t) t.click();
   setTimeout(()=>{ const b=$('#camOpen'); if(b) b.click(); }, 200);
 }
 async function scanDevices(){
@@ -2779,7 +3047,7 @@ function renderAccount(){
     } else { const m=(r.data&&(r.data.msg||r.data.error_description))||r.error||'login failed'; $('#aOut').innerHTML=`<div class="errbox">${escapeHtml(m)}</div>`; }
   };
 }
-$('#acctChip').onclick=()=>{ document.querySelector('.tab[data-p="account"]').click(); };
+$('#acctChip').onclick=()=>{ document.querySelector('.snav[data-p="account"]').click(); };
 
 /* ---------- admin panel ---------- */
 async function renderAdmin(){
@@ -2825,7 +3093,8 @@ async function renderModeration(){
           ${(c.status==='pending_admin'||c.status==='advisory')?`<button class="btn small ghost" data-mod="confirm" data-id="${escapeHtml(c.id)}" style="color:var(--danger)">Suspend this account</button>`:''}
           ${c.status==='blocked'?`<button class="btn small ghost" data-mod="overturn" data-id="${escapeHtml(c.id)}" style="color:var(--ok)">Overturn — unblock</button>`:''}
         </div></div>`).join('') : '<div class="muted">No moderation cases yet. A case opens automatically when 3 different members report the same account.</div>'}
-    ${(r.reports||[]).length?`<div class="tag" style="margin-top:6px">Reported accounts</div>${r.reports.slice(0,10).map(x=>`<div class="logline" style="display:block">@${escapeHtml(x.handle||'?')} <span class="muted">${escapeHtml(x.email||'')}</span> · ${x.counting}/${st.threshold||3} counting (${x.total} total)${x.blocked?' · <b style="color:var(--danger)">suspended</b>':''} <button class="btn small ghost" data-mod="review" data-email="${escapeHtml(x.email||'')}">Ask the AI (advisory)</button></div>`).join('')}`:''}`;
+    ${(r.reports||[]).length?`<div class="tag" style="margin-top:6px">Reported accounts</div>${r.reports.slice(0,10).map(x=>`<div class="logline" style="display:block">@${escapeHtml(x.handle||'?')} <span class="muted">${escapeHtml(x.email||'')}</span> · ${x.counting}/${st.threshold||3} counting (${x.total} total)${x.blocked?' · <b style="color:var(--danger)">suspended</b>':''} <button class="btn small ghost" data-mod="review" data-email="${escapeHtml(x.email||'')}">Ask the AI (advisory)</button></div>`).join('')}`:''}
+    ${(r.rooms||[]).length?`<div class="tag" style="margin-top:8px">Groups & channels <span class="muted" style="font-size:9px">(ban locked rooms; members report them with ⚑)</span></div>${r.rooms.slice(0,15).map(x=>`<div class="logline" style="display:block; line-height:1.5">#${escapeHtml(x.name)} <span class="muted">(${escapeHtml(x.kind)}${x.owner?' · by @'+escapeHtml(x.owner):''})</span> · ${x.reports} open report(s) / ${x.total_reports} total ${x.banned?' · <b style="color:var(--danger)">BANNED</b>':(x.reports>0?' · <b style="color:var(--gold)">reported</b>':'')}<br>${x.banned&&x.ban_reason?`<span class="muted" style="font-size:10px">Reason: ${escapeHtml(x.ban_reason)}</span><br>`:''}<button class="btn small ghost" data-rmban="${escapeHtml(x.slug)}" style="color:${x.banned?'var(--ok)':'var(--danger)'}">${x.banned?'✓ Unban':'🚫 Ban room'}</button></div>`).join('')}`:''}`;
   $('#aModRefresh').onclick=renderModeration;
   box.querySelectorAll('[data-mod]').forEach(b=>{ b.onclick=async()=>{
     const act=b.dataset.mod; let r2;
@@ -2834,6 +3103,13 @@ async function renderModeration(){
     else { b.textContent='Reviewing…'; r2=await post('/api/admin/moderation/review',{token:proToken, email:b.dataset.email}); if(r2 && r2.verdict) addSystemNote('🛡 Advisory verdict for <b>'+escapeHtml(b.dataset.email)+'</b>: <b>'+escapeHtml(r2.verdict)+'</b> ('+Math.round((r2.confidence||0)*100)+'%) — '+escapeHtml(r2.summary||'')+' <i>(advisory only — nobody was suspended)</i>'); }
     if(r2 && r2.error) addErr('Moderation: '+r2.error);
     renderModeration(); if(act!=='review') refreshAdmin();
+  }; });
+  box.querySelectorAll('[data-rmban]').forEach(b=>{ b.onclick=async()=>{
+    const banned=(b.textContent||'').includes('Unban');
+    const reason=banned?'':(prompt('Reason for banning this room (members will see it):','Illegal activity')||'');
+    const r3=await post('/api/admin/moderation/rooms/ban',{token:proToken, slug:b.dataset.rmban, banned:!banned, reason});
+    if(r3 && r3.error) addErr('Room: '+r3.error); else addSystemNote((banned?'✓ Room unbanned.':'🚫 Room banned.')+'');
+    renderModeration();
   }; });
 }
 async function renderBrandAccounts(){
@@ -3148,7 +3424,7 @@ async function refreshTrading(){
   $('#tAutoLbl').textContent=au.enabled? 'ON (paper)' : 'OFF';
   $('#tAutoLog').innerHTML=(au.log||[]).map(l=>`<div class="logline"><span class="ts">${l.ts}</span> ${escapeHtml(l.msg)}</div>`).join('');
 }
-setInterval(()=>{ try{ const tb=document.querySelector('.tab.active'); if(tb && tb.dataset.p==='trading' && session) refreshTrading(); }catch(e){} }, 10000);
+setInterval(()=>{ try{ const tb=document.querySelector('.snav.active'); if(tb && tb.dataset.p==='trading' && session) refreshTrading(); }catch(e){} }, 10000);
 function drawChart(hist, initial, liveEquity){
   const c=$('#tChart'); if(!c) return;
   const ctx=c.getContext('2d');
@@ -3419,7 +3695,7 @@ function openUpgrade(plan){
 }
 $('#upgradeClose').onclick=()=>$('#upgradeModal').classList.remove('open');
 $('#upgradeModal').addEventListener('click',e=>{ if(e.target.id==='upgradeModal')$('#upgradeModal').classList.remove('open'); });
-$('#tierBadge').onclick=()=>{ const t=document.querySelector('.tab[data-p="plans"]'); if(t) t.click(); };
+$('#tierBadge').onclick=()=>{ const t=document.querySelector('.snav[data-p="plans"]'); if(t) t.click(); };
 /* 24h free trial removed by the creator: PRO never unlocks without payment. */
 $('#payBtn').onclick=async()=>{
   const email=$('#upEmail').value.trim();
