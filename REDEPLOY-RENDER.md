@@ -316,20 +316,20 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 - **New environment names (both default to disabled):** `COMMUNICATIONS_ENABLED`, `SENDGRID_ENABLED`, `SENDGRID_API_KEY`, `SENDGRID_FROM_EMAIL`. Twilio credentials do not enable email.
 - **No new SQL** is required; communications reuse `case_store` under the key `communications` with `comms_<id>` dispatch reservations.
 - **Landing page pricing** states the ladder as implemented: Free $0, Starter $29, Pro $49, Professional $149, Enterprise $500/30 days, no free paid-plan trial.
-- **Build marker** `/api/health` → `patch13-block-lockout-fine`.
+- **Build marker** `/api/health` → `patch11-enterprise-communications`.
 
 ## Patch 12 — Server Key Vault and provider overrides are administrator-only
 
-- **Build marker** `/api/health` → `patch13-block-lockout-fine`.
+- **Build marker** `/api/health` → `patch12-admin-only-vault`.
 - `GET /api/config` no longer lists which server secrets are loaded. It carries capability flags only (`brain.ready`, `payments_ready`, public Paystack key, plan ladder).
 - New `POST /api/admin/keys` (administrators only, signed token required) returns the loaded/not-loaded booleans the **Server Key Vault** panel shows. Values never leave the server.
 - The Settings panel shows **Operator controls** (brain provider, override API key / base URL / model, HaveIBeenPwned key) and the **Server Key Vault** only to signed-in administrators. Ordinary accounts see personal preferences only.
 - The server strips `api_key`, `base_url`, `hibp_key` and any model name that is not one of the configured server models from every non-administrator request before provider resolution — so a modified client cannot redirect the assistant to another endpoint or pick an unconfigured model. Turbo/Smart still works for everyone.
-- No environment changes are required for this patch. Redeploy commit `patch12` → Manual Deploy → confirm `/api/health` shows `patch13-block-lockout-fine` and `/api/config` has no `keys` object.
+- No environment changes are required for this patch. Redeploy commit `patch12` → Manual Deploy → confirm `/api/health` shows `patch12-admin-only-vault` and `/api/config` has no `keys` object.
 
 ## Patch 12b — Twilio API key + readiness diagnostics
 
-- **Build marker** `/api/health` → `patch13-block-lockout-fine`.
+- **Build marker** `/api/health` → `patch12b-twilio-api-key`.
 - New optional env rows `TWILIO_API_KEY_SID` (`SK…`) and `TWILIO_API_KEY_SECRET`. Outbound Twilio requests use the API key first and fall back to the Auth Token on 401. `TWILIO_AUTH_TOKEN` is still required for signed webhooks.
 - New admin-only `POST /api/admin/twilio` (read-only readiness; `refresh:true` bypasses the 5-minute cache). Surfaced in Admin console → Diagnostics → **Twilio readiness** with a plain blockers list.
 - Deploy: paste the updated env file (adds the two rows), Manual Deploy the latest commit, confirm the build marker.
@@ -343,3 +343,13 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 - **Fine**: Paystack metadata `purpose=fine, account=<email>`; the webhook or the return-page verify calls `fine_paid()` → lifts the block, records the fine in the durable `fines` store, notifies admins, and grants **no plan**. Idempotent per reference. A normal plan purchase never lifts a block. If the durable unblock write fails at that instant, the fine stays *pending* and the BLOCKED screen's status poll retries it.
 - **Admin**: Revenue card lists reinstatement fines separately. Administrators cannot be blocked.
 - **Action required after deploy**: re-apply the block from Admin console → Users → Block (the earlier one was lost). It will now stick.
+
+## Patch 14 — iPhone / Safari black screen fixed + boot failsafe
+
+- **Build marker** `/api/health` → `patch14-ios-safari-boot`.
+- **Why the iPhone showed a black screen**: the console script used two regular-expression *lookbehind* patterns. Safari only added lookbehind in iOS 16.4 (March 2023); on any older iPhone the whole script fails to parse, nothing runs, and the dark boot background is all the user sees. Both patterns were rewritten without lookbehind (verified equivalent), and the emoji-stripping Unicode property regex is now built at runtime so an old engine skips it instead of failing to parse.
+- **Boot failsafe**: a tiny plain-ES5 script now runs before the console. If the console cannot parse or does not start within 9 seconds, the user sees "OraCool could not start in this browser" with the exact error, the detected iOS version and a *Try again* button — never a silent black screen again.
+- `-webkit-backdrop-filter` prefixes added for Safari < 18 (cosmetic).
+- Verified in a real WebKit engine with iPhone emulation (`tests/browser_iphone_check.py`): landing page, sign-in gate, console, BLOCKED screen and the failsafe. Static guard in the same test fails the build if lookbehind or post-iOS-15 APIs come back.
+- **On an iPhone that already showed the black page**: Safari may keep the old copy. Settings → Safari → Advanced → Website Data → search the site → Delete, then reopen. (Or "Clear History and Website Data".)
+- Deploy: no environment changes. Render auto-deploys `main`; confirm the marker.

@@ -51,7 +51,7 @@
   ::-webkit-scrollbar-track{background:transparent;}
 
   header{position:relative; z-index:2; display:flex; align-items:center; gap:14px; padding:10px 18px;
-    border-bottom:1px solid var(--line); background:linear-gradient(180deg, rgba(6,20,30,.9), rgba(6,16,24,.55)); backdrop-filter:blur(6px);}
+    border-bottom:1px solid var(--line); background:linear-gradient(180deg, rgba(6,20,30,.9), rgba(6,16,24,.55)); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);}
   .brand{display:flex; align-items:center; gap:12px;}
   .brand .title{font-size:17px; letter-spacing:4px; font-weight:600; color:var(--cyan2); text-shadow:0 0 14px rgba(0,229,255,.6);}
   .brand .sub{font-size:10px; letter-spacing:3px; color:var(--dim); text-transform:uppercase;}
@@ -80,7 +80,7 @@
   .wake i{width:7px;height:7px;border-radius:50%;background:var(--dim); display:inline-block;}
 
   main{position:relative; z-index:1; flex:1; min-height:0; display:grid; grid-template-columns: minmax(0,1fr) 400px; grid-template-rows:minmax(0,1fr); gap:16px; padding:16px 20px 20px;}
-  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; backdrop-filter:blur(8px); box-shadow:0 10px 40px rgba(0,0,0,.5);}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); box-shadow:0 10px 40px rgba(0,0,0,.5);}
 
   .left{display:flex; flex-direction:column; gap:12px; min-height:0;}
   .chatwrap{flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden;}
@@ -98,7 +98,7 @@
   .jumpbtn.show{opacity:1; transform:translateY(0); pointer-events:auto;}
   .jumpbtn:hover{border-color:var(--cyan2); color:#fff;}
   /* chat drawer: history + new chat */
-  .scrim{position:fixed; inset:0; background:rgba(2,8,14,.55); backdrop-filter:blur(2px); z-index:60; opacity:0;
+  .scrim{position:fixed; inset:0; background:rgba(2,8,14,.55); backdrop-filter:blur(2px); -webkit-backdrop-filter:blur(2px); z-index:60; opacity:0;
     pointer-events:none; transition:opacity .2s ease;}
   .scrim.open{opacity:1; pointer-events:auto;}
   .drawer{position:fixed; top:0; left:0; bottom:0; width:min(340px,86vw); z-index:61; display:flex; flex-direction:column;
@@ -246,7 +246,7 @@
   .keyrow .s{color:var(--dim); font-size:10px; text-transform:uppercase;}
 
   /* modal */
-  .modal{position:fixed; inset:0; z-index:60; background:rgba(2,6,10,.75); backdrop-filter:blur(4px); display:none; padding:20px; overflow-y:auto;}
+  .modal{position:fixed; inset:0; z-index:60; background:rgba(2,6,10,.75); backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px); display:none; padding:20px; overflow-y:auto;}
   .modal.open{display:flex; align-items:flex-start; justify-content:center;}
   .modalcard{width:min(430px, 100%); margin:auto 0; background:linear-gradient(160deg, rgba(9,28,40,.98), rgba(5,16,24,.98)); border:1px solid var(--line2);
     border-radius:16px; padding:22px; box-shadow:0 0 60px rgba(0,229,255,.2);}
@@ -264,10 +264,10 @@
   #app.hidden{display:none;}
 
   /* auth gate */
-  .gate{position:fixed; inset:0; z-index:70; background:rgba(3,7,12,.97); display:none; padding:20px; backdrop-filter:blur(8px); overflow-y:auto;}
+  .gate{position:fixed; inset:0; z-index:70; background:rgba(3,7,12,.97); display:none; padding:20px; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); overflow-y:auto;}
   /* ---- suspended account: holographic BLOCKED screen ---- */
   #blockedScreen{position:fixed; inset:0; z-index:99999; display:none; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:24px; text-align:center;
-    background:radial-gradient(ellipse at 50% 40%, rgba(12,18,40,.96), rgba(2,4,10,.99)); backdrop-filter:blur(14px); overflow-y:auto;}
+    background:radial-gradient(ellipse at 50% 40%, rgba(12,18,40,.96), rgba(2,4,10,.99)); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); overflow-y:auto;}
   #blockedScreen.open{display:flex;}
   .holo-wrap{perspective:900px; position:relative; padding:10px 18px; max-width:100vw; overflow:hidden;}
   .holo{font-size:clamp(52px,12.5vw,176px); font-weight:900; letter-spacing:.12em; line-height:1; margin:0; padding:0 .1em; position:relative;
@@ -635,6 +635,29 @@
 </div>
 
 <script>
+/* Boot failsafe (plain ES5 on purpose): if the main script cannot parse or start on this browser,
+   show what went wrong instead of a black screen. */
+(function(){
+  var started=false, firstErr='';
+  window.__oraBooted=function(){ started=true; var f=document.getElementById('bootFail'); if(f) f.parentNode.removeChild(f); };
+  window.addEventListener('error', function(e){ if(!firstErr){ firstErr=(e && e.message) ? String(e.message) : 'Script error'; if(e && e.lineno) firstErr+=' (line '+e.lineno+')'; } if(!started) setTimeout(show, 300); });
+  function show(){
+    if(started || document.getElementById('bootFail')) return;
+    var d=document.createElement('div'); d.id='bootFail';
+    d.setAttribute('style','position:fixed;left:0;right:0;top:0;bottom:0;z-index:100000;background:#04070d;color:#dfe9f5;font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;display:-webkit-box;display:-webkit-flex;display:flex;-webkit-box-align:center;-webkit-align-items:center;align-items:center;-webkit-box-pack:center;-webkit-justify-content:center;justify-content:center;padding:24px;text-align:center;');
+    var ua=navigator.userAgent||''; var ios=/OS (\d+)_(\d+)/.exec(ua); var iosMajor=ios?parseInt(ios[1],10):0; var iosV=ios?(ios[1]+'.'+ios[2]):'';
+    var advice=ios ? (iosMajor<15 ? 'Your iPhone runs iOS '+iosV+'. OraCool needs iOS 15 or newer — update it in Settings → General → Software Update, then reopen.' : 'iOS '+iosV+' detected. Install any available update (Settings → General → Software Update), then tap Try again. If it still fails, screenshot this message and send it to support.') : 'Please update your browser or try another one, then reopen.';
+    d.innerHTML='<div style="max-width:420px;width:100%"><div style="font-size:22px;font-weight:800;letter-spacing:.14em;color:#4de3ff;margin-bottom:10px">ORA-COOL AI</div>'+
+      '<div style="font-weight:700;margin-bottom:8px">OraCool could not start in this browser</div>'+
+      (firstErr ? '<div style="font-size:12px;color:#ff9aa8;background:rgba(255,90,110,.08);border:1px solid rgba(255,90,110,.3);border-radius:8px;padding:8px 10px;margin:8px 0;word-break:break-word">'+firstErr.replace(/</g,'&lt;')+'</div>' : '')+
+      '<div style="font-size:13px;color:#98a8bd;margin:6px 0 14px">'+advice+'</div>'+
+      '<button onclick="location.reload()" style="background:#00e5ff;color:#032;border:0;border-radius:10px;padding:12px 18px;font-weight:800;font-size:14px">Try again</button></div>';
+    document.body.appendChild(d);
+  }
+  setTimeout(function(){ if(!started) show(); }, 9000);
+})();
+</script>
+<script>
 /* ============================================================
    ORA-COOL AI — frontend v2
    ============================================================ */
@@ -658,7 +681,7 @@ function showLockScreen(){
   if(window.OraVoice)window.OraVoice.stop('Microphone off — session locked');
   if(document.getElementById('lockScreen')) return;
   const d=document.createElement('div'); d.id='lockScreen';
-  d.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(2,10,20,.97);backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:center;padding:18px';
+  d.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(2,10,20,.97);backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:center;padding:18px';
   d.innerHTML=`<div style="max-width:340px;width:100%;text-align:center">
     <div class="gatebrand">ORA-COOL AI</div>
     <div class="gatesub">Session locked</div>
@@ -1004,7 +1027,7 @@ function boot(){
   const el=$('#bootlines'); let i=0;
   const iv=setInterval(()=>{
     if(i<BOOT.length){ el.innerHTML+=(i?'<br>':'')+BOOT[i]; i++; }
-    else{ clearInterval(iv); setTimeout(()=>{ $('#boot').classList.add('gone'); $('#app').classList.remove('hidden'); init(); },600); }
+    else{ clearInterval(iv); setTimeout(()=>{ $('#boot').classList.add('gone'); $('#app').classList.remove('hidden'); if(window.__oraBooted) window.__oraBooted(); init(); },600); }
   },400);
 }
 boot();
@@ -1046,7 +1069,7 @@ function speechClean(t){
     .replace(/—/g, ', ').replace(/–/g, ', ')
     .replace(/\s{2,}/g, ' ')
     .trim();
-  try { s = s.replace(/\p{Extended_Pictographic}/gu, ' ').replace(/\s{2,}/g,' ').trim(); } catch(e){}
+  try { s = s.replace(new RegExp('\\p{Extended_Pictographic}','gu'), ' ').replace(/\s{2,}/g,' ').trim(); } catch(e){}
   return s;
 }
 function speak(text){
@@ -1106,7 +1129,7 @@ function renderRich(el, text){
   s = s.replace(/`([^`\n]+)`/g, '<code style="background:rgba(0,229,255,.08);border:1px solid var(--line);border-radius:5px;padding:1px 5px">$1</code>');
   s = s.replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>');
   s = s.replace(/^\s*[-•]\s+/gm, '• ');
-  s = s.replace(/\*{2,}/g, '').replace(/(?<![\w*])\*(?![\w*])/g, '');
+  s = s.replace(/\*{2,}/g, '').replace(/(^|[^\w*])\*(?![\w*])/g, '$1');
   s = s.replace(/(https?:\/\/\S+?)(?=<|$)/gi, (m)=>m);
   s = s.replace(/\n/g, '<br>');
   el.innerHTML = s;
@@ -3325,8 +3348,8 @@ function quickExtract(t){
   const out={}; const add=(k,v)=>{ (out[k]=out[k]||[]); if(!out[k].includes(v)&&out[k].length<12) out[k].push(v); };
   const P={email:/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, ipv4:/\b(?:\d{1,3}\.){3}\d{1,3}\b/g,
     onion:/\b[a-z2-7]{16,59}\.onion\b/g, btc:/\b(?:bc1[a-z0-9]{25,58}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})\b/g,
-    eth:/\b0x[0-9a-fA-F]{40}\b/g, handle:/(?<![\w\/])@[A-Za-z0-9_]{3,20}/g, url:/https?:\/\/[^\s"')<>]+/g};
-  for(const [k,rx] of Object.entries(P)){ let m; const rx2=new RegExp(rx.source,'g'); while((m=rx2.exec(t))){ add(k, m[0]); } }
+    eth:/\b0x[0-9a-fA-F]{40}\b/g, handle:/(^|[^\w\/])(@[A-Za-z0-9_]{3,20})/g, url:/https?:\/\/[^\s"')<>]+/g};
+  for(const [k,rx] of Object.entries(P)){ let m; const rx2=new RegExp(rx.source,'g'); while((m=rx2.exec(t))){ add(k, m[2]!==undefined ? m[2] : m[0]); } }
   return out;
 }
 async function renderCases(){
