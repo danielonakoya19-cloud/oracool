@@ -169,6 +169,19 @@ PLANS = {
                    "days": 30, "all_features": True},
 }
 
+# Reinstatement fine: a suspended account is locked out of the AI entirely and
+# may restore itself only by paying this flat fine (or by an administrator's
+# manual unblock). It is NOT a plan: it never grants a tier.
+FINE_USD = 20
+
+
+def fine_ngn():
+    try:
+        return int(KEYS.get("FINE_PRICE_NGN") or os.environ.get("FINE_PRICE_NGN") or 31000)
+    except Exception:
+        return 31000
+
+
 def tier_gte(tier, required):
     return TIER_RANK.get(tier, 0) >= TIER_RANK.get(required, 0)
 
@@ -223,37 +236,189 @@ def touch_user(email, **extra):
     rec.update(extra)
     users[email] = rec
     save_users(users)
-    # mirror to Supabase so the record survives Render's ephemeral filesystem
-    supabase_upsert_flag(rec)
+    # mirror activity to Supabase so the record survives Render's ephemeral
+    # filesystem — suspension columns are deliberately left alone here.
+    supabase_upsert_flag(rec, block_fields=False)
 
 def user_record(email):
     if not email:
         return None
     return load_users().get(email.strip().lower())
 
+_BLOCK_CACHE = {}          # email -> (expires_at_epoch, blocked_bool)
+_BLOCK_CACHE_LOCK = threading.Lock()
+BLOCK_CACHE_TTL = 60
+
+
+def _block_cache_set(email, value):
+    with _BLOCK_CACHE_LOCK:
+        if len(_BLOCK_CACHE) > 5000:
+            _BLOCK_CACHE.clear()
+        _BLOCK_CACHE[email] = (time.time() + BLOCK_CACHE_TTL, bool(value))
+
+
 def is_blocked(email):
-    rec = user_record(email)
-    if rec is not None:
-        return bool(rec.get("blocked"))
-    # no local record (e.g. fresh deploy) -> authoritative persistent check
-    f = supabase_get_flag(email)
-    return bool(f and f.get("blocked"))
+    """Authoritative suspension check.
+
+    The durable Supabase row wins whenever it is reachable (so a block survives
+    redeploys and reaches every instance within BLOCK_CACHE_TTL seconds); the
+    local record is the fallback. Results are cached per email for a minute."""
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    now = time.time()
+    with _BLOCK_CACHE_LOCK:
+        hit = _BLOCK_CACHE.get(email)
+    if hit and hit[0] > now:
+        return hit[1]
+    cloud = supabase_get_flag(email) if (key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY")) else None
+    if cloud is not None:
+        blocked = bool(cloud.get("blocked"))
+        try:   # keep the local mirror consistent with the durable truth
+            users = load_users()
+            rec = users.get(email)
+            if rec is not None and bool(rec.get("blocked")) != blocked:
+                rec["blocked"] = blocked
+                rec["block_reason"] = cloud.get("block_reason") or ""
+                rec["blocked_by"] = cloud.get("blocked_by") or ""
+                rec["blocked_at"] = cloud.get("blocked_at") or ""
+                users[email] = rec
+                save_users(users)
+        except Exception:
+            pass
+    else:
+        rec = user_record(email)
+        blocked = bool(rec and rec.get("blocked"))
+    _block_cache_set(email, blocked)
+    return blocked
+
 
 def block_user(email, blocked, reason="", by=""):
+    """Suspend or reinstate an account. Durable-first: when Supabase is
+    configured the row must be written successfully or nothing changes and an
+    error is returned — an administrator is never shown a block that would
+    evaporate on the next redeploy. Administrators cannot be blocked."""
     email = (email or "").strip().lower()
     if not email:
         return {"error": "Email required."}
+    if blocked and is_admin(email):
+        return {"error": "Administrator accounts cannot be blocked."}
     users = load_users()
     rec = users.get(email) or supabase_get_flag(email) or {"created": time.strftime("%Y-%m-%d %H:%M:%S")}
+    rec = dict(rec)
     rec["email"] = email
     rec["blocked"] = bool(blocked)
     rec["block_reason"] = reason if blocked else ""
     rec["blocked_by"] = by if blocked else ""
     rec["blocked_at"] = time.strftime("%Y-%m-%d %H:%M:%S") if blocked else ""
+    if key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY"):
+        if not supabase_upsert_flag(rec, block_fields=True):
+            return {"error": "Could not persist the suspension state to durable storage. Nothing changed — retry in a moment."}
     users[email] = rec
     save_users(users)
-    supabase_upsert_flag(rec)
+    _block_cache_set(email, bool(blocked))
+    try:
+        audit_log(by or "system", "account.blocked" if blocked else "account.reinstated", email + (" · " + reason if reason else ""))
+    except Exception:
+        pass
     return {"ok": True, "user": rec}
+
+
+# ---------------------------------------------------------------- reinstatement fines
+
+def _fines_file():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    return os.path.join(DATA_DIR, "fines.json")
+
+
+_FINES_LOCK = threading.Lock()
+
+
+def _fines_load():
+    d = None
+    try:
+        d = supabase_kv_get("fines")
+    except Exception:
+        d = None
+    if not isinstance(d, dict):
+        try:
+            with open(_fines_file()) as f:
+                d = json.load(f)
+        except Exception:
+            d = {}
+    return d if isinstance(d, dict) else {}
+
+
+def _fines_save(d):
+    try:
+        with open(_fines_file() + ".tmp", "w") as f:
+            json.dump(d, f, indent=1)
+        os.replace(_fines_file() + ".tmp", _fines_file())
+    except Exception:
+        pass
+    try:
+        supabase_kv_put("fines", d)
+    except Exception:
+        pass
+
+
+def fine_paid(email, reference, amount=0, currency="NGN", channel="", source="paystack"):
+    """Record a paid reinstatement fine and lift the suspension. Idempotent per
+    reference. Never grants a plan. If the durable unblock write fails the fine
+    stays marked pending and block_status() retries it on the next poll."""
+    email = (email or "").strip().lower()
+    reference = str(reference or "").strip()
+    if not email or not reference:
+        return {"error": "Fine payment is missing the account or reference."}
+    with _FINES_LOCK:
+        d = _fines_load()
+        rec = d.get(reference) or {"email": email, "reference": reference, "amount": amount, "currency": currency,
+                                   "channel": channel, "source": source, "paid_at": _now(), "unblocked": False}
+        if rec.get("unblocked"):
+            d[reference] = rec
+            _fines_save(d)
+            return {"ok": True, "already": True, "unblocked": True, "email": email}
+        r = block_user(email, False, "", "fine:" + reference)
+        rec["unblocked"] = bool(r.get("ok"))
+        rec["unblock_error"] = "" if r.get("ok") else str(r.get("error") or "")
+        d[reference] = rec
+        _fines_save(d)
+    try:
+        emit_event(email, "fine", "Reinstatement fine paid — access restored" if rec["unblocked"] else "Reinstatement fine paid — reinstatement pending",
+                   "ref " + reference + " · " + str(amount) + " " + str(currency) + " · via " + str(channel or source))
+        notify_admins("fine", "Reinstatement fine paid: " + email, "ref " + reference + " · " + str(amount) + " " + str(currency)
+                      + (" · access restored" if rec["unblocked"] else " · UNBLOCK PENDING (storage error)"))
+    except Exception:
+        pass
+    return {"ok": True, "unblocked": rec["unblocked"], "email": email, "reference": reference}
+
+
+def fines_for(email):
+    email = (email or "").strip().lower()
+    return [r for r in _fines_load().values() if (r.get("email") or "").lower() == email]
+
+
+def block_status(email):
+    """What a suspended account may see: its own status, the fine and how to pay.
+    Also retries any paid-but-pending reinstatement for that account."""
+    email = (email or "").strip().lower()
+    out = {"email": email, "blocked": False, "reason": "", "blocked_at": "",
+           "fine": {"usd": FINE_USD, "ngn": fine_ngn(), "currency": (KEYS.get("PAYSTACK_CURRENCY") or "NGN").upper()},
+           "paystack": bool(key("PAYSTACK_SECRET_KEY") or key("PAYSTACK_TEST_SECRET")),
+           "crypto": bool((key("ATLOS_MERCHANT_ID") and key("ATLOS_API_SECRET")) or crypto_wallet())}
+    if not email:
+        return out
+    pending = [r for r in fines_for(email) if not r.get("unblocked")]
+    if pending and is_blocked(email):
+        for r in pending:
+            fine_paid(email, r.get("reference"), r.get("amount"), r.get("currency"), r.get("channel"), r.get("source") or "retry")
+    out["blocked"] = is_blocked(email)
+    if out["blocked"]:
+        rec = user_record(email) or supabase_get_flag(email) or {}
+        out["reason"] = rec.get("block_reason") or ""
+        out["blocked_at"] = rec.get("blocked_at") or ""
+    out["fines_paid"] = len([r for r in fines_for(email) if r.get("unblocked")])
+    return out
 
 
 def admin_set_pro(email, tier, days=30, by=""):
@@ -401,8 +566,12 @@ def supabase_get_flag(email):
         return None
 
 
-def supabase_upsert_flag(rec):
-    """Best-effort upsert of one user's flags (block/seen) into Supabase."""
+def supabase_upsert_flag(rec, block_fields=True):
+    """Best-effort upsert of one user's flags into Supabase.
+
+    block_fields=False (activity touches) omits the suspension columns so a
+    login or heartbeat can never overwrite an administrator's block — only
+    block_user() writes those columns."""
     url = key("SUPABASE_URL")
     if not url or not key("SUPABASE_SERVICE_KEY"):
         return False
@@ -412,11 +581,12 @@ def supabase_upsert_flag(rec):
     body = {"email": email,
             "created": rec.get("created", ""),
             "last_seen": rec.get("last_seen", ""),
-            "blocked": bool(rec.get("blocked")),
-            "block_reason": rec.get("block_reason") or "",
-            "blocked_by": rec.get("blocked_by") or "",
-            "blocked_at": rec.get("blocked_at") or "",
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if block_fields:
+        body.update({"blocked": bool(rec.get("blocked")),
+                     "block_reason": rec.get("block_reason") or "",
+                     "blocked_by": rec.get("blocked_by") or "",
+                     "blocked_at": rec.get("blocked_at") or ""})
     for field in ("last_ip", "verified", "email_verification_required"):
         if field in rec:
             body[field] = rec[field]
@@ -1868,7 +2038,8 @@ def admin_revenue_payload():
             "payments": len(payments), "by_plan": by_plan,
             "active_subscribers": len(best_by_email), "active_by_plan": active_by_plan,
             "mrr_ngn": round(mrr_ngn), "recent": payments[:25],
-            "note": "Revenue = only real Paystack payments (₦). Admin grants are listed as active but never counted as money."}
+            "fines": fines_summary(),
+            "note": "Revenue = only real Paystack payments (₦). Admin grants are listed as active but never counted as money. Reinstatement fines are listed separately."}
 
 
 def mask_email(e):
@@ -1901,6 +2072,12 @@ def leaderboard_payload():
                     "trades": len(acc.get("trades") or [])})
     out.sort(key=lambda x: -(x["pnl"] or 0))
     return {"leaderboard": out[:20], "note": "Paper (simulated) trading only — not real money."}
+
+
+def fines_summary():
+    rows = list(_fines_load().values())
+    return {"count": len(rows), "usd": FINE_USD * len(rows),
+            "recent": sorted(rows, key=lambda r: str(r.get("paid_at") or ""), reverse=True)[:10]}
 
 
 def _require_admin(self, body):
@@ -3542,13 +3719,17 @@ def paystack_initialize(email, callback_url, plan="pro", currency=None):
     if not secret:
         return {"error": "Paystack secret key not configured."}
     plan = (plan or "pro").lower()
-    if plan not in PLANS:
-        plan = "pro"
-    if PLANS[plan].get("custom"):
-        return {"error": "That plan is a bespoke agreement — contact "
-                         + (admin_emails()[0] if admin_emails() else "the OraCool team")
-                         + " for a quote."}
-    p = PLANS[plan]
+    if plan == "fine":
+        # Reinstatement fine: not a plan, never grants a tier.
+        p = {"label": "Account reinstatement fine", "price_usd": FINE_USD, "price_ngn": fine_ngn(), "days": 0}
+    else:
+        if plan not in PLANS:
+            plan = "pro"
+        if PLANS[plan].get("custom"):
+            return {"error": "That plan is a bespoke agreement — contact "
+                             + (admin_emails()[0] if admin_emails() else "the OraCool team")
+                             + " for a quote."}
+        p = PLANS[plan]
     currency = (currency or KEYS.get("PAYSTACK_CURRENCY") or "NGN").upper()
     if currency not in ("NGN", "USD"):
         currency = "NGN"
@@ -3557,13 +3738,16 @@ def paystack_initialize(email, callback_url, plan="pro", currency=None):
     else:
         currency = "NGN"
         amount = p["price_ngn"] * 100
-    label = p["label"] + " · " + str(p["days"]) + " days"
+    label = p["label"] + (" · " + str(p["days"]) + " days" if p.get("days") else "")
+    metadata = {"product": "OraCool AI", "plan": plan}
+    if plan == "fine":
+        metadata.update({"purpose": "fine", "account": (email or "").strip().lower()})
     try:
         _, raw, _ = http_fetch("https://api.paystack.co/transaction/initialize",
                                method="POST", headers={"Authorization": "Bearer " + secret},
                                json_body={"email": email, "amount": amount,
                                           "currency": currency, "callback_url": callback_url,
-                                          "metadata": {"product": "OraCool AI", "plan": plan}},
+                                          "metadata": metadata},
                                timeout=30)
         d = json.loads(raw)
         if not d.get("status"):
@@ -3580,7 +3764,16 @@ def record_paystack_success(data):
     """Persist a successful Paystack charge as a subscription (shared by
     verify-on-return and the webhook)."""
     email = (data.get("customer") or {}).get("email")
-    plan = ((data.get("metadata") or {}).get("plan") or "pro").lower()
+    meta = data.get("metadata") or {}
+    plan = (meta.get("plan") or "pro").lower()
+    if plan == "fine" or meta.get("purpose") == "fine":
+        # Reinstatement fine: lift the suspension, record the fine, grant nothing.
+        account = (meta.get("account") or email or "").strip().lower()
+        r = fine_paid(account, data.get("reference"), (data.get("amount") or 0) / 100,
+                      data.get("currency") or "NGN", data.get("channel") or "", "paystack")
+        return {"email": account, "reference": data.get("reference"), "fine": True,
+                "unblocked": bool(r.get("unblocked")), "amount_ngn": (data.get("amount") or 0) / 100,
+                "paid_at": data.get("paid_at"), "plan": "fine", "tier": "free"}
     if plan not in PLANS:
         plan = "pro"
     days = PLANS[plan]["days"]
@@ -3620,6 +3813,10 @@ def paystack_verify(reference):
             return {"status": data.get("status"), "gateway_response": data.get("gateway_response"),
                     "message": "Payment not successful."}
         rec = record_paystack_success(data)
+        if rec.get("fine"):
+            return {"status": "success", "fine": True, "unblocked": bool(rec.get("unblocked")),
+                    "email": rec.get("email"), "reference": rec.get("reference"),
+                    "message": "Reinstatement fine received." + (" Access restored." if rec.get("unblocked") else " Reinstatement is being applied.")}
         return {"status": "success", "token": make_tier_token(rec.get("email"), rec.get("plan")),
                 "subscriber": rec}
     except Exception as e:
@@ -3757,7 +3954,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch12b-twilio-api-key",
+        "build": "patch13-block-lockout-fine",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -5612,11 +5809,11 @@ def crypto_invoice(email, plan="pro", site=""):
     plan = (plan or "pro").lower()
     if plan == "professional":
         plan = "ultra"
-    if plan not in PLANS or PLANS[plan].get("custom"):
+    if plan != "fine" and (plan not in PLANS or PLANS[plan].get("custom")):
         return {"error": "Pick Starter, Pro, Professional or Enterprise to pay with crypto."}
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         return {"error": "I need the email that should receive the plan."}
-    usd = PLANS[plan]["price_usd"]
+    usd = FINE_USD if plan == "fine" else PLANS[plan]["price_usd"]
     ref = "ora-" + _token(6) + "-" + plan
     inv = atlos_api("/Invoice/Create", {
         "OrderId": ref, "OrderAmount": float(usd), "OrderCurrency": "USD",
@@ -5682,6 +5879,11 @@ def crypto_grant(ref, src="atlos"):
         d[ref] = o
         with open(_crypto_orders_file(), "w") as f:
             json.dump(d, f, indent=1)
+    if o.get("plan") == "fine":
+        r = fine_paid(o["email"], ref, FINE_USD, "USD", "crypto", src)
+        if isinstance(r, dict):
+            r["crypto_ref"] = ref
+        return r
     r = admin_set_pro(o["email"], o["plan"], PLANS.get(o["plan"], {}).get("days", 30), src)
     if isinstance(r, dict):
         r["crypto_ref"] = ref
@@ -6346,6 +6548,12 @@ document.getElementById('capture').onclick = async function(){
 
 # ---------------------------------------------------------------- HTTP server
 
+# Requests a suspended account may still make: authentication, its own status,
+# fine payment and payment confirmation callbacks. Everything else → 403.
+BLOCK_EXEMPT_PREFIXES = ("/api/auth/", "/api/block/", "/api/paystack/", "/api/pay/crypto/status",
+                         "/api/pay/crypto/check", "/api/pay/crypto/postback", "/api/supabase/status")
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "OraCool/2.0"
     protocol_version = "HTTP/1.0"
@@ -6520,7 +6728,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch12b-twilio-api-key",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch13-block-lockout-fine",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -6559,6 +6767,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = self._read_json()
         body.pop("_verified_email", None)
+        # ---- suspended accounts: locked out of everything except signing in,
+        # reading their own status and paying the reinstatement fine.
+        if not path.startswith(BLOCK_EXEMPT_PREFIXES):
+            _who = request_identity(self, body) or (body.get("email") or "").strip().lower()
+            if _who and is_blocked(_who):
+                self._send_json({"error": "This account is suspended. Pay the reinstatement fine to restore access.",
+                                 "suspended": True, "blocked": True, "fine_usd": FINE_USD}, 403)
+                return
         protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/reminders/", "/api/comms/")) or path in ("/api/image", "/api/video")
         if protected:
             em = request_identity(self, body, require_supabase=path.startswith(("/api/reminders/", "/api/voice/", "/api/comms/")))
@@ -7259,6 +7475,20 @@ class Handler(BaseHTTPRequestHandler):
                 # Server Key Vault status — administrators only; booleans, never values.
                 if _require_admin(self, body):
                     self._send_json(admin_vault_status())
+            # ---- suspended-account self-service: status + reinstatement fine
+            elif path == "/api/block/status":
+                who = request_identity(self, body) or (body.get("email") or "").strip().lower()
+                self._send_json(block_status(who))
+            elif path in ("/api/block/fine/paystack", "/api/block/fine/crypto"):
+                who = request_identity(self, body) or (body.get("email") or "").strip().lower()
+                if not who or not is_blocked(who):
+                    self._send_json({"error": "This account is not suspended — no fine is due."}, 400)
+                elif path.endswith("paystack"):
+                    self._send_json(paystack_initialize(who, body.get("callback_url"), "fine", body.get("currency")))
+                else:
+                    _host = (self.headers.get("Host") or "").split(":")[0]
+                    _site = str(body.get("site") or key("PUBLIC_BASE_URL") or (("https://" + _host) if "." in _host else "")).strip()
+                    self._send_json(crypto_invoice(who, "fine", _site))
             elif path == "/api/admin/twilio":
                 # Read-only Twilio readiness (credentials, numbers, Verify) — administrators only; never sends.
                 if _require_admin(self, body):

@@ -183,7 +183,7 @@ class Patch12Tests(unittest.TestCase):
         server, t = self.serve()
         try:
             with urllib.request.urlopen('http://127.0.0.1:%d/api/health' % server.server_port, timeout=3) as r:
-                self.assertEqual(json.loads(r.read())['build'], 'patch12b-twilio-api-key')
+                self.assertEqual(json.loads(r.read())['build'], 'patch13-block-lockout-fine')
             with urllib.request.urlopen('http://127.0.0.1:%d/api/config' % server.server_port, timeout=3) as r:
                 self.assertNotIn('keys', json.loads(r.read()))
         finally:
