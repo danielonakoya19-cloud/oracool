@@ -442,7 +442,6 @@
     .wake{font-size:8px; padding:4px 7px;}
     .tier{font-size:10px; padding:5px 10px;}
     .acct{max-width:118px; font-size:10px; padding:4px 9px;}
-    #installBtn{display:none !important;}
     .hdr-right{gap:6px; flex-wrap:wrap;}
     .chatwrap{min-height:74vh; min-height:74dvh;}
     .reactorhead{gap:10px; padding:10px 12px 4px;}
@@ -4688,6 +4687,7 @@ function renderGate(){
       <button class="btn ghost" style="flex:1; justify-content:center" id="gGithub">GitHub</button>
     </div>
     <button class="btn ghost" style="width:100%; justify-content:center; margin-top:8px" id="gFace">🫆 Face / Fingerprint login</button>
+    <button class="btn ghost" id="gInstall" style="width:100%; justify-content:center; margin-top:8px">📲 Install OraCool on this device</button>
     <div class="hint" style="margin-top:8px">Face login uses your device's secure Face ID / fingerprint. OAuth buttons activate the moment the provider is enabled in Supabase — the app auto-detects it. By continuing you accept the <a href="/privacy" target="_blank" rel="noopener" style="color:var(--cyan2)">privacy policy</a>.</div>
     <div class="result" id="gOut" style="margin-top:10px"></div>`;
   $('#gateReactor').innerHTML = orbCore(56);
@@ -4696,6 +4696,7 @@ function renderGate(){
   $('#gGoogle').onclick = ()=>oauthGo('google', $('#gOut'));
   $('#gGithub').onclick = ()=>oauthGo('github', $('#gOut'));
   $('#gFace').onclick = ()=>faceLogin($('#gOut'));
+  $('#gInstall').onclick = ()=>{ if (window.openInstallHelp) window.openInstallHelp(); };
   $('#gEmail').addEventListener('input', ()=>{ $('#gOut').innerHTML=''; });
   $('#gPass').addEventListener('input', ()=>{
     const pw = $('#gPass').value, s = strengthScore(pw);
@@ -4795,10 +4796,53 @@ async function init(){
   }
 }
 
-/* ---------- PWA: register service worker + install prompt ---------- */
+/* ---------- PWA: service worker + install button (phones, tablets, desktop) ---------- */
 if('serviceWorker' in navigator){ try{ navigator.serviceWorker.register('/sw.js'); }catch(e){} }
-let deferredInstall=null;
-window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); deferredInstall=e; const b=$('#installBtn'); if(b){ b.style.display=''; b.onclick=async()=>{ deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall=null; b.style.display='none'; }; } });
+let _deferredInstall = null;
+const _pwaStandalone = (window.matchMedia && (window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches)) || navigator.standalone === true;
+const _pwaIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const _pwaAndroid = /android/i.test(navigator.userAgent);
+function _pwaHideInstall(){ const b = document.getElementById('installBtn'); if (b) b.style.display = 'none'; }
+function _pwaHelp(){
+  let steps;
+  if (_pwaIOS) steps = 'On iPhone / iPad: tap <b>Share</b> ⬆ (the square with an arrow at the bottom of Safari) → scroll down → tap <b>Add to Home Screen</b> → <b>Add</b>. OraCool then opens full-screen with its own icon, like a native app.';
+  else if (_pwaAndroid) steps = 'On Android (Chrome): tap the <b>menu ⋮</b> at the top right → <b>Install app</b> (or “Add to Home screen”) → <b>Install</b>. It becomes a real app with its own icon and full-screen mode.';
+  else steps = 'On desktop: click the <b>install icon ⤓</b> at the right end of the address bar (Chrome / Edge). In Firefox use <b>Menu ☰ → Install OraCool AI…</b> where offered, or bookmark the page — the app is fully usable from there.';
+  let ov = document.getElementById('pwaInstallOv');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'pwaInstallOv';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:20000;background:rgba(2,8,16,.78);display:flex;align-items:center;justify-content:center;padding:20px';
+    ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = `<div style="background:#0b1a28;border:1px solid rgba(0,229,255,.4);border-radius:14px;max-width:430px;width:100%;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="font-size:15px;letter-spacing:2px;color:#00e5ff;font-weight:700;margin-bottom:10px">📲 INSTALL ORACOOL ON THIS DEVICE</div>
+    <div style="font-size:13px;line-height:1.7;color:#d9f6ff">${steps}</div>
+    <div style="font-size:11px;color:#7ea6b8;margin-top:10px">Installed, it runs like a native app: its own icon, full-screen, offline shell and push alerts. Free on every device.</div>
+    <button id="pwaOkBtn" style="margin-top:14px;background:#00e5ff;color:#04070d;border:0;border-radius:8px;padding:9px 18px;font-weight:700;cursor:pointer">Done</button></div>`;
+  ov.querySelector('#pwaOkBtn').onclick = () => ov.remove();
+}
+window.openInstallHelp = _pwaHelp;
+function _pwaRefreshInstall(){
+  const b = document.getElementById('installBtn');
+  if (!b) return;
+  if (_pwaStandalone) { b.style.display = 'none'; return; }
+  b.style.display = '';
+  if (_deferredInstall) {
+    b.onclick = async () => {
+      _deferredInstall.prompt();
+      try { await _deferredInstall.userChoice; } catch (e) {}
+      _deferredInstall = null;
+      _pwaRefreshInstall();
+    };
+  } else {
+    b.onclick = _pwaHelp;
+  }
+}
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); _deferredInstall = e; _pwaRefreshInstall(); });
+window.addEventListener('appinstalled', () => { _deferredInstall = null; _pwaHideInstall(); });
+_pwaRefreshInstall();
 </script>
 <script src="/voice-reminders.js"></script>
 <script src="/communications.js"></script>

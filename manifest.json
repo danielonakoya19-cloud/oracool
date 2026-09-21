@@ -1,7 +1,7 @@
 {
   "name": "OraCool AI",
   "short_name": "OraCool",
-  "description": "1,000-core personal AI \u2014 JARVIS-style assistant with OSINT, markets, space and device control.",
+  "description": "1,000-core personal AI — JARVIS-style assistant with OSINT, markets, space and device control. Install it on your phone or desktop like a native app.",
   "start_url": "/app",
   "display": "standalone",
   "orientation": "any",
@@ -20,5 +20,6 @@
       "type": "image/png",
       "purpose": "any maskable"
     }
-  ]
+  ],
+  "id": "/app"
 }

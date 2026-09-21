@@ -54,7 +54,7 @@
   sheet.addEventListener('click',e=>{if(e.target===sheet&&e.clientX<sheet.getBoundingClientRect().left)window.OraSettings.close();});
   sheet.addEventListener('close',()=>{details.open=false;});
   const q=s=>document.querySelector(s);
-  q('#alarmTimezone').value=Intl.DateTimeFormat().resolvedOptions().timeZone||'Africa/Lagos';
+  if(q('#alarmTimezone'))q('#alarmTimezone').value=Intl.DateTimeFormat().resolvedOptions().timeZone||'Africa/Lagos';
   q('#hfLanguage').value=settings.voiceLanguage||'en-NG';
   q('#hfProactive').checked=settings.proactiveConsent===true;
   q('#hfProactive').onchange=()=>{settings.proactiveConsent=q('#hfProactive').checked;settings.proactive=settings.proactiveConsent;saveSettings();applyProactive();lastSuggestion=Date.now();};

@@ -442,3 +442,18 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 - **oracoolai.com is live** (registered 2026-09-21 via NameSilo; HTTPS 200; serves the OraCool landing page; HTTP→HTTPS redirect). Note: the message spelled it "oraccolai.com" (double-c) — that spelling is not a registered domain; the live one is **oracoolai.com**.
 - **Tests**: `tests/test_patch21.py` (14 tests: cascade order, router token flow incl. 202→poll, space health probing, SSE result parsing, honest final error) — canonical 11-module suite **162 tests, all green**.
 - Deploy: Render auto-deploys `main`; confirm the `patch21-wan22` marker. If you want the direct Wan 2.2 text-to-video route, add `HF_TOKEN` in Render → Environment and redeploy.
+
+---
+
+## Patch 22 — Install button: put OraCool on every device (PWA)
+
+- **Build marker** `/api/health` → `patch22-install`.
+- **📲 Install button, everywhere:**
+  - **Landing page** (the first thing visitors see): "📲 Install on your device" button in the hero.
+  - **App gate** (before signing in, on phones): "📲 Install OraCool on this device" button.
+  - **App header** (after sign-in): "📲 Install" button (un-hidden on phones — it existed but was CSS-forced invisible on mobile).
+  - How it behaves per device: when the browser offers a native install prompt (Android Chrome, desktop Chrome/Edge), the button fires it. On **iOS** (which never fires that prompt) and other browsers, tapping the button shows the exact steps for that device (iOS: Share → Add to Home Screen; Android: menu → Install app; desktop: address-bar install icon; Firefox fallback). If the app is already installed (standalone), the buttons hide themselves.
+- **PWA plumbing:** `manifest.json` (name, 512px icon, standalone, `/app` start), `sw.js` (network-first shell cache + push), `icon.png` 512×512. Installing gives: own home-screen icon, full-screen JARVIS look, offline shell, push alerts — free, on every device, no app store.
+- **Bug fixed along the way:** `voice-reminders.js` crashed on a removed `#alarmTimezone` element (leftover from the Twilio removal) — that single throw was silently killing the whole voice module (OraVoice/OraSettings). Guarded; the voice engine now boots cleanly (verified: zero page errors).
+- **Tests**: `tests/test_patch22.py` (6 tests: valid manifest + 512 icon, service worker served, install button present on landing + gate + header and no longer force-hidden, per-device instruction copy, health marker) — canonical 12-module suite **169 tests, all green**.
+- Deploy: Render auto-deploys `main`; confirm the `patch22-install` marker, then on your phone: open oracoolai.com → tap **📲 Install on your device**.

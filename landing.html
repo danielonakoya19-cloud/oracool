@@ -5,7 +5,7 @@
 @media(min-width:1500px){.hero{padding:135px 0 105px}}@media(max-width:1050px){.price-grid{grid-template-columns:repeat(3,1fr);gap:22px}.plan{min-height:380px}.hero-grid{gap:10px}.orb-ring{width:270px;height:270px}.orb{width:180px;height:180px}.hero{padding-top:75px}.nav{padding-inline:25px}.orb-caption{top:calc(50% + 150px)}}@media(max-width:720px){.wrap{padding-inline:24px}.nav{padding:14px 22px;gap:15px}.brand{font-size:15px;letter-spacing:2px}.navlinks{display:none}.nav .button{margin-left:auto}.hero{padding:55px 0 48px}.hero-grid{grid-template-columns:1fr}.hero p{font-size:16px}.orb-area{min-height:330px;margin-top:28px}.float-note{bottom:-5px}.orb-halo{width:330px;height:330px}.section{padding:68px 0}.section-top{display:block}.section-top p{max-width:100%}.grid{grid-template-columns:repeat(2,1fr);gap:13px}.cap{padding:22px 19px;min-height:220px}.flow{grid-template-columns:1fr;gap:8px;padding:23px}.strip{overflow-x:auto;font-size:9px;gap:28px}.price-grid{grid-template-columns:repeat(2,1fr)}.plan:last-child{grid-column:1/-1;min-height:330px}.cta{padding:35px 24px}.footer-inner{align-items:flex-start;flex-wrap:wrap}.micro{flex-wrap:wrap;gap:6px 14px}.faqs details{padding:20px}.hero h1{font-size:51px}}@media(max-width:430px){.grid{grid-template-columns:1fr}.cap{min-height:170px}.icon{margin-bottom:16px}.price-grid{grid-template-columns:1fr}.plan{min-height:330px}.hero h1{font-size:44px}.brand{font-size:14px}.nav .button{padding:9px 15px;font-size:11px}}@media(prefers-reduced-motion:reduce){*{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
 </style></head><body>
 <header><nav class="nav" aria-label="Main navigation"><a class="brand" href="/" aria-label="OraCool home"><i></i>ORACOOL</a><div class="navlinks"><a href="#capabilities">Capabilities</a><a href="#pricing">Pricing</a><a href="#faq">FAQ</a></div><a class="button primary" href="/app">Launch OraCool <span aria-hidden="true">↗</span></a></nav></header>
-<main><section class="hero"><div class="wrap hero-grid"><div><span class="eyebrow">Voice-first intelligence · now with community</span><h1>Say <span class="gradient">“Hey<br>OraCool”</span>.<br>Make things<br>happen.</h1><p>Your ideas, one conversation away. Research the web, work through documents, create something new—and now talk to <b>other members</b>: groups, channels, voice notes and calls, all in one place.</p><div class="actions"><a class="button primary" href="/app">Try the voice console <span aria-hidden="true">↗</span></a><a class="button secondary" href="#pricing">Explore plans</a></div><div class="micro"><span>Start free</span><span>No paid-plan trial</span><span>You control the microphone</span></div></div><div class="orb-area" aria-label="OraCool voice visualization — illustration"><div class="orb-halo"></div><div class="orb-ring"><div class="orb"></div></div><div class="orb-caption">READY WHEN YOU ARE</div><div class="float-note"><span>◉</span> One tap to start. A conversation from there.</div></div></div></section>
+<main><section class="hero"><div class="wrap hero-grid"><div><span class="eyebrow">Voice-first intelligence · now with community</span><h1>Say <span class="gradient">“Hey<br>OraCool”</span>.<br>Make things<br>happen.</h1><p>Your ideas, one conversation away. Research the web, work through documents, create something new—and now talk to <b>other members</b>: groups, channels, voice notes and calls, all in one place.</p><div class="actions"><a class="button primary" href="/app">Try the voice console <span aria-hidden="true">↗</span></a><button class="button secondary" id="landInstall" type="button">📲 Install on your device</button><a class="button secondary" href="#pricing">Explore plans</a></div><div class="micro"><span>Start free</span><span>No paid-plan trial</span><span>You control the microphone</span></div></div><div class="orb-area" aria-label="OraCool voice visualization — illustration"><div class="orb-halo"></div><div class="orb-ring"><div class="orb"></div></div><div class="orb-caption">READY WHEN YOU ARE</div><div class="float-note"><span>◉</span> One tap to start. A conversation from there.</div></div></div></section>
 <div class="wrap"><div class="strip"><span>Voice & text</span><span>Live research</span><span>Community chat</span><span>Creative tools</span><span>Calls & voice notes</span><span>Connected workflows</span></div></div>
 <section class="section" id="capabilities"><div class="wrap"><div class="section-top"><div><p class="section-tag">What you can do</p><h2>A little less clicking.<br>A lot more doing.</h2></div><p>One workspace for the questions, ideas and everyday tasks that deserve your attention.</p></div><div class="grid">
 <article class="cap"><div class="icon">∿</div><h3>Voice-first</h3><p>Start a hands-free conversation. Hear replies as they stream, interrupt when needed, and keep talking without repeated microphone taps.</p></article>
@@ -40,4 +40,31 @@
 const params=new URLSearchParams(location.search);
 if(/access_token=|refresh_token=/.test(location.hash))location.replace('/oauth'+location.search+location.hash);
 else if(params.has('token_hash')||params.has('reference')||params.has('trxref')||params.has('code'))location.replace('/app'+location.search+location.hash);
+</script>
+<script>
+(function(){
+  var deferred=null;
+  var ios=/iphone|ipad|ipod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  var android=/android/i.test(navigator.userAgent);
+  function steps(){
+    if(ios) return 'iPhone / iPad: tap <b>Share</b> ⬆ (square with an arrow) at the bottom of Safari → scroll → <b>Add to Home Screen</b> → <b>Add</b>. OraCool opens full-screen with its own icon, like a native app.';
+    if(android) return 'Android (Chrome): tap the <b>menu ⋮</b> at the top right → <b>Install app</b> (or “Add to Home screen”) → <b>Install</b>.';
+    return 'Desktop: click the <b>install icon ⤓</b> at the right end of the address bar (Chrome / Edge). Firefox: <b>Menu ☰ → Install OraCool AI…</b> where offered, or bookmark the page.';
+  }
+  function showHelp(){
+    var ov=document.getElementById('landInstallOv');
+    if(!ov){ ov=document.createElement('div'); ov.id='landInstallOv';
+      ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(8,11,24,.82);display:flex;align-items:center;justify-content:center;padding:20px';
+      ov.onclick=function(e){ if(e.target===ov) ov.remove(); };
+      document.body.appendChild(ov); }
+    ov.innerHTML='<div style="background:#12172a;border:1px solid #2f3a56;border-radius:14px;max-width:440px;width:100%;padding:22px;color:#eef3ff;box-shadow:0 20px 60px rgba(0,0,0,.5)"><div style="font-size:15px;letter-spacing:2px;color:#22dbe7;font-weight:800;margin-bottom:10px">📲 INSTALL ORACOOL ON THIS DEVICE</div><div style="font-size:13.5px;line-height:1.7">'+steps()+'</div><div style="font-size:11px;color:#8292ab;margin-top:10px">Free on every device — its own icon, full-screen, offline shell and push alerts.</div><button id="landOk" style="margin-top:14px;background:#22dbe7;color:#041320;border:0;border-radius:8px;padding:9px 18px;font-weight:700;cursor:pointer">Done</button></div>';
+    ov.querySelector('#landOk').onclick=function(){ ov.remove(); };
+  }
+  window.addEventListener('beforeinstallprompt', function(e){ e.preventDefault(); deferred=e; });
+  var b=document.getElementById('landInstall');
+  if(!b) return;
+  b.onclick=function(){ if(deferred){ deferred.prompt(); deferred=null; } else { showHelp(); } };
+  window.addEventListener('appinstalled', function(){ b.style.display='none'; });
+  if(window.matchMedia && (window.matchMedia('(display-mode: standalone)').matches || navigator.standalone===true)) b.style.display='none';
+})();
 </script></body></html>
