@@ -685,7 +685,11 @@ class Service:
             last = self.store.one("comm_messages", "room_id=eq." + rid + "&order=id.desc&limit=1")
             unread = self._unread(email, rid)
             pro = self._prof(peer) or {}
+            last_mine = bool(last and last.get("sender_email") == email)
+            last_seen = bool(last and last_mine and int(last.get("id") or 0) <= self._read_state(peer, rid))
             out.append({"username": self.handle_of(peer) or "member",
+                        "last_mine": last_mine, "last_seen": last_seen,
+                        "last_media": bool(last and (last.get("media_url") or "")),
                         "avatar": pro.get("avatar_url", ""),
                         "verified": bool(self.d.get("is_verified") and self.d["is_verified"](peer)),
                         "number": pro.get("oracool_number"),
@@ -716,6 +720,8 @@ class Service:
         self._mark_read(email, r["id"], rows[-1].get("id") if rows else self._read_state(email, r["id"]))
         pros = self._profiles_for([m.get("sender_email") for m in rows])
         return {"username": self.handle_of(peer), "mod": peer == MODERATOR, "online": self._online(peer),
+                "avatar": (self._prof(peer) or {}).get("avatar_url", ""),
+                "peer_seen_upto": self._read_state(peer, r["id"]),
                 "messages": [self._view(m, email, pros) for m in rows]}
 
     def _dm_append(self, sender, recipient, body, mod=False, media_url=""):
@@ -737,8 +743,9 @@ class Service:
                     else "The moderator does not take replies. Use Report to reach it."}
         media_url = str(media_url or "")
         if media_url and "storage/v1/object/public/" not in media_url:
-            return {"error": "Voice notes must be uploaded first."}
-        body = _clean(body, MSG_MAX) or ("🎤 Voice note" if media_url else "")
+            return {"error": "Attachments must be uploaded first."}
+        _is_photo = media_url.lower().split(".")[-1].split("?")[0] in ("jpg", "jpeg", "png", "webp")
+        body = _clean(body, MSG_MAX) or ("🖼️ Photo" if media_url and _is_photo else ("🎤 Voice note" if media_url else ""))
         if not body:
             return {"error": "Write a message first."}
         err = self._rate_ok(email)

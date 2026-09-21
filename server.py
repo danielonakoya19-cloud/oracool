@@ -4007,7 +4007,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch16-community-calls-badge",
+        "build": "patch16-whatsapp-chat",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6781,7 +6781,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch16-community-calls-badge",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch16-whatsapp-chat",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -9590,11 +9590,18 @@ def set_community_avatar(email, data_url):
 
 def upload_community_media(email, data_url):
     mime, data = data_url_decode(data_url)
-    if mime not in ("audio/webm", "audio/ogg", "audio/mp4"):
-        return {"error": "Unsupported voice note format."}
-    if not data or len(data) > 8 * 1024 * 1024:
-        return {"error": "Voice note is too large (max about one minute)."}
-    ext = "webm" if "webm" in mime else ("ogg" if "ogg" in mime else "m4a")
+    if mime in ("audio/webm", "audio/ogg", "audio/mp4"):
+        limit = 8 * 1024 * 1024
+        label = "Voice note is too large (max about one minute)."
+        ext = "webm" if "webm" in mime else ("ogg" if "ogg" in mime else "m4a")
+    elif mime in ("image/jpeg", "image/png", "image/webp"):
+        limit = 5 * 1024 * 1024
+        label = "Photo is too large (max 5 MB)."
+        ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[mime]
+    else:
+        return {"error": "Unsupported media type (voice note or JPG/PNG/WebP photo)."}
+    if not data or len(data) > limit:
+        return {"error": label}
     path = "dm/%s_%d.%s" % (hashlib.sha1((email or "").encode()).hexdigest()[:8], int(time.time()), ext)
     url = storage_put("media", path, data, mime)
     if not url:

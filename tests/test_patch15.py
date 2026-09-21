@@ -627,7 +627,7 @@ class Patch15Tests(unittest.TestCase):
             code, body = _post(port, '/api/admin/moderation', {'token': atok})
             self.assertEqual(code, 200); self.assertEqual(body['stats']['threshold'], 3)
             with urllib.request.urlopen('http://127.0.0.1:%d/api/health' % port, timeout=3) as r:
-                self.assertEqual(json.loads(r.read())['build'], 'patch16-community-calls-badge')
+                self.assertEqual(json.loads(r.read())['build'], 'patch16-whatsapp-chat')
         finally:
             server.shutdown(); server.server_close(); t.join()
 

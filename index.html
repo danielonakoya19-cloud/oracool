@@ -139,7 +139,62 @@
   /* ---- community (member chat, DMs, reports) ---- */
   .commhead{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;}
   .commnav{display:flex; gap:4px; margin-left:auto;}
-  .commmsgs{height:min(46vh,420px); overflow-y:auto; border:1px solid var(--line); border-radius:12px; padding:10px; background:rgba(3,12,20,.6); display:flex; flex-direction:column; gap:8px; -webkit-overflow-scrolling:touch;}
+  .commmsgs{height:min(52vh,480px); overflow-y:auto; border:1px solid var(--line); border-radius:12px; padding:10px 8px; background-color:#0b141a; background-image:radial-gradient(rgba(126,148,193,.06) 1px, transparent 1.4px); background-size:16px 16px; display:flex; flex-direction:column; gap:2px; -webkit-overflow-scrolling:touch;}
+  /* WhatsApp-style rows (conversation list) */
+  .wa-rowlist{display:flex; flex-direction:column; gap:2px;}
+  .wa-trow{display:flex; gap:12px; align-items:center; padding:10px 10px; border-radius:12px; cursor:pointer; border:1px solid transparent; transition:.15s;}
+  .wa-trow:hover{background:rgba(126,148,193,.06);}
+  .wa-trow .avwrap{position:relative; flex:none;}
+  .wa-trow .onldot{position:absolute; bottom:0; right:0; width:10px; height:10px; border-radius:50%; background:var(--dim); border:2px solid #0b141a;}
+  .wa-trow .onldot.on{background:var(--ok); box-shadow:0 0 6px var(--ok);}
+  .wa-trow .tmain{flex:1; min-width:0;}
+  .wa-trow .tname{font-size:14px; font-weight:600; color:#e9edef; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .wa-trow .tsub{font-size:12px; color:#8696a0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px;}
+  .wa-trow .tsub .you{color:#8696a0;}
+  .wa-trow .tr{flex:none; text-align:right;}
+  .wa-trow .ttime{font-size:11px; color:#8696a0;}
+  .wa-trow.unread .ttime{color:#25d366;}
+  .wa-unread{display:inline-grid; place-items:center; min-width:19px; height:19px; border-radius:10px; background:#25d366; color:#0b141a; font-size:11px; font-weight:800; padding:0 5px; margin-top:3px;}
+  .wa-tick{letter-spacing:-2.5px; font-size:12px; color:#8696a0; font-weight:700;}
+  .wa-tick.read{color:#53bdeb;}
+  /* WhatsApp-style bubbles */
+  .wa-date{align-self:center; background:#182229; color:#8696a0; font-size:10.5px; padding:4px 11px; border-radius:9px; margin:8px 0 8px; box-shadow:0 1px 1px rgba(0,0,0,.4);}
+  .wa-row{display:flex; align-items:flex-end; gap:6px; max-width:100%; margin-top:6px;}
+  .wa-row.cont{margin-top:1px;}
+  .wa-row.mine{justify-content:flex-end;}
+  .wa-av{width:24px; height:24px; border-radius:50%; object-fit:cover; flex:none; background:#1c2a33; display:inline-grid; place-items:center; font-size:10px; font-weight:700; color:#e9edef; overflow:hidden;}
+  .wa-av img{width:100%; height:100%; display:block;}
+  .wa-avspace{width:24px; flex:none;}
+  .wa-col{max-width:80%; min-width:0; display:flex; flex-direction:column;}
+  .wa-bub{position:relative; padding:6px 9px 7px 10px; border-radius:9px; font-size:13.5px; line-height:1.4; color:#e9edef; box-shadow:0 1px 1px rgba(0,0,0,.35); overflow-wrap:anywhere; word-break:break-word;}
+  .wa-row.mine .wa-bub{background:#005c4b; border-top-right-radius:3px;}
+  .wa-row:not(.mine) .wa-bub{background:#202c33; border-top-left-radius:3px;}
+  .wa-sender{font-size:12px; font-weight:700; margin:0 0 2px 10px;}
+  .wa-time{float:right; margin:9px -2px -4px 9px; font-size:10px; color:#8696a0; line-height:1; display:flex; align-items:center; gap:3px;}
+  .wa-row.mine .wa-time{color:rgba(233,237,239,.72);}
+  .wa-img{max-width:240px; max-height:220px; border-radius:7px; display:block; margin-top:2px; background:#0b141a;}
+  .wa-capt{white-space:pre-wrap;}
+  /* WhatsApp-style compose bar */
+  .wa-compose{display:flex; align-items:flex-end; gap:4px; margin-top:8px; background:#202c33; border-radius:12px; padding:6px 6px;}
+  .wa-compose .pill{flex:1; min-width:0; background:#2a3942; border-radius:20px; display:flex; align-items:center; padding:2px 4px 2px 12px; gap:2px;}
+  .wa-compose input{flex:1; min-width:0; background:transparent; border:none; outline:none; color:#e9edef; font-size:14px; padding:9px 4px; overflow-wrap:anywhere; word-break:break-word;}
+  .wa-ico{flex:none; width:36px; height:36px; border-radius:50%; display:grid; place-items:center; font-size:17px; cursor:pointer; color:#8696a0; background:transparent; border:none; transition:.15s;}
+  .wa-ico:hover{background:#1a262d; color:#e9edef;}
+  .wa-ico.rec{background:rgba(255,80,80,.25); color:#ff8080;}
+  .wa-send{flex:none; width:40px; height:40px; border-radius:50%; background:#00a884; display:grid; place-items:center; font-size:15px; color:#fff; cursor:pointer; border:none; box-shadow:0 1px 3px rgba(0,0,0,.4); transition:.15s;}
+  .wa-send:hover{filter:brightness(1.12);}
+  /* popovers */
+  .wa-pop{position:fixed; z-index:99999; background:#111b21; border:1px solid #2a3942; border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.6); padding:8px; display:none;}
+  .wa-pop.open{display:block;}
+  .wa-emojis{width:296px; max-width:92vw; max-height:240px; overflow-y:auto;}
+  .wa-emojis .egrid{display:grid; grid-template-columns:repeat(8,1fr); gap:2px;}
+  .wa-emojis button{font-size:19px; width:34px; height:34px; border:none; background:transparent; cursor:pointer; border-radius:8px;}
+  .wa-emojis button:hover{background:#1a262d;}
+  .wa-attach{width:220px;}
+  .wa-attach button{display:flex; width:100%; gap:10px; align-items:center; padding:10px 12px; font-size:13px; color:#e9edef; background:transparent; border:none; border-radius:9px; cursor:pointer; text-align:left;}
+  .wa-attach button:hover{background:#1a262d;}
+  /* AI chat: professional bubble timing */
+  .bubble .bt{float:right; font-size:9.5px; color:var(--dim); margin:8px 0 -2px 10px; letter-spacing:.5px;}
   .cmsg{max-width:88%; align-self:flex-start; background:rgba(8,34,46,.7); border:1px solid var(--line); border-radius:4px 12px 12px 12px; padding:8px 11px; font-size:13px; line-height:1.45;}
   .cmsg.mine{align-self:flex-end; background:rgba(12,44,88,.6); border-color:rgba(90,150,255,.35); border-radius:12px 4px 12px 12px;}
   .cmsg.mod{border-color:rgba(255,194,75,.45); background:rgba(60,44,10,.5);}
@@ -1310,13 +1365,15 @@ chat.addEventListener('scroll', updateJump, {passive:true});
 $('#jumpBtn').onclick=()=>{ chat.scrollTo({top:chat.scrollHeight, behavior:'smooth'}); setTimeout(updateJump,400); };
 
 function addUser(text, histText){
-  const b=document.createElement('div'); b.className='bubble user'; b.textContent=text;
+  const b=document.createElement('div'); b.className='bubble user';
+  b.innerHTML='<span class="bt">'+new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</span><span class="bttext"></span>';
+  b.querySelector('.bttext').textContent=text;
   chat.appendChild(b); scrollChat();
   history.push({role:'user',content:histText!==undefined?histText:text}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
 }
 function addAI(text, cls){
   const b=document.createElement('div'); b.className='bubble ai'+(cls?' '+cls:'');
-  b.innerHTML='<span class="who">ORA-COOL</span>';
+  b.innerHTML='<span class="who">ORA-COOL <span class="bt" style="float:none;margin:0">'+new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</span></span>';
   const body=document.createElement('div'); body.textContent=text; b.appendChild(body);
   chat.appendChild(b); scrollChat(); return b;
 }
@@ -1760,7 +1817,24 @@ function avatarHtml(p, cls){
   return `<span class="avatar ${cls||''}">${escapeHtml(String(nm).slice(0,1).toUpperCase())}</span>`;
 }
 function vBadge(p){ return (p && p.verified) ? '<span class="vbadge" title="Verified member">✦</span>' : ''; }
-const COMM={view:'rooms', room:'lounge', peer:null, lastRoomId:null, lastDmId:null, me:null, timer:null, busy:false};
+const COMM={view:'rooms', room:'lounge', peer:null, lastRoomId:null, lastDmId:null, me:null, timer:null, busy:false, peerSeen:0};
+let WA_LAST={sender:'', t:''};
+function waResetGroup(){ WA_LAST={sender:'', t:''}; }
+function mediaHtml(url){
+  if(!url) return '';
+  const ext=(url.toLowerCase().split('/').pop().split('?')[0].split('.').pop()||'');
+  if(['jpg','jpeg','png','webp','gif'].includes(ext)) return `<img class="wa-img" src="${escapeHtml(url)}" alt="photo">`;
+  if(['webm','ogg','m4a','mp4','opus','mp3'].includes(ext)) return `<audio class="cmessaudio" controls preload="metadata" src="${escapeHtml(url)}"></audio>`;
+  return '';
+}
+function waDateLabel(t){
+  if(!t) return '';
+  const d=new Date(t), now=new Date(); const day=(x)=>x.toISOString().slice(0,10);
+  if(day(d)===day(now)) return 'Today';
+  const y=new Date(now); y.setDate(now.getDate()-1);
+  if(day(d)===day(y)) return 'Yesterday';
+  return d.toLocaleDateString([], {day:'numeric', month:'short', year:d.getFullYear()===now.getFullYear()?undefined:'numeric'});
+}
 function commActive(){ const t=document.querySelector('.snav.active'); return !!(t && t.dataset.p==='community') && !isBlockedSession(); }
 function fmtCommTime(t){ try{ const sx=String(t||''); const d=/T/.test(sx)?new Date(sx):new Date(sx.replace(' ','T')+'Z'); if(isNaN(d)) return sx||''; const now=new Date(); const same=d.toDateString()===now.toDateString(); return (same?'':d.toLocaleDateString([], {month:'short',day:'numeric'})+' ')+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }catch(e){ return t||''; } }
 function updateCommBadge(n){ const b=$('#commTabBadge'); if(!b) return; n=Number(n)||0; b.textContent=n>99?'99+':String(n); b.classList.toggle('on', n>0); const d=$('#commDmBadge'); if(d) d.innerHTML=n>0?`<span class="cunread">${n}</span>`:''; }
@@ -1835,11 +1909,12 @@ function renderCommRooms(){
   $('#commBody').innerHTML=`<div class="chiprow" style="padding:0 0 8px; align-items:center">${rooms.map(r=>`<span class="chip ${r.id===COMM.room?'on':''}" data-r="${escapeHtml(r.id)}" title="${escapeHtml(r.about||'')}">${r.banned?'🚫 ':''}${kindTag(r.kind)}#${escapeHtml(r.name)}</span>`).join('')}<button class="btn small ghost" id="commNewRoom" title="Create a group or channel">+ New group/channel</button></div>
     <div class="muted" style="font-size:11px;margin-bottom:6px;display:flex;align-items:center;gap:8px"><span style="flex:1">${escapeHtml(cur.about||'')}${cur.owner?(' · by @'+escapeHtml(cur.owner)):''}</span>${cur.kind!=='room'&&!cur.banned?`<button class="btn small ghost" id="commRoomRep" style="color:var(--danger)" title="Report this group/channel to the administrators">⚑</button>`:''}</div>
     ${cur.banned?`<div class="warnbox" style="margin-bottom:8px">🚫 This ${escapeHtml(cur.kind||'room')} has been <b>banned by an administrator</b>${cur.ban_reason?' — reason: '+escapeHtml(cur.ban_reason):''}. Posting is disabled.</div>`:''}
-    <div class="commmsgs" id="commMsgs"><div class="muted">${cur.banned?'This room is locked.':'Loading…'}</div></div>
-    ${cur.banned?`<div class="muted" style="font-size:12px;text-align:center;padding:8px"> Posting is disabled in banned rooms.</div>`:`<div class="commcompose"><input type="text" id="commInput" maxlength="800" autocomplete="off" placeholder="Message #${escapeHtml(cur.name)} — be kind"><button class="btn primary" id="commSend">Send</button></div>`}
+    <div class="commmsgs" id="commMsgs" style="border-color:#182229"><div class="muted">${cur.banned?'This room is locked.':'Loading…'}</div></div>
+    ${cur.banned?`<div class="muted" style="font-size:12px;text-align:center;padding:8px">Posting is disabled in banned rooms.</div>`:`<div class="wa-compose"><button class="wa-ico" id="roomEmoji" title="Emoji">😀</button><div class="pill"><input type="text" id="commInput" maxlength="800" autocomplete="off" placeholder="Message #${escapeHtml(cur.name)}"></div><button class="wa-send" id="commSend" title="Send">➤</button></div>`}
   `;
   $('#commBody').querySelectorAll('.chip[data-r]').forEach(c=>{ c.onclick=()=>{ COMM.room=c.dataset.r; COMM.lastRoomId=null; renderCommRooms(); }; });
   $('#commNewRoom').onclick=openNewRoomModal;
+  const rem=$('#roomEmoji'); if(rem) rem.onclick=e=>{ e.stopPropagation(); waEmojiPop(rem, $('#commInput')); };
   const rr=$('#commRoomRep'); if(rr) rr.onclick=async()=>{
     const why=prompt('Report #'+cur.name+' to the administrators (what is happening here?):',''); if(why===null) return;
     const r=await post('/api/community/rooms/report',{slug:COMM.room, reason:why});
@@ -1876,7 +1951,7 @@ function openNewRoomModal(){
 async function loadCommRoom(initial){
   const r=await post('/api/community/room/messages',{room:COMM.room, after: initial?null:COMM.lastRoomId});
   const el=$('#commMsgs'); if(!el || r.error) return;
-  if(initial){ el.innerHTML=''; if(!(r.messages||[]).length) el.innerHTML='<div class="muted">No messages yet — say hello!</div>'; }
+  if(initial){ el.innerHTML=''; waResetGroup(); COMM.peerSeen=0; if(!(r.messages||[]).length) el.innerHTML='<div class="muted">No messages yet — say hello!</div>'; }
   const atBottom=el.scrollHeight-el.scrollTop-el.clientHeight<80;
   (r.messages||[]).forEach(m=>appendCommMsg(el,m));
   if((r.messages||[]).length){ COMM.lastRoomId=r.messages[r.messages.length-1].id; if(initial||atBottom) el.scrollTop=el.scrollHeight; }
@@ -1884,33 +1959,81 @@ async function loadCommRoom(initial){
 function appendCommMsg(el,m){
   if(!m || el.querySelector('[data-mid="'+m.id+'"]')) return;
   if(el.firstElementChild && el.firstElementChild.classList.contains('muted')) el.innerHTML='';
-  const d=document.createElement('div'); d.className='cmsg'+(m.mine?' mine':'')+(m.mod?' mod':''); d.dataset.mid=m.id;
-  const av=m.mod?'<span class="avatar sm">🛡</span>':avatarHtml({username:m.username, avatar:m.avatar}, 'sm');
-  const bodyHtml=m.media_url?`<audio class="cmessaudio" controls preload="metadata" src="${escapeHtml(m.media_url)}"></audio>`:`<div class="cbody">${escapeHtml(m.body)}</div>`;
-  d.innerHTML=`<div class="cmeta">${av}<b>${m.mod?'🛡 ':''}${escapeHtml(m.username||'member')}</b>${vBadge(m)}${m.admin?'<span class="tag" style="color:var(--gold)">ADMIN</span>':''}<span>${escapeHtml(fmtCommTime(m.t))}</span>${(!m.mine&&!m.mod)?`<a class="cdm" data-h="${escapeHtml(m.username||'')}" title="Message privately">✉</a><a class="crep" data-h="${escapeHtml(m.username||'')}" data-id="${escapeHtml(m.id)}" title="Report this message to the moderator">⚑ report</a>`:''}</div>`+bodyHtml;
-  el.appendChild(d);
-  const rep=d.querySelector('.crep'); if(rep) rep.onclick=()=>openCommReport(rep.dataset.h, rep.dataset.id);
-  const dm=d.querySelector('.cdm'); if(dm) dm.onclick=()=>{ COMM.view='dms'; COMM.peer=dm.dataset.h; COMM.lastDmId=null; renderCommunity(); };
+  const senderKey=m.mine?'me':(m.mod?'mod':(m.username||''));
+  let cont=false;
+  try{
+    cont = WA_LAST.sender===senderKey && Math.abs(new Date(m.t||0)-new Date(WA_LAST.t||0)) < 5*60000;
+  }catch(e){ cont=false; }
+  const cd=new Date(m.t||0).toISOString().slice(0,10), pd=WA_LAST.t?new Date(WA_LAST.t).toISOString().slice(0,10):null;
+  if(!WA_LAST.t || (pd && cd!==pd)) el.insertAdjacentHTML('beforeend', `<div class="wa-date">${escapeHtml(waDateLabel(m.t))}</div>`);
+  const row=document.createElement('div');
+  row.className='wa-row'+(m.mine?' mine':'')+(!cont?'':' cont');
+  row.dataset.mid=m.id;
+  const isRoom=COMM.view==='rooms';
+  const av=isRoom
+    ? (m.mod?'<span class="wa-av">🛡</span>':(m.avatar?`<span class="wa-av"><img src="${escapeHtml(m.avatar)}" alt=""></span>`:`<span class="wa-av">${escapeHtml(String(m.username||'?').slice(0,1).toUpperCase())}</span>`))
+    : '<span class="wa-avspace"></span>';
+  const tick=m.mine ? (isRoom ? '<span class="wa-tick">✓✓</span>' : (m.id && COMM.peerSeen && Number(m.id)<=COMM.peerSeen ? '<span class="wa-tick read">✓✓</span>' : '<span class="wa-tick">✓✓</span>')) : '';
+  const media=mediaHtml(m.media_url);
+  const cap=m.body?`<div class="wa-capt">${escapeHtml(m.body)}</div>`:'';
+  const senderLine=(isRoom && !cont)
+    ? `<div class="wa-sender" style="color:${m.admin?'var(--gold)':(m.verified?'#e6b34d':'#53bdeb')}">${m.mod?'🛡 Moderator':'@'+escapeHtml(m.username||'member')}${m.verified?' <span class="vbadge">✦</span>':''}${m.admin?' <span class="tag" style="color:var(--gold);font-size:8px">ADMIN</span>':''}</div>`
+    : '';
+  const actions=(isRoom && !m.mine && !cont)
+    ? `<span style="float:right;margin:0 0 0 8px;cursor:pointer"><a class="cdm" data-h="${escapeHtml(m.username||'')}" title="Message privately" style="color:#8696a0">✉</a>${m.mod?'':`<a class="crep" data-h="${escapeHtml(m.username||'')}" data-id="${escapeHtml(m.id)}" title="Report to the moderator" style="color:#8696a0;margin-left:7px">⚑</a>`}</span>`
+    : '';
+  row.innerHTML=`${av}<div class="wa-col">${senderLine}<div class="wa-bub">${media}${cap}${actions}<span class="wa-time">${escapeHtml(fmtCommTime(m.t))}${tick}</span></div></div>`;
+  el.appendChild(row);
+  WA_LAST={sender:senderKey, t:m.t||''};
+  const rep=row.querySelector('.crep'); if(rep) rep.onclick=()=>openCommReport(rep.dataset.h, rep.dataset.id);
+  const dm=row.querySelector('.cdm'); if(dm) dm.onclick=()=>{ COMM.view='dms'; COMM.peer=dm.dataset.h; COMM.lastDmId=null; waResetGroup(); renderCommunity(); };
 }
 async function renderCommDms(){
   const body=$('#commBody'); if(!body) return;
   if(!COMM.peer){
     const r=await post('/api/community/dm/threads',{});
     const th=(r.threads||[]);
-    body.innerHTML=`<div class="muted" style="font-size:11px;margin-bottom:8px">Private messages between you and one member — text, <b>voice notes</b>, <b>audio</b> and <b>video calls</b>. Start one from <b>People &amp; Friends</b>, the ✉ icon, or add a friend by their OraCool number.</div>`+
-      (th.length? th.map(t=>`<div class="cthread" data-h="${escapeHtml(t.username||'')}">${avatarHtml({username:t.username, avatar:t.avatar}, 'sm')}<div style="min-width:0"><b style="color:var(--cyan2)">${t.mod?'🛡 ':''}${escapeHtml(t.username||'member')}</b>${vBadge(t)}${t.admin?' <span class="tag" style="color:var(--gold)">ADMIN</span>':''}${t.unread?` <span class="cunread">${t.unread}</span>`:''}<div class="muted" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.preview||'')}</div></div><div class="muted" style="font-size:10px;flex:none">${escapeHtml(fmtCommTime(t.t))}</div></div>`).join('') : '<div class="muted">No conversations yet.</div>');
-    body.querySelectorAll('.cthread').forEach(el=>{ el.onclick=()=>{ COMM.peer=el.dataset.h; COMM.lastDmId=null; renderCommDms(); }; });
+    body.innerHTML=`<div class="muted" style="font-size:11px;margin-bottom:8px">Private messages — text, <b>photos</b>, <b>voice notes</b>, <b>audio</b> &amp; <b>video calls</b>. Start one from <b>People &amp; Friends</b>, the ✉ icon, or add a friend by their OraCool number.</div><div class="wa-rowlist">`+
+      (th.length? th.map(t=>{
+        const av=avatarHtml({username:t.username, avatar:t.avatar}).replace('class="avatar"','class="avatar" style="width:42px;height:42px;font-size:15px"');
+        const tickHtml=t.last_mine?(t.last_seen?'<span class="wa-tick read">✓✓</span> ':'<span class="wa-tick">✓✓</span> '):'';
+        const prev=t.last_media ? (t.preview==='🖼️ Photo'?'🖼️ Photo':(t.preview==='🎤 Voice note'?'🎤 Voice note':escapeHtml(t.preview||''))) : escapeHtml(t.preview||'');
+        return `<div class="wa-trow ${t.unread?'unread':''}" data-h="${escapeHtml(t.username||'')}">
+          <div class="avwrap">${av}<span class="onldot ${t.online?'on':''}"></span></div>
+          <div class="tmain"><div class="tname">${t.mod?'🛡 ':''}${escapeHtml(t.username||'member')}${t.verified?' <span class="vbadge">✦</span>':''}${t.admin?' <span class="tag" style="color:var(--gold);font-size:8px">ADMIN</span>':''}</div>
+          <div class="tsub">${tickHtml}${t.last_mine?'<span class="you">You: </span>':''}${prev}</div></div>
+          <div class="tr"><div class="ttime">${escapeHtml(fmtCommTime(t.t))}</div>${t.unread?`<span class="wa-unread">${t.unread}</span>`:''}</div>
+        </div>`;
+      }).join('') : '')+'</div>'+
+      (th.length?'':'<div class="muted">No conversations yet.</div>');
+    body.querySelectorAll('.wa-trow').forEach(el=>{ el.onclick=()=>{ COMM.peer=el.dataset.h; COMM.lastDmId=null; waResetGroup(); COMM.peerSeen=0; renderCommDms(); }; });
     return;
   }
-  body.innerHTML=`<div class="commhead" style="margin-bottom:6px"><button class="btn small ghost" id="dmBack">← Messages</button><b style="color:var(--cyan2)">@${escapeHtml(COMM.peer)}</b><span class="muted" id="dmOnline" style="font-size:10px"></span><span style="flex:1"></span>${r && r.mod==='undefined' ? '' : ''}<button class="btn small ghost" id="dmCallA" title="Audio call">📞</button><button class="btn small ghost" id="dmCallV" title="Video call">📹</button><button class="btn small ghost" id="dmReport" style="color:var(--danger)">⚑ Report</button></div>
-    <div class="commmsgs" id="dmMsgs"><div class="muted">Loading…</div></div>
-    <div class="commcompose" id="dmCompose"><input type="text" id="dmInput" maxlength="800" autocomplete="off" placeholder="Message @${escapeHtml(COMM.peer)}"><button class="btn ghost voicebtn" id="dmVoice" title="Record a voice note">🎤</button><button class="btn primary" id="dmSend">Send</button></div>`;
-  $('#dmBack').onclick=()=>{ COMM.peer=null; COMM.lastDmId=null; renderCommDms(); };
+  body.innerHTML=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;border:1px solid var(--line);border-radius:12px;padding:7px 10px;background:#111b21">
+    <button class="wa-ico" id="dmBack" title="Back to messages">←</button>
+    <span class="wa-av" id="dmHeadAv" style="width:38px;height:38px;font-size:14px">…</span>
+    <div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600;color:#e9edef;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">@${escapeHtml(COMM.peer)}</div><div id="dmOnline" style="font-size:11px;color:#8696a0">…</div></div>
+    <button class="wa-ico" id="dmCallA" title="Audio call">📞</button>
+    <button class="wa-ico" id="dmCallV" title="Video call">📹</button>
+    <button class="wa-ico" id="dmReport" title="Report" style="color:var(--danger)">⚑</button>
+  </div>
+  <div class="commmsgs" id="dmMsgs" style="border-color:#182229"><div class="muted">Loading…</div></div>
+  <div class="wa-compose" id="dmCompose">
+    <button class="wa-ico" id="dmAttach" title="Attach photo or audio">➕</button>
+    <button class="wa-ico" id="dmEmoji" title="Emoji">😀</button>
+    <div class="pill"><input type="text" id="dmInput" maxlength="800" autocomplete="off" placeholder="Type a message"></div>
+    <button class="wa-ico voicebtn" id="dmVoice" title="Voice note">🎤</button>
+    <button class="wa-send" id="dmSend" title="Send">➤</button>
+  </div>`;
+  $('#dmBack').onclick=()=>{ COMM.peer=null; COMM.lastDmId=null; waResetGroup(); COMM.peerSeen=0; renderCommDms(); };
   $('#dmReport').onclick=()=>openCommReport(COMM.peer, null);
   const ca=$('#dmCallA'), cv=$('#dmCallV');
   if(ca) ca.onclick=()=>callStart(COMM.peer, false);
   if(cv) cv.onclick=()=>callStart(COMM.peer, true);
   const dv=$('#dmVoice'); if(dv) dv.onclick=commVoiceToggle;
+  const at=$('#dmAttach'), em=$('#dmEmoji');
+  if(at) at.onclick=e=>{ e.stopPropagation(); waAttachPop(at); };
+  if(em) em.onclick=e=>{ e.stopPropagation(); waEmojiPop(em, $('#dmInput')); };
   const send=async()=>{ const inp=$('#dmInput'); const text=(inp.value||'').trim(); if(!text) return; inp.value=''; const r=await post('/api/community/dm/send',{handle:COMM.peer, body:text}); if(r.error){ addErr('Community: '+r.error); inp.value=text; return; } const el=$('#dmMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); COMM.lastDmId=r.message.id; el.scrollTop=el.scrollHeight; } };
   $('#dmSend').onclick=send; $('#dmInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
   loadCommDm(true);
@@ -1922,7 +2045,11 @@ async function loadCommDm(initial){
   if(initial){ el.innerHTML=''; if(!(r.messages||[]).length) el.innerHTML='<div class="muted">Say hello — this conversation is private.</div>'; if(r.mod){ const c=$('#dmCompose'); if(c) c.innerHTML='<div class="muted" style="font-size:11px">The moderator does not take replies. Use ⚑ Report to reach it.</div>'; const rb=$('#dmReport'); if(rb) rb.style.display='none'; } }
   (r.messages||[]).forEach(m=>appendCommMsg(el,m));
   if((r.messages||[]).length){ COMM.lastDmId=r.messages[r.messages.length-1].id; el.scrollTop=el.scrollHeight; }
-  const on=$('#dmOnline'); if(on) on.textContent=r.mod?'moderator':(r.online?'● online':'offline');
+  if(r.peer_seen_upto!=null) COMM.peerSeen=r.peer_seen_upto;
+  if(r.avatar) COMM.headAvatar=r.avatar;
+  const on=$('#dmOnline'); if(on) on.textContent=r.mod?'moderator':(r.online?'online':'last seen recently');
+  const ha=$('#dmHeadAv');
+  if(ha && !ha.dataset.set){ ha.innerHTML=r.mod?'🛡':(COMM.headAvatar?`<img src="${escapeHtml(COMM.headAvatar)}" alt="">`:escapeHtml(String(COMM.peer||'?').slice(0,1).toUpperCase())); ha.dataset.set='1'; }
 }
 async function renderCommFriends(){
   const el=$('#commFriends'); if(!el) return;
@@ -1985,6 +2112,67 @@ function openCommReport(handle, messageId){
     addSystemNote('⚑ Report sent about <b>@'+escapeHtml(handle)+'</b> — '+escapeHtml(r.message||''));
   };
   setTimeout(()=>{ const t=$('#commReason'); if(t) t.focus(); }, 50);
+}
+
+/* ---------- WhatsApp-style compose extras: emoji, attach, photo/voice ---------- */
+const WA_EMOJIS=['😀','😂','🙂','😊','😍','😘','😎','🤩','😉','😅','😴','','🤔','🫡','','','','👏','','💪','️','🤞','❤️','💔','🔥','✨','🎉','','','💀','😭','😤','🥺','','😱','','💡','','✅','❌','☕','🍜','','🏆','','','🎤','','🎧','','🚀','🌍'];
+function insertAtCaret(inp, text){
+  if(!inp) return;
+  const st=inp.selectionStart||inp.value.length, en=inp.selectionEnd||inp.value.length;
+  inp.value=inp.value.slice(0,st)+text+inp.value.slice(en);
+  const pos=st+text.length; inp.focus();
+  try{ inp.setSelectionRange(pos,pos); }catch(e){}
+  inp.dispatchEvent(new Event('input'));
+}
+function closeWaPops(){ ['waEmojiPop','waAttachPop'].forEach(id=>{ const p2=document.getElementById(id); if(p2) p2.classList.remove('open'); }); }
+function waEmojiPop(anchorEl, input){
+  let pop=document.getElementById('waEmojiPop');
+  if(pop && pop.classList.contains('open')){ closeWaPops(); return; }
+  if(!pop){
+    pop=document.createElement('div'); pop.id='waEmojiPop'; pop.className='wa-pop wa-emojis';
+    pop.innerHTML='<div class="egrid">'+WA_EMOJIS.map(e=>`<button type="button" data-e="${e}">${e}</button>`).join('')+'</div>';
+    document.body.appendChild(pop);
+  }
+  pop.querySelectorAll('button').forEach(b=>{ b.onclick=()=>insertAtCaret(input, b.dataset.e); });
+  const r=anchorEl.getBoundingClientRect();
+  pop.style.bottom=(window.innerHeight-r.top+8)+'px';
+  pop.style.left=Math.max(8, Math.min(r.left-120, window.innerWidth-304))+'px';
+  pop.classList.add('open');
+}
+function waAttachPop(anchorEl){
+  let pop=document.getElementById('waAttachPop');
+  if(pop && pop.classList.contains('open')){ closeWaPops(); return; }
+  if(!pop){
+    pop=document.createElement('div'); pop.id='waAttachPop'; pop.className='wa-pop wa-attach';
+    pop.innerHTML=`<button type="button" data-a="photo">🖼️ <span>Photo</span></button><button type="button" data-a="voice">🎵 <span>Audio file</span></button>`;
+    document.body.appendChild(pop);
+    pop.querySelectorAll('button').forEach(b=>{ b.onclick=()=>commAttachPick(b.dataset.a); });
+  }
+  const r=anchorEl.getBoundingClientRect();
+  pop.style.bottom=(window.innerHeight-r.top+8)+'px';
+  pop.style.left=Math.max(8, Math.min(r.left, window.innerWidth-230))+'px';
+  pop.classList.add('open');
+}
+document.addEventListener('click', e=>{
+  if(!e.target.closest('.wa-pop') && !e.target.closest('#dmEmoji') && !e.target.closest('#dmAttach') && !e.target.closest('#roomEmoji')) closeWaPops();
+});
+async function commAttachPick(kind){
+  closeWaPops();
+  const inp=document.createElement('input'); inp.type='file';
+  inp.accept=kind==='voice'?'audio/*':'image/jpeg,image/png,image/webp';
+  inp.onchange=async()=>{
+    const f=inp.files && inp.files[0]; if(!f) return;
+    if(kind==='photo' && f.size>5*1024*1024){ addErr('Photo must be under 5 MB.'); return; }
+    if(kind==='voice' && f.size>8*1024*1024){ addErr('Audio file is too large.'); return; }
+    const dataUrl=await new Promise(res=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=()=>res(null); fr.readAsDataURL(f); });
+    if(!dataUrl) return;
+    const up=await post('/api/community/media',{data_url:dataUrl});
+    if(up.error){ addErr('Attach: '+up.error); return; }
+    const r=await post('/api/community/dm/send',{handle:COMM.peer, body:'', media_url:up.media_url});
+    if(r.error){ addErr('Attach: '+r.error); return; }
+    const el=$('#dmMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); el.scrollTop=el.scrollHeight; }
+  };
+  inp.click();
 }
 
 /* ---------- community calls: audio & video (P2P WebRTC, OraCool signals) ---------- */

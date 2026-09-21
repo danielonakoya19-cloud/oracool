@@ -217,6 +217,30 @@ class Patch16Tests(unittest.TestCase):
                                                          media_url='https://evil.example/x.webm')['error'])
         self.assertIn('Unsupported', s.upload_community_media(USER, 'data:text/plain;base64,abc')['error'])
 
+    # ---- whatsapp-style extras: photos + read ticks -------------------------------------------------
+    def test_photo_attachment_and_read_ticks(self):
+        # photo upload
+        png = base64.b64encode(b'\x89PNG' + b'1' * 3000).decode()
+        with patch.object(s, 'http_fetch', side_effect=self._fake_storage):
+            up = s.upload_community_media('r1@example.test', 'data:image/png;base64,' + png)
+        self.assertTrue(up.get('ok'), up)
+        self.assertTrue(up['media_url'].endswith('.png'))
+        # photo dm message
+        self.svc.last_post.clear()
+        r = self.svc.dm_send('r1@example.test', 'member_two', '', media_url=up['media_url'])
+        self.assertTrue(r.get('ok'), r)
+        self.assertEqual(r['message']['body'], '🖼️ Photo')
+        # peer opens the thread -> marks read -> sender ticks turn "read"
+        msgs = self.svc.dm_messages('r2@example.test', 'member_one')
+        self.assertTrue(msgs.get('peer_seen_upto', 0) > 0)
+        self.assertTrue(msgs.get('avatar') is not None)
+        # thread list shows the last own message as seen
+        th = self.svc.dm_threads('r1@example.test')['threads']
+        hit = next(x for x in th if x['username'] == 'member_two')
+        self.assertTrue(hit['last_mine']); self.assertTrue(hit['last_seen']); self.assertTrue(hit['last_media'])
+        # video still fine; unsupported type refused
+        self.assertIn('Unsupported', s.upload_community_media(USER, 'data:video/mp4;base64,abc')['error'])
+
     # ---- audio / video call signaling -----------------------------------------------------------
     def test_call_signaling_state_machine(self):
         a, b = 'r1@example.test', 'r2@example.test'
