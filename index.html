@@ -801,7 +801,7 @@ function showLockScreen(){
     <div class="gatebrand">ORA-COOL AI</div>
     <div class="gatesub">Session locked</div>
     <div class="muted" style="font-size:12px;margin-top:8px">Auto-locked after ${settings.lockMins||30} min of inactivity to protect your cases and evidence. Re-enter your password — or use Face ID.</div>
-    <input type="password" id="lkPass" placeholder="Account password" autocomplete="current-password" style="margin-top:14px">
+    <div style="position:relative"><input type="password" id="lkPass" placeholder="Account password" autocomplete="current-password" style="margin-top:14px;padding-right:38px"><button type="button" id="lkPassEye" aria-label="Show or hide password" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;cursor:pointer;font-size:15px;padding:8px;line-height:1">👁</button></div>
     <button class="btn primary" style="width:100%;justify-content:center;margin-top:10px" id="lkGo">Unlock session</button>
     <button class="btn ghost" style="width:100%;justify-content:center;margin-top:6px" id="lkFace">🫆 Unlock with Face ID</button>
     <div class="result" id="lkOut" style="margin-top:8px"></div></div>`;
@@ -826,6 +826,7 @@ function showLockScreen(){
     }catch(e){ out.innerHTML='<div class="hint">Face unlock cancelled or unsupported here.</div>'; }
   };
   $('#lkPass').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#lkGo').click(); });
+  const lkEye=$('#lkPassEye'); if(lkEye) lkEye.onclick=()=>{ const i=$('#lkPass'); const show=i.type==='password'; i.type=show?'text':'password'; lkEye.textContent=show?'🙈':'👁'; };
   function unlockNow(){ const x=document.getElementById('lockScreen'); if(x)x.remove(); lastActAt=Date.now(); addSystemNote('🔓 Session unlocked — welcome back.'); }
 }
 setInterval(()=>{ try{
@@ -1595,7 +1596,6 @@ async function send(text){
   if(!text && !files.length) return;
   if(busy) return;
   if(!files.length && window.OraComms && await window.OraComms.handle(text)){if(window.OraVoice)window.OraVoice.resume();return;}
-  if(!files.length && window.OraReminders && await window.OraReminders.handle(text)){if(window.OraVoice)window.OraVoice.resume();return;}
   if(!files.length){
     const dc=runDeviceCommand(text);
     if(dc.handled){ addUser(text); const m=dc.reply; if(m){ addAI(m); speak(m); } return; }
@@ -3411,10 +3411,11 @@ function renderAccount(){
     <label class="lbl">Email</label>
     <input type="email" id="aEmail" placeholder="you@example.com">
     <label class="lbl">Password</label>
-    <input type="password" id="aPass" placeholder="••••••••">
+    <div style="position:relative"><input type="password" id="aPass" placeholder="••••••••" style="padding-right:38px"><button type="button" id="aPassEye" aria-label="Show or hide password" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;cursor:pointer;font-size:15px;padding:8px;line-height:1">👁</button></div>
     <div class="row"><button class="btn primary" id="aSignup">Create account</button><button class="btn ghost" id="aLogin">Sign in</button></div>
     <div class="hint">Password: 8+ characters with uppercase, lowercase & a number. You'll be signed in instantly.</div>
     <div class="result" id="aOut"></div>`;
+  const aEye=$('#aPassEye'); if(aEye) aEye.onclick=()=>{ const i=$('#aPass'); const show=i.type==='password'; i.type=show?'text':'password'; aEye.textContent=show?'🙈':'👁'; };
   $('#aSignup').onclick=async()=>{
     const email=$('#aEmail').value.trim(), pass=$('#aPass').value;
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ $('#aOut').innerHTML='<div class="errbox">Enter a valid email.</div>'; return; }
@@ -3544,26 +3545,6 @@ async function renderBrandAccounts(){
     finally{if($('#brandPublish'))$('#brandPublish').disabled=false;}
   };
 }
-function renderTwilioReadiness(t){
-  if(!t) return '';
-  const ok=v=>v===true?'✓':(v===false?'✗':'—');
-  const rows=[
-    ['Account', t.account&&t.account.type?`${escapeHtml(t.account.type)} · ${escapeHtml(t.account.status||'')}`:'not reachable'],
-    ['API key (SK…)', t.api_key&&t.api_key.configured?(ok(t.api_key.ok)+(t.api_key.error?' '+escapeHtml(t.api_key.error):'')):'not set'],
-    ['Auth token', t.auth_token&&t.auth_token.configured?ok(t.auth_token.ok):'not set'],
-    ['Owned numbers', (t.owned_numbers||[]).length?t.owned_numbers.map(escapeHtml).join(', '):'none'],
-    ['Verified caller IDs', String(t.caller_ids||0)],
-    ['From number', t.from_number&&t.from_number.configured?`${escapeHtml(t.from_number.mask)} · owned ${ok(t.from_number.owned)} · caller ID ${ok(t.from_number.verified_caller_id)}`:'not set'],
-    ['Verify service', t.verify_service&&t.verify_service.configured?ok(t.verify_service.ok):'not set'],
-    ['Public base URL', ok(!!t.public_base_url)],
-    ['Communications enabled', ok(!!t.communications_enabled)]];
-  const blockers=(t.blockers||[]);
-  return `<div id="twBox" style="margin-top:10px">
-    <div class="ptitle" style="font-size:13px;margin-bottom:6px">📞 Twilio readiness <span class="muted">(read-only check · never sends)</span> <button class="btn ghost small" id="twRefresh" style="margin-left:8px;min-height:28px">Re-check</button></div>
-    <div class="kv" style="font-size:11px">${rows.map(([k,v])=>`<div class="k">${escapeHtml(k)}</div><div class="val">${v}</div>`).join('')}</div>
-    ${blockers.length?`<div class="warnbox" style="margin-top:6px;font-size:11px">${blockers.map(b=>'• '+escapeHtml(b)).join('<br>')}</div>`:'<div class="okbox" style="margin-top:6px">Twilio is ready for calls and SMS.</div>'}
-    <div class="muted" style="font-size:10px;margin-top:4px">Checked ${escapeHtml(t.checked_at||'')} · cached 5 min</div></div>`;
-}
 let adminCache=[];
 async function refreshAdmin(){
   const tok=proToken;
@@ -3612,9 +3593,7 @@ async function refreshAdmin(){
     const sb=dg.supabase||{};
     dEl.innerHTML=`<div class="ptitle" style="font-size:13px;margin-bottom:6px">🩺 Diagnostics</div>
       <div class="muted" style="font-size:11px">uptime ${Math.round((dg.uptime_sec||0)/60)} min · threads ${dg.threads||'?'} · memory ${dg.rss_mb||'?'} MB · disk free ${dg.disk_free_mb||'?'} MB · users ${dg.users||'?'} · cases ${dg.cases||0} · supabase ${sb.reachable?'reachable ✓':'not reachable'} · brain ${escapeHtml(JSON.stringify(dg.brain||{}))} · alerts ${escapeHtml(JSON.stringify(dg.alerts||{}))}</div>
-      ${(dg.recent_errors||[]).length?`<div class="errbox" style="margin-top:6px;font-size:11px">${dg.recent_errors.map(e=>escapeHtml(e)).join('<br>')}</div>`:'<div class="okbox" style="margin-top:6px">No error lines in the recent log.</div>'}
-      ${renderTwilioReadiness(dg.twilio)}`;
-    const tw=$('#twRefresh'); if(tw) tw.onclick=async()=>{ tw.disabled=true; tw.textContent='Checking…'; const t2=await post('/api/admin/twilio',{token:tok, refresh:true}).catch(()=>null); const holder=$('#twBox'); if(holder && t2 && !t2.error && !t2.locked){ holder.outerHTML=renderTwilioReadiness(t2); const b=$('#twRefresh'); if(b) b.onclick=tw.onclick; } else { tw.disabled=false; tw.textContent='Re-check'; } };
+      ${(dg.recent_errors||[]).length?`<div class="errbox" style="margin-top:6px;font-size:11px">${dg.recent_errors.map(e=>escapeHtml(e)).join('<br>')}</div>`:'<div class="okbox" style="margin-top:6px">No error lines in the recent log.</div>'}`;
   }
   adminCache=r.users||[];
   renderAdminRows(adminCache);
@@ -4696,11 +4675,11 @@ function renderGate(){
     </div>
     ${gateMode==='signup' ? `<label class="lbl">What should I call you?</label><input type="text" id="gName" placeholder="e.g. sir, boss, chief…" autocomplete="nickname">
     <label class="lbl">Your username <span class="muted" style="font-size:10px">· public & unique — how members find you in Community</span></label>
-    <input type="text" id="gUser" placeholder="e.g. daniel_o" maxlength="20" autocomplete="off" style="text-transform:lowercase">` : ''}
+    <input type="text" id="gUser" placeholder="e.g. nova_7x" maxlength="20" autocomplete="off" style="text-transform:lowercase">` : ''}
     <label class="lbl">Email</label>
     <input type="email" id="gEmail" placeholder="you@example.com" autocomplete="email">
     <label class="lbl">Password</label>
-    <input type="password" id="gPass" placeholder="••••••••" autocomplete="new-password">
+    <div style="position:relative"><input type="password" id="gPass" placeholder="••••••••" autocomplete="new-password" style="padding-right:38px"><button type="button" id="gPassEye" aria-label="Show or hide password" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;cursor:pointer;font-size:15px;padding:8px;line-height:1">👁</button></div>
     <div class="strength" id="gStrength"><i></i></div>
     <div class="hint" id="gHint">Password: 8+ characters with uppercase, lowercase & a number.</div>
     <button class="btn primary" style="width:100%; justify-content:center; margin-top:16px" id="gGo">${gateMode==='signup'?'Create account & enter':'Enter OraCool'}</button>
@@ -4726,6 +4705,7 @@ function renderGate(){
     if(s>0) $('#gHint').textContent = 'Password strength: ' + labels[s];
   });
   $('#gPass').addEventListener('keydown', e=>{ if(e.key==='Enter') submitGate(); });
+  const gEye=$('#gPassEye'); if(gEye) gEye.onclick=()=>{ const i=$('#gPass'); const show=i.type==='password'; i.type=show?'text':'password'; gEye.textContent=show?'🙈':''; gEye.setAttribute('aria-label',show?'Hide password':'Show password'); };
   $('#gGo').onclick = submitGate;
   async function submitGate(){
     const email = $('#gEmail').value.trim(), pass = $('#gPass').value;

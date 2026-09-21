@@ -39,26 +39,13 @@
         <p class="hint">Voice mode sends speech to your browser's recognition service, or short recordings to OraCool's configured transcription provider. OraCool does not save the audio clips. Provider retention terms apply. Stop / mute releases the microphone. A locked phone or hidden browser pauses voice mode.</p>
         <label>Language <select id="hfLanguage"><option value="en-NG">English (Nigeria)</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="fr-FR">French</option><option value="es-ES">Spanish</option></select></label>
         <label style="display:block;margin:8px 0"><input type="checkbox" id="hfProactive"> Offer occasional spoken suggestions while conversation mode is on (quiet 10 PM–7 AM).</label>
-        <section id="adminAlarmTools" hidden>
-        <h4>Enterprise phone reminders</h4>
-        <div class="hint">Verify your own number. Only alarms you review and confirm will call it. SMS verification and calls use provider credit. Requires an always-running server and phone reception; Do Not Disturb/carrier filtering may silence calls. Not an emergency alarm service.</div>
-        <div id="alarmStatus" class="result">Open this panel to check phone-call configuration.</div>
-        <input id="alarmPhone" type="tel" autocomplete="tel" placeholder="Your own number, e.g. +234…">
-        <label style="display:block;margin:6px 0"><input type="checkbox" id="alarmConsent"> I control this number and consent to a verification SMS and the alarm calls I explicitly schedule.</label>
-        <div class="row"><button class="btn ghost" id="alarmSendCode">Send verification SMS</button><input id="alarmCode" inputmode="numeric" autocomplete="one-time-code" placeholder="SMS code" style="width:120px"><button class="btn ghost" id="alarmVerify">Verify number</button></div>
-        <label style="display:block;margin-top:8px">Alarm timezone <input id="alarmTimezone" placeholder="Africa/Lagos"></label>
-        <div class="row"><input id="alarmCommand" placeholder="Wake me at 6 AM / set a timer for 20 minutes" style="flex:1;min-width:180px"><button class="btn primary" id="alarmPreview">Review alarm</button></div>
-        <div id="alarmConfirm"></div>
-        <div class="row" style="margin-top:8px"><button class="btn ghost" id="alarmRefresh">Refresh alarms</button><button class="btn ghost" id="alarmDisconnect">Disconnect phone / cancel pending calls</button></div>
-        <div id="alarmRows"></div>
-        </section>
       </div>
     </details>`;
   document.querySelector('.reactorhead').after(toolbar);
   const style=document.createElement('style');style.textContent='.voicebar{padding:8px 12px;border-bottom:1px solid var(--line);font-size:12px}.voicebar [hidden]{display:none!important}.voicebar details{margin-top:7px}.voicebar button{min-height:40px}.voicebar input,.voicebar select{max-width:100%}.voicebar input:not([type=checkbox]),.voicebar select,.voicebar textarea{background:#061723;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px;margin:4px 0}.voicebar input[type=checkbox]{accent-color:var(--cyan)}#hfState{font-size:11px;color:var(--cyan2)}.alarmitem{padding:8px 0;border-bottom:1px solid var(--line)}';document.head.appendChild(style);
   const sheet=document.createElement('dialog');sheet.id='voiceSheet';sheet.className='settings-sheet voicebar';
-  sheet.setAttribute('aria-label','Voice settings and phone reminders');
-  sheet.innerHTML='<div class="sheet-head"><div><span class="sheet-eyebrow">PERSONALIZE</span><h2>Voice & reminders</h2></div><button class="btn ghost" id="closeVoiceSheet" aria-label="Close voice settings">✕</button></div>';
+  sheet.setAttribute('aria-label','Voice settings');
+  sheet.innerHTML='<div class="sheet-head"><div><span class="sheet-eyebrow">PERSONALIZE</span><h2>Voice settings</h2></div><button class="btn ghost" id="closeVoiceSheet" aria-label="Close voice settings">✕</button></div>';
   const details=toolbar.querySelector('#voiceAlarmPanel');sheet.appendChild(details);document.body.appendChild(sheet);
   toolbar.querySelector('.hint').remove();
   const voiceButton=document.createElement('button');voiceButton.className='btn ghost';voiceButton.id='commsToggle';voiceButton.textContent='↗ Communications';toolbar.querySelector('.row').insertBefore(voiceButton,toolbar.querySelector('#hfState'));
@@ -210,99 +197,10 @@
     lastSuggestion=Date.now();const text=proactivePick();addAI(text);window.OraVoice.say(text);
   },10000);
 
-  let pending=null, alarmOwner='';
   function hasCommunications(){
     if(!signedIn()||session.blocked)return false;
     if(session.admin===true)return true;
     try{const p=JSON.parse(atob(proToken.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));return !p.trial&&p.tier==='enterprise'&&p.exp>Date.now()/1000&&String(p.sub||'').toLowerCase()===myEmail().toLowerCase();}catch(e){return false;}
   }
   window.OraCommunicationsAccess=hasCommunications;
-  function updateAlarmAccess(){
-    const admin=hasCommunications(), owner=admin?myEmail():'';
-    q('#adminAlarmTools').hidden=!admin;
-    q('#alarmToggle').textContent=admin?'Voice settings':'Voice settings';
-    q('#voiceAlarmPanel summary').textContent=admin?'Voice privacy & phone reminders':'Voice settings & privacy';
-    if(owner!==alarmOwner){
-      pending=null;q('#alarmConfirm').innerHTML='';q('#alarmRows').innerHTML='';
-      q('#alarmPhone').value='';q('#alarmCode').value='';q('#alarmConsent').checked=false;
-      q('#alarmStatus').textContent=admin?'Open this panel to check your phone reminder setup.':'';
-      alarmOwner=owner;
-    }
-  }
-  setInterval(updateAlarmAccess,500);
-  updateAlarmAccess();
-  function alarmMessage(message,error=false){q('#alarmStatus').className=error?'errbox':'okbox';q('#alarmStatus').textContent=message;}
-  async function refreshAlarms(){
-    if(!hasCommunications()){updateAlarmAccess();return null;}
-    const owner=myEmail();
-    try{
-      const r=await post('/api/reminders/state',{});
-      if(!hasCommunications()||myEmail()!==owner)return null;
-      if(r.error){alarmMessage(r.error,true);return null;}
-      const cfg=r.config||{},phone=r.phone||{};
-      alarmMessage(!cfg.ready?'Phone calls are not enabled yet. Operator setup needed: '+(cfg.missing||[]).join(', '):phone.verified?'Verified number: '+phone.mask+'. Review and confirm each phone alarm.':'Calling provider configured. Verify your own phone number to continue.',!cfg.ready);
-      q('#alarmSendCode').disabled=!cfg.ready;q('#alarmVerify').disabled=!cfg.ready;
-      q('#alarmRows').innerHTML=(r.alarms||[]).map(a=>`<div class="alarmitem"><b>${escapeHtml(a.label)}</b> · ${escapeHtml(a.local_time)} (${escapeHtml(a.timezone)})<br>Status: <b>${escapeHtml(a.status)}</b>${a.note?' · '+escapeHtml(a.note):''}${a.status==='scheduled'?` <button class="btn ghost cancelAlarm" data-id="${escapeHtml(a.id)}">Cancel</button>`:''}</div>`).join('')||'<div class="hint">No phone alarms saved. Try “set a timer for 20 minutes”.</div>';
-      q('#alarmRows').querySelectorAll('.cancelAlarm').forEach(b=>b.onclick=async()=>{const r=await post('/api/reminders/cancel',{id:b.dataset.id});if(r.error)alarmMessage(r.error,true);else refreshAlarms();});
-      return r;
-    }catch(e){alarmMessage('Cannot reach alarm storage. No new alarm has been scheduled.',true);return null;}
-  }
-  function reply(text){addAI(text);speak(text);saveChat();}
-  async function prepare(text,chatReply=true){
-    if(!hasCommunications()){if(chatReply)reply('Phone calls and reminders require Enterprise or administrator access. Normal voice conversation is still available.');return;}
-    const state=await refreshAlarms();
-    if(!state?.config?.ready||!state?.phone?.verified){
-      window.OraSettings.open();
-      if(chatReply)reply('No alarm has been scheduled. Open Voice settings to configure calling and verify your own phone number first.');
-      return;
-    }
-    const r=await post('/api/reminders/preview',{text,timezone:q('#alarmTimezone').value.trim()});
-    if(r.error){alarmMessage(r.error,true);if(chatReply)reply(r.error);return;}
-    pending={...r,request_id:crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+'-'+Math.random().toString(36).slice(2),expires:Date.now()+120000};
-    const message='Call '+state.phone.mask+' at '+r.local_time+' in '+r.timezone+'? This is a real telephone call using provider credit. Say “confirm alarm” or “cancel alarm”.';
-    q('#alarmConfirm').innerHTML='<div class="okbox">'+escapeHtml(message)+'</div><div class="row"><button class="btn primary" id="confirmAlarm">Confirm phone alarm</button><button class="btn ghost" id="declineAlarm">Cancel</button></div>';
-    q('#confirmAlarm').onclick=()=>confirmAlarm();q('#declineAlarm').onclick=()=>{pending=null;q('#alarmConfirm').innerHTML='';reply('Alarm cancelled before scheduling.');};
-    window.OraSettings.open();if(chatReply)reply(message);
-  }
-  let confirming=false;
-  async function confirmAlarm(){
-    if(!hasCommunications()){pending=null;updateAlarmAccess();reply('Phone reminders require Enterprise or administrator access.');return;}
-    if(confirming)return;
-    if(!pending||pending.expires<Date.now()){pending=null;q('#alarmConfirm').innerHTML='';reply('That preview expired. Please ask for the timer or alarm again.');return;}
-    confirming=true;
-    try{
-      const r=await post('/api/reminders/create',{...pending,confirmed:true});
-      if(r.error){reply(r.error);return;}
-      pending=null;q('#alarmConfirm').innerHTML='';reply('Phone alarm saved for '+r.alarm.local_time+' in '+r.alarm.timezone+'. When you answer, OraCool will greet you. Delivery depends on the server, phone provider and your phone settings.');await refreshAlarms();
-    }catch(e){reply('The request outcome is uncertain. Refresh the alarm list before scheduling again.');}
-    finally{confirming=false;}
-  }
-  window.OraReminders={async handle(text){
-    if(!hasCommunications()&&(/\b(?:timers?|alarms?|reminders?|wake me|call me|count\s*down|scheduled calls)\b/i.test(text)||/\b(?:remind|alert) me\b/i.test(text))){
-      addUser(text);reply('Phone calling and reminders require Enterprise or administrator access. You can still use hands-free voice conversation.');return true;
-    }
-    if(pending&&/^(?:yes|yes please|confirm(?: alarm)?|confirm phone alarm)[.!]?$/i.test(text.trim())){addUser(text);await confirmAlarm();return true;}
-    if(pending&&/^(?:no|cancel(?: alarm)?|never mind)[.!]?$/i.test(text.trim())){pending=null;q('#alarmConfirm').innerHTML='';addUser(text);reply('No phone alarm scheduled.');return true;}
-    if(/\b(?:my alarms|my timers|list alarms|show alarms|scheduled calls)\b/i.test(text)){addUser(text);window.OraSettings.open();await refreshAlarms();reply('Your phone alarms and their delivery status are in Voice settings.');return true;}
-    if(/\b(?:set|start|create|remind|alert|wake|call me|count\s*down)\b/i.test(text)&&/\b(?:timer|alarm|minutes?|mins?|seconds?|hours?|wake|call me|at|when it is|when it's)\b/i.test(text)){
-      addUser(text);await prepare(text);return true;
-    }
-    return false;
-  }};
-  q('#alarmToggle').onclick=()=>window.OraSettings.open();
-  q('#voiceAlarmPanel').addEventListener('toggle',()=>{if(q('#voiceAlarmPanel').open&&hasCommunications())refreshAlarms();});
-  q('#alarmRefresh').onclick=refreshAlarms;
-  q('#alarmPreview').onclick=()=>prepare(q('#alarmCommand').value,true);
-  q('#alarmSendCode').onclick=async()=>{
-    q('#alarmSendCode').disabled=true;
-    try{const r=await post('/api/reminders/phone/send',{number:q('#alarmPhone').value.trim(),consent:q('#alarmConsent').checked});alarmMessage(r.error||r.message,!!r.error);}
-    catch(e){alarmMessage('SMS request could not be confirmed. Wait before retrying.',true);}finally{q('#alarmSendCode').disabled=false;}
-  };
-  q('#alarmVerify').onclick=async()=>{
-    const code=q('#alarmCode').value.trim();q('#alarmCode').value='';
-    try{const r=await post('/api/reminders/phone/verify',{code});if(r.error)alarmMessage(r.error,true);else{q('#alarmPhone').value='';await refreshAlarms();}}
-    catch(e){alarmMessage('Verification unavailable. Retry shortly.',true);}
-  };
-  q('#alarmDisconnect').onclick=async()=>{if(!confirm('Remove your phone and cancel all pending calls?'))return;const r=await post('/api/reminders/disconnect',{});if(r.error)alarmMessage(r.error,true);else refreshAlarms();};
-  setInterval(()=>{if(q('#voiceAlarmPanel').open&&hasCommunications()&&!document.hidden)refreshAlarms();},20000);
 })();

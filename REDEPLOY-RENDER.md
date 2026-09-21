@@ -356,7 +356,7 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 
 ## Patch 15 — Community chat, OraCool numbers, usernames, groups & channels, friends-by-number, AI moderator
 
-- **Build marker** `/api/health` → `patch19-mobile-access`.
+- **Build marker** `/api/health` → `patch20-no-twilio`.
 - **One-time step (60 seconds): run the community SQL in Supabase.**
   1. Supabase dashboard → **SQL Editor** → **New query**
   2. Paste the entire file **`supabase_patch15.sql`** (in this workspace / repo root) → **Run**.
@@ -373,7 +373,7 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 
 ## Patch 18 — Profile picture fix, room permissions, delete, WhatsApp-style chat extras, in-chat game
 
-- **Build marker** `/api/health` → `patch19-mobile-access`.
+- **Build marker** `/api/health` → `patch20-no-twilio`.
 - **One-time step (60 seconds): run the Patch 18 SQL in Supabase.**
   1. Supabase dashboard → **SQL Editor** → **New query**
   2. Paste the entire file **`supabase_patch18.sql`** (repo root) → **Run**.
@@ -396,7 +396,7 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 
 ## Patch 19 — Spacious phone layout, group media, AI community access, honest device access
 
-- **Build marker** `/api/health` → `patch19-mobile-access`.
+- **Build marker** `/api/health` → `patch19-mobile-access` (superseded by Patch 20).
 - **No SQL change needed.** `supabase_complete.sql` remains the single complete, current Supabase file — this patch adds no tables or columns (groups use the existing `comm_messages.media_url`/`kind` columns).
 - **Group & channel media**: every room's compose now has a ➕ attach menu — **Photo / Video / Voice note / Document or file** (videos up to 20 MB, files 10 MB, photos 5 MB). In rooms the voice note is recorded live with the mic (WhatsApp-style, tap again to stop & send). Files render as a 📎 download chip; videos with an in-chat player.
 - **The AI can now check your community chat**: ask "check my community chat" / "any new messages?" — the server runs a live read-only digest of your own rooms, DM threads, unread counts and active games and the AI answers from it. It only ever reads your own data, never posts as you, never shows other members' DMs.
@@ -406,3 +406,26 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 - **Spacious phone UI**: chat-history rows, settings (16 px inputs — stops iOS auto-zoom), nav, community compose and buttons all get bigger touch targets (≥44 px) and more padding on small screens.
 - **Tests**: `tests/test_patch19.py` (13 tests) — suite now **179 tests, all green**.
 - Deploy: Render auto-deploys `main`; confirm the marker. No environment changes, no SQL.
+
+## Patch 20 — Twilio removed permanently · creator-identity privacy · password show/hide · Google/GitHub login
+
+- **Build marker** `/api/health` → `patch20-no-twilio`.
+- **Twilio is gone, permanently.** No environment variables, no server routes, no UI, no docs, no tests:
+  - Deleted: `reminders.py` (phone alarms/wake-up calls), all `/api/reminders/*` routes + scheduler, `/api/admin/twilio` + readiness diagnostics, Twilio provider callbacks, call/SMS channels in `communications.py`, the "Enterprise phone reminders" panel in Voice settings, Call/SMS tabs in the Communications drawer, Twilio readiness panel in Admin → Diagnostics, `TWILIO_*`/`REMINDER_*` environment rows (removed from `RENDER_ENV.txt`), `PHONE-CALLS-SETUP.md`.
+  - **Email is the only outbound channel** (Enterprise/admin, SendGrid, operator-enabled, verified consenting recipient, exact-content review + explicit confirm).
+  - The AI is prompt-locked to this: it must say plainly that calls/SMS/phone alarms are not available — never pretend.
+  - **Remove the Twilio rows from Render → Environment** on next deploy (harmless if left, but they are no longer read).
+- **Creator identity is private even from other admins.** Only the creator's OWN AI session is told who the creator is. Any other session — including other administrators' AIs — is told the creator's identity is confidential and must never reveal/confirm/guess it. The admin user board masks the creator's account (shown as "••••• (creator account)") to every non-creator viewer, and the per-message admin snapshot rides the same mask. Creator status can never be claimed by typing.
+- **Password show/hide:** the login gate, lock screen and account-signup password fields have a 👁 toggle so you can see what you are typing (toggles to hidden when shown).
+- **Username placeholder** no longer shows a real personal handle — it is now `e.g. nova_7x`.
+- **Google / GitHub sign-in — how to make it work (one-time, ~2 min, in YOUR Supabase dashboard):**
+  the app code is complete end-to-end (button → provider → `/oauth` → Supabase session → signed in).
+  It only needs the providers switched ON in the Supabase project (`eyiawcqkdtoyvlssbfmg`):
+  1. **Google:** console.cloud.google.com → APIs & Services → enable *Google Identity API* → Credentials → **Create credentials → OAuth client ID → Web application** → Authorized redirect URI: `https://eyiawcqkdtoyvlssbfmg.supabase.co/auth/callback` → create → copy **Client ID + Client secret**.
+  2. **GitHub:** github.com → Settings → Developer settings → **OAuth Apps → New OAuth App** → Homepage = `https://oracool-ai.onrender.com`, Authorization callback URL = `https://eyiawcqkdtoyvlssbfmg.supabase.co/auth/callback` → Register → generate **Client secret** → copy both.
+  3. Supabase dashboard → **Authentication → Sign In / Providers** → enable **Google** and/or **GitHub**, paste the Client ID + Secret, Save.
+  4. Supabase → **Authentication → URL Configuration** → **Site URL** = `https://oracool-ai.onrender.com` (and add it under Redirect URLs if prompted).
+  The app probes `/auth/v1/settings` every 5 minutes — the buttons start working automatically the moment the providers are ON (no redeploy needed). New sign-ins via Google/GitHub create a normal OraCool account (profile, number, everything) through the existing Supabase profile trigger; the user then sets their username in Settings.
+- **People & Friends on phones** (carried from 19b): member cards stack to two tidy lines, inputs fit 390 px, zero horizontal overflow.
+- **Tests**: `tests/test_patch20.py` (12 tests: no Twilio anywhere, reminder routes gone, creator-identity prompt privacy, admin-board creator masking, password eye toggles, username placeholder, OAuth authorize URL) — suite now **174 tests, all green** (test_reminders removed).
+- Deploy: Render auto-deploys `main`; confirm the marker, then do the 2-minute Supabase provider enable if you want the Google/GitHub buttons live for everyone.

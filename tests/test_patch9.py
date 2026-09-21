@@ -134,27 +134,19 @@ class Patch9Tests(unittest.TestCase):
         with patch.object(s,'_MEDIA_JOBS',{'j':{'email':'a@example.com','status':'done','kind':'video','result':{'ok':True}}}):
             self.assertIn('error',s.media_job_status('b@example.com','j'))
             self.assertEqual(s.media_job_status('a@example.com','j')['status'],'done')
-    def test_all_reminder_routes_deny_authenticated_nonadmin(self):
-        with patch.object(s,'request_identity',return_value='ordinary@example.test'),patch.object(s,'is_admin',return_value=False),patch.object(s,'is_blocked',return_value=False),patch.object(s,'reminder_service') as service:
+    def test_reminder_routes_removed_permanently(self):
+        """Phone-alarm (Twilio) routes are gone: every /api/reminders/* path 404s for everyone."""
+        with patch.object(s,'request_identity',return_value='admin@example.test'),patch.object(s,'is_admin',return_value=True),patch.object(s,'is_blocked',return_value=False):
             server=s.ThreadingHTTPServer(('127.0.0.1',0),s.Handler)
             t=threading.Thread(target=server.serve_forever,daemon=True);t.start()
             try:
                 for suffix in ('state','preview','create','cancel','disconnect','phone/send','phone/verify'):
                     req=urllib.request.Request('http://127.0.0.1:'+str(server.server_port)+'/api/reminders/'+suffix,data=json.dumps({'email':'admin@example.test','admin':True,'confirmed':True}).encode(),headers={'Content-Type':'application/json'})
-                    with self.assertRaises(urllib.error.HTTPError) as caught:urllib.request.urlopen(req,timeout=3)
-                    self.assertEqual(caught.exception.code,403)
-                    self.assertTrue(json.loads(caught.exception.read())['locked'])
-                service.assert_not_called()
-            finally:server.shutdown();server.server_close();t.join()
-    def test_admin_reminder_state_uses_verified_identity(self):
-        with patch.object(s,'request_identity',return_value='admin@example.test'),patch.object(s,'is_admin',return_value=True),patch.object(s,'is_blocked',return_value=False),patch.object(s,'reminder_service') as service:
-            service.return_value.listing.return_value={'alarms':[],'config':{'plan':'enterprise'}}
-            server=s.ThreadingHTTPServer(('127.0.0.1',0),s.Handler)
-            t=threading.Thread(target=server.serve_forever,daemon=True);t.start()
-            try:
-                req=urllib.request.Request('http://127.0.0.1:'+str(server.server_port)+'/api/reminders/state',data=json.dumps({'email':'someone-else@example.test'}).encode(),headers={'Content-Type':'application/json'})
-                with urllib.request.urlopen(req,timeout=3) as r:self.assertEqual(r.status,200)
-                service.return_value.listing.assert_called_once_with('admin@example.test')
+                    try:
+                        urllib.request.urlopen(req,timeout=3)
+                        self.fail(suffix + ' should not exist')
+                    except urllib.error.HTTPError as e:
+                        self.assertEqual(e.code, 404, suffix)
             finally:server.shutdown();server.server_close();t.join()
     def test_comms_all_endpoints_deny_forged_enterprise_and_other_identity(self):
         with patch.object(s,'request_identity',return_value='free@example.test'),patch.object(s,'is_admin',return_value=False),patch.object(s,'is_blocked',return_value=False),patch.object(s,'check_tier',return_value='free'),patch.object(s,'communication_service') as service:
@@ -167,15 +159,14 @@ class Patch9Tests(unittest.TestCase):
                     self.assertEqual(caught.exception.code,403)
                 service.assert_not_called()
             finally:server.shutdown();server.server_close();t.join()
-    def test_enterprise_can_access_reminder_and_comms_using_verified_identity(self):
-        with patch.object(s,'request_identity',return_value='paid@example.test'),patch.object(s,'is_admin',return_value=False),patch.object(s,'is_blocked',return_value=False),patch.object(s,'check_tier',return_value='enterprise'),patch.object(s,'communication_service') as comms,patch.object(s,'reminder_service') as alarms:
-            comms.return_value.listing.return_value={'messages':[]};alarms.return_value.listing.return_value={'alarms':[]}
+    def test_enterprise_can_access_comms_using_verified_identity(self):
+        with patch.object(s,'request_identity',return_value='paid@example.test'),patch.object(s,'is_admin',return_value=False),patch.object(s,'is_blocked',return_value=False),patch.object(s,'check_tier',return_value='enterprise'),patch.object(s,'communication_service') as comms:
+            comms.return_value.listing.return_value={'messages':[]}
             server=s.ThreadingHTTPServer(('127.0.0.1',0),s.Handler);t=threading.Thread(target=server.serve_forever,daemon=True);t.start()
             try:
-                for group in ('reminders','comms'):
-                    req=urllib.request.Request('http://127.0.0.1:'+str(server.server_port)+'/api/'+group+'/state',data=json.dumps({'email':'other@example.test'}).encode(),headers={'Content-Type':'application/json'})
-                    with urllib.request.urlopen(req,timeout=3) as r:self.assertEqual(r.status,200)
-                comms.return_value.listing.assert_called_once_with('paid@example.test');alarms.return_value.listing.assert_called_once_with('paid@example.test')
+                req=urllib.request.Request('http://127.0.0.1:'+str(server.server_port)+'/api/comms/state',data=json.dumps({'email':'other@example.test'}).encode(),headers={'Content-Type':'application/json'})
+                with urllib.request.urlopen(req,timeout=3) as r:self.assertEqual(r.status,200)
+                comms.return_value.listing.assert_called_once_with('paid@example.test')
             finally:server.shutdown();server.server_close();t.join()
     def test_blocked_admin_and_enterprise_cannot_send(self):
         with patch.object(s,'is_blocked',return_value=True),patch.object(s,'is_admin',return_value=True),patch.object(s,'check_tier',return_value='enterprise'):

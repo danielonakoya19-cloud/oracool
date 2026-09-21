@@ -44,7 +44,7 @@ def run(admin):
             elif path == '/api/admin/keys':
                 if not admin:
                     route.fulfill(status=403, content_type='application/json', body=json.dumps({'locked': True})); return
-                d = {'keys': {'OPENAI_API_KEY': True, 'GROQ_API_KEY': True, 'TWILIO_AUTH_TOKEN': False},
+                d = {'keys': {'OPENAI_API_KEY': True, 'GROQ_API_KEY': True, 'SENDGRID_API_KEY': False},
                      'brain': {'openai': True, 'groq': True, 'agnes': False, 'default_provider': 'groq'}}
             elif path == '/api/osint/email': d = {'ok': True, 'email': body.get('email'), 'breaches': []}
             elif path == '/api/chat':
