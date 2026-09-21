@@ -144,9 +144,13 @@ class OAuthWiringTests(unittest.TestCase):
 
 class HealthMarkerTests(unittest.TestCase):
     def test_build_marker(self):
-        # the marker lives in the health endpoint; assert via source
+        # the marker lives in the health endpoint; assert via source.
+        # The exact marker moves with each patch (current: patch21-wan22,
+        # pinned in tests/test_patch21.py) — the Twilio removal itself is
+        # pinned by the other tests in this file.
         src = (ROOT / "server.py").read_text(errors="ignore")
-        self.assertIn('"build": "patch20-no-twilio"', src)
+        self.assertIn('"build": "patch', src)
+        self.assertNotIn("twilio", src.lower().replace("patch20-no-twilio", ""))
 
 
 if __name__ == "__main__":

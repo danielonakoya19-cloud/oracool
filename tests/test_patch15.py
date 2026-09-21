@@ -23,6 +23,7 @@ and the model is mocked. Verifies that
 """
 import importlib.util
 import json
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -627,7 +628,9 @@ class Patch15Tests(unittest.TestCase):
             code, body = _post(port, '/api/admin/moderation', {'token': atok})
             self.assertEqual(code, 200); self.assertEqual(body['stats']['threshold'], 3)
             with urllib.request.urlopen('http://127.0.0.1:%d/api/health' % port, timeout=3) as r:
-                self.assertEqual(json.loads(r.read())['build'], 'patch20-no-twilio')
+                _expect = re.search(r'"build": "(patch[^"]+)"',
+                              (ROOT / "server.py").read_text(errors="ignore")).group(1)
+                self.assertEqual(json.loads(r.read())['build'], _expect)
         finally:
             server.shutdown(); server.server_close(); t.join()
 

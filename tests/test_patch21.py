@@ -44,6 +44,12 @@ class FakeSSE:
         return False
 
 
+class BuildMarkerTests(unittest.TestCase):
+    def test_patch21_marker(self):
+        src = (ROOT / "server.py").read_text(errors="ignore")
+        self.assertIn('"build": "patch21-wan22"', src)
+
+
 class CascadeOrderTests(unittest.TestCase):
     def setUp(self):
         self._keys = dict(server.KEYS)
