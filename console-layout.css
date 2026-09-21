@@ -149,3 +149,28 @@ main{display:flex}
   .wa-file{padding:12px 12px}
   .wa-file span{font-size:14px}
 }
+/* ============ patch19b: People & Friends — tidy on phones ============ */
+.commcompose{width:100%; min-width:0}
+.commcompose input{flex:1 1 auto; min-width:0}
+.commcompose .btn{flex:none; white-space:nowrap}
+.cperson{flex-wrap:wrap; row-gap:8px}
+.cperson>div:nth-child(2){flex:1 1 180px; min-width:0}
+.cperson>div:nth-child(2) b{font-size:14px}
+.cperson .btn{min-height:40px}
+.cperson .muted{word-break:break-word}
+@media(max-width:720px){
+  .cperson{padding:12px}
+  .cperson>div:nth-child(2) b{font-size:15px}
+  .cperson>div:nth-child(2) .muted{font-size:12px}
+  .cperson>div:last-child{width:100%; justify-content:flex-start}
+  .cperson>div:last-child .btn{min-height:44px; padding:0 14px}
+  .commcompose .btn{min-height:44px}
+  .commcompose input{font-size:16px; min-height:44px}
+  #commFriends .cperson, #commPeople .cperson{border-radius:12px}
+}
+/* overflow safety: community panel must never push the page sideways */
+.panelbody{min-width:0}
+#commBody{min-width:0}
+@media(max-width:720px){
+  .panels-stage{overflow-x:hidden}
+}
