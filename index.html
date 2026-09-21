@@ -608,27 +608,58 @@
 </div>
 
 <div id="app" class="hidden">
-  <header>
-    <div class="brand">
+  <!-- ChatGPT-style left sidebar -->
+  <aside class="sidebar" id="sidebar" aria-label="OraCool menu">
+    <div class="sb-brand">
       <div id="hdrReactor"></div>
-      <div>
-        <a class="title" href="/" style="text-decoration:none">ORACOOL AI</a>
-        <div class="sub">Personal Intelligence System</div>
-      </div>
+      <div><div class="sb-title">ORACOOL AI</div><div class="sb-sub">Personal Intelligence</div></div>
     </div>
+    <button class="side-new" id="newChatBtn" title="Start a new chat">＋ New chat</button>
+    <div class="side-label">Menu</div>
+    <nav class="side-nav" id="sideNav">
+      <div class="side-item active" data-v="chat"><span class="sic">💬</span>Chat</div>
+      <div class="side-item" data-v="community" id="communityTab"><span class="sic">👥</span>Community<span class="tabbadge" id="commTabBadge"></span></div>
+      <div class="side-item" data-v="create"><span class="sic">✨</span>Create</div>
+      <div class="side-item" data-v="markets"><span class="sic">📈</span>Markets</div>
+      <div class="side-item" data-v="cases" id="casesTab"><span class="sic">🗂</span>Cases</div>
+      <div class="side-item" data-v="trading"><span class="sic">💹</span>Trading</div>
+      <div class="side-item" data-v="space"><span class="sic">🪐</span>Space</div>
+      <div class="side-item" data-v="intel"><span class="sic">🧭</span>Intel</div>
+      <div class="side-item" data-v="cores"><span class="sic">⚡</span>Cores</div>
+      <div class="side-item" data-v="devices"><span class="sic">🔗</span>Devices</div>
+      <div class="side-item" data-v="code"><span class="sic">💻</span>Code</div>
+      <div class="side-item" data-v="plans"><span class="sic">💎</span>Plans</div>
+      <div class="side-item" data-v="status"><span class="sic">📊</span>Status</div>
+      <div class="side-item" data-v="admin" id="adminTab" style="display:none"><span class="sic">🛡</span>Admin</div>
+      <div class="side-item" data-v="settings"><span class="sic">⚙</span>Settings</div>
+    </nav>
+    <div class="side-label">Chats</div>
+    <div class="sesslist" id="sessList"><div class="muted" style="padding:8px;font-size:11px">Sign in to keep your chat history across devices.</div></div>
+    <div class="sb-foot">
+      <div class="side-user" id="acctChip" title="Account">
+        <span class="avatar" id="acctAvatar">?</span>
+        <div class="su-info"><span class="em" id="acctEmail">Sign in</span><span class="su-plan" id="sbPlan">FREE</span></div>
+        <button class="btn small primary" id="sbUpgrade" title="Plans &amp; upgrade">Upgrade</button>
+      </div>
+      <div class="sb-footnote muted">Your chats sync with this account.</div>
+    </div>
+  </aside>
+  <div class="app-main">
+  <header>
+    <button class="btn ghost side-toggle" id="menuBtn" title="Menu">☰</button>
+    <div class="viewtitle" id="viewTitle">Chat</div>
     <div class="hdr-right">
-      <button class="btn ghost" id="menuBtn" title="Chats — history &amp; new chat" style="padding:5px 11px; font-size:11px; min-height:34px">☰ Chats</button>
       <div class="live"><i></i> LIVE</div>
       <div class="wake" id="wakeBadge" title="Wake word: Hey OraCool"><i></i> WAKE</div>
       <div class="tier" id="tierBadge" title="Your plan">FREE</div>
-      <div class="acct" id="acctChip" title="Account"><span class="avatar" id="acctAvatar">?</span><span class="em" id="acctEmail">Sign in</span></div>
       <button class="btn ghost" id="installBtn" style="display:none; padding:4px 10px; font-size:11px">📲 Install</button>
       <div class="clock"><div class="t" id="clock">--:--:--</div><div class="d" id="date">----------</div></div>
+      <button class="btn ghost" id="lockTab" title="Lock the whole app right now">🔒</button>
     </div>
   </header>
 
   <main>
-    <section class="left">
+    <div class="chatview empty" id="chatView">
       <div class="card chatwrap">
         <div class="reactorhead">
           <div class="orbwrap" id="orbWrap">
@@ -641,44 +672,28 @@
             <div class="rsub">Voice · Text · Intel · Markets · Devices</div>
           </div>
         </div>
+        <div class="chatgreet" id="chatGreet">
+          <div class="cg-orb">🌀</div>
+          <h2>Hey <span id="cgName">there</span> 👋</h2>
+          <p>What shall we make happen today?</p>
+        </div>
         <div class="chat" id="chat"></div>
         <button class="jumpbtn" id="jumpBtn" title="Jump to the latest message" aria-label="Jump to latest messages">↓</button>
         <canvas id="wave" width="1200" height="44"></canvas>
         <div class="chiprow" id="chips"></div>
         <div id="coreChip" style="display:none;margin:4px 10px 0;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--cyan2)"></div>
         <div id="fileChips" style="display:none;flex-wrap:wrap;gap:2px;margin:4px 10px 0"></div>
-        <div class="inputbar">
+        <div class="gpt-input">
           <button class="iconbtn" id="attachBtn" title="Attach a file (PDF, Word, Excel, text, code…)">📎</button>
-          <button class="iconbtn" id="micBtn" title="Speak to OraCool">🎙️</button>
           <input type="text" class="chatinput" id="input" placeholder="Ask OraCool anything…" autocomplete="off">
-          <button class="sendbtn" id="sendBtn">Send</button>
+          <button class="iconbtn" id="micBtn" title="Speak to OraCool">🎙️</button>
+          <button class="gpt-send" id="sendBtn" title="Send">↑</button>
           <input type="file" id="fileInput" style="display:none" multiple>
         </div>
       </div>
-    </section>
-
-    <aside class="right card">
-      <div class="railwrap">
-      <nav class="sidenav" aria-label="OraCool panels">
-        <div class="snav active" data-p="status" title="Status">▣</div>
-        <div class="snav" data-p="community" id="communityTab" title="Community — chat, friends, calls">💬<span class="tabbadge" id="commTabBadge"></span></div>
-        <div class="snav" data-p="intel" title="Intel">🧭</div>
-        <div class="snav" data-p="cases" id="casesTab" title="Cases & evidence — PRO">🗂</div>
-        <div class="snav" data-p="markets" title="Markets">📈</div>
-        <div class="snav" data-p="trading" title="Trading desk">💹</div>
-        <div class="snav" data-p="space" title="Space">🪐</div>
-        <div class="snav" data-p="create" title="Create — images & video">✨</div>
-        <div class="snav" data-p="cores" title="Cores">⚡</div>
-        <div class="snav" data-p="plans" title="Plans">💎</div>
-        <div class="snav" data-p="devices" title="Devices & connectors">🔗</div>
-        <div class="snav" data-p="code" title="Code console">💻</div>
-        <div class="snav" data-p="account" title="Account">👤</div>
-        <div class="snav" data-p="admin" id="adminTab" title="Admin console" style="display:none">🛡</div>
-        <div class="snav" data-p="settings" title="Settings">⚙</div>
-        <div class="snav" id="lockTab" title="Lock the whole app right now">🔒</div>
-      </nav>
-      <div class="panels">
-      <div class="panelbody active" id="p-status"></div>
+    </div>
+      <div class="panels-stage" id="panelStage">
+      <div class="panelbody" id="p-status"></div>
       <div class="panelbody" id="p-community"></div>
       <div class="panelbody" id="p-intel"></div>
       <div class="panelbody" id="p-cases"></div>
@@ -694,23 +709,11 @@
       <div class="panelbody" id="p-admin"></div>
       <div class="panelbody" id="p-settings"></div>
       </div>
-    </aside>
-  </main>
+    </main>
+  </div>
 </div>
 
-<!-- chat drawer: history + new chat -->
-<div class="scrim" id="drawerScrim"></div>
-<aside class="drawer" id="chatDrawer" aria-label="Chat history">
-  <div class="drawerhead">
-    <b style="font-size:13px">CHATS</b>
-    <div class="row" style="gap:6px">
-      <button class="btn primary small" id="newChatBtn" style="min-height:34px">+ New chat</button>
-      <button class="btn ghost small" id="drawerClose" style="min-height:34px">×</button>
-    </div>
-  </div>
-  <div class="sesslist" id="sessList"><div class="muted" style="padding:10px">Loading…</div></div>
-  <div class="drawerfoot muted" id="sessFoot">History follows your account — sign in to sync across devices.</div>
-</aside>
+
 
 <!-- upgrade modal -->
 <div class="modal" id="upgradeModal">
@@ -1054,12 +1057,21 @@ function updateTier(){
   else { b.textContent = 'FREE'; b.className = 'tier'; }
   // lock badges on the tabs — a plan never shows features above itself
   try{
-    document.querySelectorAll('.tab[data-p]').forEach(tb=>{
-      if(tb.dataset.lbl===undefined) tb.dataset.lbl=tb.textContent.trim();
-      const need=(typeof TAB_TIER!=='undefined')?TAB_TIER[tb.dataset.p]:null;
-      const locked = need && !tierGte(need);
-      tb.textContent = tb.dataset.lbl + (locked? ' 🔒' : '');
-      tb.title = locked ? ('Locked — unlocks on '+need.toUpperCase()) : (tb.dataset.lbl);
+    document.querySelectorAll('#sideNav .side-item[data-v]').forEach(tb=>{
+      const need=(typeof TAB_TIER!=='undefined')?TAB_TIER[tb.dataset.v]:null;
+      const locked = !!(need && !tierGte(need));
+      const had = tb.dataset.locked==='1';
+      if(locked && !had){
+        const badge=tb.querySelector('.tabbadge');
+        if(badge) badge.insertAdjacentText('beforebegin',' 🔒'); else tb.insertAdjacentText('beforeend',' 🔒');
+        tb.dataset.locked='1';
+      } else if(!locked && had){
+        const nodes=Array.from(tb.childNodes);
+        const t=nodes.find(n=>n.nodeType===3 && n.nodeValue.indexOf('🔒')>=0);
+        if(t) t.nodeValue=t.nodeValue.replace(' 🔒','');
+        tb.dataset.locked='0';
+      }
+      if(locked) tb.title='Locked — unlocks on '+need.toUpperCase();
       tb.style.opacity = locked ? '.72' : '';
     });
   }catch(e){}
@@ -1199,7 +1211,24 @@ const chat=$('#chat');
 const history=[];
 const MAXH=30;
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function scrollChat(){ chat.scrollTop=chat.scrollHeight; try{ updateJump(); }catch(e){} }
+function updateGreet(){
+  try{
+    const cv=document.getElementById('chatView');
+    if(cv) cv.classList.toggle('empty', chat && chat.children.length===0);
+  }catch(e){}
+}
+function updateGreetName(){
+  try{
+    const g=document.getElementById('cgName'); if(!g) return;
+    let nm='there';
+    if(COMM && COMM.me && COMM.me.profile && COMM.me.profile.username) nm=COMM.me.profile.username;
+    else if(session && session.user && session.user.email) nm=session.user.email.split('@')[0];
+    else if(myEmail()) nm=myEmail().split('@')[0];
+    g.textContent=nm;
+  }catch(e){}
+}
+function scrollChat(){
+  updateGreet(); chat.scrollTop=chat.scrollHeight; try{ updateJump(); }catch(e){} }
 function _cleanReply(t){
   // never show agent/tool-call markup or internal telemetry to a user
   if(!t) return t||'';
@@ -1343,16 +1372,12 @@ async function openSession(id){
 function newChat(){
   setSessionId(''); chat.innerHTML=''; history.length=0;
   try{ localStorage.removeItem(chatKey()); }catch(e){}
-  addSystemNote('🆕 <b>New chat</b> started — previous conversations are in ☰ Chats.');
+  addSystemNote('🆕 <b>New chat</b> started — previous conversations are in the Chats list on the left.');
   ensureSession().then(()=>loadSessions());
-  try{ closeDrawer(); }catch(e){}
+  try{ showView('chat'); closeDrawer(); }catch(e){}
 }
-function openDrawer(){ $('#chatDrawer').classList.add('open'); $('#drawerScrim').classList.add('open'); loadSessions(); }
-function closeDrawer(){ $('#chatDrawer').classList.remove('open'); $('#drawerScrim').classList.remove('open'); }
-$('#menuBtn').onclick=openDrawer;
-$('#drawerClose').onclick=closeDrawer;
-$('#drawerScrim').onclick=closeDrawer;
-$('#newChatBtn').onclick=newChat;
+function openDrawer(){ loadSessions(); if(window.innerWidth<=1100) document.getElementById('app').classList.add('menu-open'); }
+function closeDrawer(){ document.getElementById('app').classList.remove('menu-open'); }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
 
 /* ---------- jump-to-latest arrow ---------- */
@@ -1835,7 +1860,7 @@ function waDateLabel(t){
   if(day(d)===day(y)) return 'Yesterday';
   return d.toLocaleDateString([], {day:'numeric', month:'short', year:d.getFullYear()===now.getFullYear()?undefined:'numeric'});
 }
-function commActive(){ const t=document.querySelector('.snav.active'); return !!(t && t.dataset.p==='community') && !isBlockedSession(); }
+function commActive(){ return UI.view==='community' && !isBlockedSession(); }
 function fmtCommTime(t){ try{ const sx=String(t||''); const d=/T/.test(sx)?new Date(sx):new Date(sx.replace(' ','T')+'Z'); if(isNaN(d)) return sx||''; const now=new Date(); const same=d.toDateString()===now.toDateString(); return (same?'':d.toLocaleDateString([], {month:'short',day:'numeric'})+' ')+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }catch(e){ return t||''; } }
 function updateCommBadge(n){ const b=$('#commTabBadge'); if(!b) return; n=Number(n)||0; b.textContent=n>99?'99+':String(n); b.classList.toggle('on', n>0); const d=$('#commDmBadge'); if(d) d.innerHTML=n>0?`<span class="cunread">${n}</span>`:''; }
 async function renderCommunity(){
@@ -2377,30 +2402,46 @@ function tabLockPanel(p, need){
     <button class="btn gold" id="tabUp_${p}" style="margin-top:10px">⚡ Unlock ${need.toUpperCase()}</button>`;
   const b=$('#tabUp_'+p); if(b) b.onclick=()=>openUpgrade(need);
 }
-document.querySelectorAll('.snav').forEach(t=>{
-  t.onclick=()=>{
-    if(!t.dataset.p){ if(t.id==='lockTab') showLockScreen(); return; }
-    const need=TAB_TIER[t.dataset.p];
-    const locked=!!(need && !tierGte(need));
-    document.querySelectorAll('.snav').forEach(x=>{ x.classList.remove('active'); x.classList.toggle('locked', false); });
-    document.querySelectorAll('.panelbody').forEach(x=>x.classList.remove('active'));
-    t.classList.add('active'); $('#p-'+t.dataset.p).classList.add('active');
-    if(locked){ t.classList.add('locked'); tabLockPanel(t.dataset.p, need); return; }   // plan lock — nothing above your tier opens
-    if(t.dataset.p==='status')renderStatus();
-    if(t.dataset.p==='community')renderCommunity();
-    if(t.dataset.p==='cases')renderCases();
-    if(t.dataset.p==='devices')renderDevices();
-    if(t.dataset.p==='code')renderCode();
-    if(t.dataset.p==='account')renderAccount();
-    if(t.dataset.p==='settings')renderSettings();
-    if(t.dataset.p==='trading'){ renderTrading(); refreshTrading(); }
-    if(t.dataset.p==='space')renderSpace();
-    if(t.dataset.p==='create')renderCreate();
-    if(t.dataset.p==='cores')renderCores();
-    if(t.dataset.p==='plans')renderPlans();
-    if(t.dataset.p==='admin')renderAdmin();
-  };
-});
+/* ---------- ChatGPT-style navigation: sidebar drives chat + full-width panels ---------- */
+const UI={view:'chat'};
+const VIEW_TITLES={chat:'Chat', community:'Community', create:'Create', markets:'Markets', cases:'Cases & evidence', trading:'Trading desk', space:'Space', intel:'Intel', cores:'Cores', devices:'Devices & connectors', code:'Code console', plans:'Plans', status:'Status', admin:'Admin console', settings:'Settings'};
+function showView(v, skipRender){
+  UI.view = (v==='chat') ? 'chat' : v;
+  document.querySelectorAll('#sideNav .side-item').forEach(x=>x.classList.toggle('active', x.dataset.v===v));
+  const app=document.getElementById('app'); if(app) app.classList.toggle('view-panel', v!=='chat');
+  const vt=document.getElementById('viewTitle'); if(vt) vt.textContent = VIEW_TITLES[v] || 'OraCool';
+  document.querySelectorAll('.panelbody').forEach(x=>x.classList.remove('active'));
+  const box = (v!=='chat') ? document.getElementById('p-'+v) : null;
+  if(box){
+    box.classList.add('active');
+    const need = (typeof TAB_TIER!=='undefined') ? TAB_TIER[v] : null;
+    if(need && !tierGte(need)){ tabLockPanel(v, need); }
+    else if(!skipRender){
+      if(v==='status')renderStatus();
+      else if(v==='community')renderCommunity();
+      else if(v==='cases')renderCases();
+      else if(v==='devices')renderDevices();
+      else if(v==='code')renderCode();
+      else if(v==='account')renderAccount();
+      else if(v==='settings')renderSettings();
+      else if(v==='trading'){ renderTrading(); refreshTrading(); }
+      else if(v==='space')renderSpace();
+      else if(v==='create')renderCreate();
+      else if(v==='cores')renderCores();
+      else if(v==='plans')renderPlans();
+      else if(v==='admin')renderAdmin();
+      else if(v==='intel')renderIntel();
+      else if(v==='markets')renderMarkets();
+    }
+  }
+  if(v==='chat'){ try{ const i=document.getElementById('input'); if(i && !isBlockedSession()) i.focus(); }catch(e){} }
+  if(window.innerWidth<=1100) document.getElementById('app').classList.remove('menu-open');
+}
+document.querySelectorAll('#sideNav .side-item').forEach(t=>{ t.onclick=()=>showView(t.dataset.v); });
+const _lockTab=document.getElementById('lockTab'); if(_lockTab) _lockTab.onclick=showLockScreen;
+const _menuBtn=document.getElementById('menuBtn'); if(_menuBtn) _menuBtn.onclick=()=>{ document.getElementById('app').classList.toggle('menu-open'); loadSessions(); };
+const _sbUpgrade=document.getElementById('sbUpgrade'); if(_sbUpgrade) _sbUpgrade.onclick=(e)=>{ e.stopPropagation(); showView('plans'); };
+const _sbNew=document.getElementById('newChatBtn'); if(_sbNew) _sbNew.onclick=()=>newChat();
 
 /* ---------- status ---------- */
 function renderStatus(){
@@ -3051,7 +3092,7 @@ async function renderFilesAgent(){
 }
 
 function startCamera(){
-  const t=document.querySelector('.snav[data-p="devices"]'); if(t) t.click();
+  showView('devices');
   setTimeout(()=>{ const b=$('#camOpen'); if(b) b.click(); }, 200);
 }
 async function scanDevices(){
@@ -3139,7 +3180,9 @@ async function ghRate(){
 
 /* ---------- account (Supabase) ---------- */
 function renderAcctChip(){
-  const chip=$('#acctChip'), av=$('#acctAvatar'), em=$('#acctEmail');
+  const chip=$('#acctChip'), av=$('#acctAvatar'), em=$('#acctEmail'), pl=$('#sbPlan');
+  if(pl) pl.textContent=planLabel();
+  updateGreetName();
   if(!chip) return;
   if(session && session.user){
     const email=session.user.email||'user';
@@ -3235,7 +3278,7 @@ function renderAccount(){
     } else { const m=(r.data&&(r.data.msg||r.data.error_description))||r.error||'login failed'; $('#aOut').innerHTML=`<div class="errbox">${escapeHtml(m)}</div>`; }
   };
 }
-$('#acctChip').onclick=()=>{ document.querySelector('.snav[data-p="account"]').click(); };
+document.addEventListener('click', e=>{ const chip=e.target.closest && e.target.closest('#acctChip'); if(chip && !e.target.closest('#sbUpgrade')) showView('account'); });
 
 /* ---------- admin panel ---------- */
 async function renderAdmin(){
@@ -3612,7 +3655,7 @@ async function refreshTrading(){
   $('#tAutoLbl').textContent=au.enabled? 'ON (paper)' : 'OFF';
   $('#tAutoLog').innerHTML=(au.log||[]).map(l=>`<div class="logline"><span class="ts">${l.ts}</span> ${escapeHtml(l.msg)}</div>`).join('');
 }
-setInterval(()=>{ try{ const tb=document.querySelector('.snav.active'); if(tb && tb.dataset.p==='trading' && session) refreshTrading(); }catch(e){} }, 10000);
+setInterval(()=>{ try{ if(typeof UI!=='undefined' && UI.view==='trading' && session) refreshTrading(); }catch(e){} }, 10000);
 function drawChart(hist, initial, liveEquity){
   const c=$('#tChart'); if(!c) return;
   const ctx=c.getContext('2d');
@@ -3883,7 +3926,7 @@ function openUpgrade(plan){
 }
 $('#upgradeClose').onclick=()=>$('#upgradeModal').classList.remove('open');
 $('#upgradeModal').addEventListener('click',e=>{ if(e.target.id==='upgradeModal')$('#upgradeModal').classList.remove('open'); });
-$('#tierBadge').onclick=()=>{ const t=document.querySelector('.snav[data-p="plans"]'); if(t) t.click(); };
+const _tierB=document.getElementById('tierBadge'); if(_tierB) _tierB.onclick=()=>showView('plans');
 /* 24h free trial removed by the creator: PRO never unlocks without payment. */
 $('#payBtn').onclick=async()=>{
   const email=$('#upEmail').value.trim();
@@ -4509,6 +4552,7 @@ async function finishAuth(){
   setOrbStatus('online');
   const restored=await restoreAccountChat();
   if(!restored) greeting();
+  try{ showView('chat'); loadSessions(); updateGreetName(); }catch(e){}
   setTimeout(()=>{ const i=$('#input'); if(i) i.focus(); }, 350);
   /* proactive speech now only fires after 30 minutes of inactivity */
 }
