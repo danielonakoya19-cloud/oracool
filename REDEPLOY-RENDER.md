@@ -427,5 +427,18 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
   4. Supabase → **Authentication → URL Configuration** → **Site URL** = `https://oracool-ai.onrender.com` (and add it under Redirect URLs if prompted).
   The app probes `/auth/v1/settings` every 5 minutes — the buttons start working automatically the moment the providers are ON (no redeploy needed). New sign-ins via Google/GitHub create a normal OraCool account (profile, number, everything) through the existing Supabase profile trigger; the user then sets their username in Settings.
 - **People & Friends on phones** (carried from 19b): member cards stack to two tidy lines, inputs fit 390 px, zero horizontal overflow.
-- **Tests**: `tests/test_patch20.py` (12 tests: no Twilio anywhere, reminder routes gone, creator-identity prompt privacy, admin-board creator masking, password eye toggles, username placeholder, OAuth authorize URL) — suite now **174 tests, all green** (test_reminders removed).
+- **Tests**: `tests/test_patch20.py` (12 tests: no Twilio anywhere, reminder routes gone, creator-identity prompt privacy, admin-board creator masking, password eye toggles, username placeholder, OAuth authorize URL) — suite was 126 tests green at the time (test_reminders removed; the count grows with every patch — canonical run is the 10 listed `tests.test_*` modules).
 - Deploy: Render auto-deploys `main`; confirm the marker, then do the 2-minute Supabase provider enable if you want the Google/GitHub buttons live for everyone.
+
+---
+
+## Patch 21 — Wan 2.2 video generation (Hugging Face) · oracoolai.com verified live
+
+- **Build marker** `/api/health` → `patch21-wan22`.
+- **Video generation now uses Hugging Face's Wan 2.2 models** (the three you linked — `Wan-AI/Wan2.2-T2V-A14B`, `Wan2.2-I2V-A14B`, `Wan2.2-TI2V-5B`):
+  - **With a free HF token** (optional, ~2 min): set `HF_TOKEN` (huggingface.co → Settings → Access Tokens) and video goes through Hugging Face's Inference Providers using `Wan-AI/Wan2.2-T2V-A14B` — true text-to-video on the exact model. The token is an empty optional line already in `RENDER_ENV.txt`.
+  - **Without any token (free, works right away):** the server health-probes the live public Wan 2.2 I2V-14B Lightning spaces on Hugging Face (`tmtanu/wan2.2_14b_i2v_480p_lightning`, `Saravutw/WAN2.2_I2V_LIGHTNING_4-8step_custom`), picks the healthiest, renders a first frame (CVRON/Agnes image engines) and animates it into a real .mp4 with the Wan 2.2 I2V-14B model. Unhealthy spaces are skipped automatically and the failure reason is stated honestly in chat.
+  - New cascade order: Agnes free → **Wan 2.2 (HF router / free spaces)** → HiAPI premium → CVRON wan22. The old "top up hiapi.ai / nexawapi.com" error text is gone.
+- **oracoolai.com is live** (registered 2026-09-21 via NameSilo; HTTPS 200; serves the OraCool landing page; HTTP→HTTPS redirect). Note: the message spelled it "oraccolai.com" (double-c) — that spelling is not a registered domain; the live one is **oracoolai.com**.
+- **Tests**: `tests/test_patch21.py` (14 tests: cascade order, router token flow incl. 202→poll, space health probing, SSE result parsing, honest final error) — canonical 11-module suite **162 tests, all green**.
+- Deploy: Render auto-deploys `main`; confirm the `patch21-wan22` marker. If you want the direct Wan 2.2 text-to-video route, add `HF_TOKEN` in Render → Environment and redeploy.

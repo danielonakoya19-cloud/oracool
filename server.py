@@ -19,6 +19,7 @@ import json
 import os
 import re
 import random
+import secrets
 import ssl
 import sys
 import threading
@@ -85,7 +86,7 @@ def _load_keys():
                  "JWT_SECRET", "ENCRYPTION_KEY", "ENCRYPTION_IV",
                  "ATLOS_MERCHANT_ID", "ATLOS_API_SECRET", "ATLOS_BASE", "CRYPTO_WALLET_EVM",
                  "AGNES_API_KEY", "AGNES_BASE", "AGNES_MODEL", "AGNES_IMAGE_MODEL",
-                 "AGNES_VIDEO_MODEL", "HIA_VIDEO_AUDIO_MODEL",
+                 "AGNES_VIDEO_MODEL", "HIA_VIDEO_AUDIO_MODEL", "HF_TOKEN",
                  "PUBLIC_BASE_URL", "COMMUNICATIONS_ENABLED", "SENDGRID_ENABLED", "SENDGRID_API_KEY", "SENDGRID_FROM_EMAIL", "KAIROS_API_KEY", "KAIROS_APP_ID"):
         env = os.environ.get(name)
         if not env:
@@ -2382,6 +2383,171 @@ def _cvron_video(prompt, attempts=2):
     return {"error": "cvron wan22: " + last_err}
 
 
+# ------------------------------------------------------------ HF Wan 2.2 video
+# Hugging Face's Wan 2.2 models (the ones requested by the owner):
+#   Wan-AI/Wan2.2-T2V-A14B  (text-to-video, via HF Inference Providers — needs free HF_TOKEN)
+#   Wan-AI/Wan2.2-I2V-A14B  (image-to-video, same router API)
+#   Wan-AI/Wan2.2-TI2V-5B   (unified text+image-to-video, same router API)
+# Free no-token fallback: live public Gradio spaces running the Wan2.2 I2V-14B
+# Lightning 480p model (auto-failover; each is health-probed via /monitoring).
+HF_ROUTER = "https://router.huggingface.co"
+HF_WAN22_SPACES = [
+    ("tmtanu", "https://tmtanu-wan2-2-14b-i2v-480p-lightning-nsfw-diffusers.hf.space"),
+    ("saravutw", "https://saravutw-wan2-2-i2v-lightning-4-8step-custom.hf.space"),
+]
+
+def _gen_dir():
+    d = os.path.join(BASE_DIR, "data", "generated")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _hf_router_video(model, prompt, image_b64=None, timeout=600):
+    """HF Inference Providers (routed, billed to the free HF account).
+    T2V with Wan2.2-T2V-A14B, I2V with Wan2.2-I2V-A14B / TI2V-5B."""
+    tok = key("HF_TOKEN")
+    if not tok:
+        return {"error": "no HF_TOKEN"}
+    body = {"inputs": prompt[:500], "parameters": {}}
+    if image_b64:
+        body["inputs"] = [image_b64, prompt[:500]]
+    try:
+        st, raw, ct = http_fetch(HF_ROUTER + "/v1/videos", method="POST", timeout=timeout,
+                                 headers={"Authorization": "Bearer " + tok,
+                                          "Content-Type": "application/json",
+                                          "X-Wait-For-Model": "true"},
+                                 json_body=body)
+        if st in (200, 201) and raw and (ct.startswith("video/") or len(raw) > 20000):
+            fn = os.path.join(_gen_dir(), "hf-" + secrets.token_hex(8) + ".mp4")
+            with open(fn, "wb") as f:
+                f.write(raw)
+            return {"ok": True, "urls": ["/generated/" + os.path.basename(fn)]}
+        if st == 202:
+            job = (json.loads(raw).get("id") or "") if raw else ""
+            if not job:
+                return {"error": "router: no job id"}
+            for _ in range(40):
+                time.sleep(12)
+                s2, r2, c2 = http_fetch(HF_ROUTER + "/v1/videos/" + job, method="GET", timeout=30,
+                                        headers={"Authorization": "Bearer " + tok})
+                if s2 == 200 and r2 and (c2.startswith("video/") or len(r2) > 20000):
+                    fn = os.path.join(_gen_dir(), "hf-" + secrets.token_hex(8) + ".mp4")
+                    with open(fn, "wb") as f:
+                        f.write(r2)
+                    return {"ok": True, "urls": ["/generated/" + os.path.basename(fn)]}
+                if s2 in (200,) and r2:
+                    try:
+                        d2 = json.loads(r2)
+                    except Exception:
+                        continue
+                    if d2.get("status") == "failed":
+                        return {"error": "router job failed: " + str(d2.get("failure") or d2)[:120]}
+                elif s2 >= 400:
+                    return {"error": "router poll HTTP %s" % s2}
+            return {"error": "router job timed out"}
+        try:
+            d = json.loads(raw) if raw else {}
+        except Exception:
+            d = {}
+        return {"error": "router HTTP %s: %s" % (st, str(d.get("error") or d.get("detail") or raw[:100])[:140])}
+    except Exception as e:
+        return {"error": "router: " + str(e)[:120]}
+
+def _hf_space_health(base):
+    """/monitoring/summary — use a space only when its recent success rate is usable."""
+    try:
+        _, raw, _ = http_fetch(base + "/monitoring/summary", timeout=15)
+        d = json.loads(raw)
+        for f in (d.get("functions") or {}).values():
+            if f.get("total_requests", 0) >= 10:
+                return float(f.get("success_rate") or 0)
+    except Exception:
+        pass
+    return 0.0
+
+def _hf_space_video(base, prompt, image_url, timeout=720):
+    """Gradio 6 space: upload frame -> generate_video -> SSE poll.
+    App family of the official Wan2.2 I2V lightning demos."""
+    try:
+        with urllib.request.urlopen(image_url, timeout=60) as r:
+            img_bytes = r.read()
+    except Exception as e:
+        return {"error": "frame download failed: " + str(e)[:100]}
+    boundary = "----oracool" + secrets.token_hex(12)
+    body = ("--" + boundary + "\r\nContent-Disposition: form-data; name=\"files\"; filename=\"frame.jpg\"\r\n"
+            "Content-Type: image/jpeg\r\n\r\n").encode() + img_bytes + ("\r\n--" + boundary + "--\r\n").encode()
+    try:
+        req = urllib.request.Request(base + "/gradio_api/upload", data=body,
+                                     headers={"Content-Type": "multipart/form-data; boundary=" + boundary}, method="POST")
+        with urllib.request.urlopen(req, timeout=120) as r:
+            up = json.loads(r.read())
+        p = up[0] if isinstance(up, list) and up else up
+        data = [p, None, prompt[:400], 6, "", 3.5, 1.0, 1.0, 42, True, 6,
+                "FlowMatchEulerDiscrete", 3.0, 16, True, True]
+        req = urllib.request.Request(base + "/gradio_api/call/generate_video",
+                                     data=json.dumps({"data": data}).encode(),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=120) as r:
+            eid = json.loads(r.read()).get("event_id")
+        if not eid:
+            return {"error": "space: no event id"}
+        resp = urllib.request.urlopen(base + "/gradio_api/call/generate_video/" + eid, timeout=timeout)
+        ev = ""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            line = resp.readline()
+            if not line:
+                continue
+            line = line.decode(errors="replace").rstrip()
+            if line.startswith("event:"):
+                ev = line[6:].strip()
+            elif line.startswith("data:") and ev in ("complete", "error"):
+                payload = line[5:].strip()
+                if ev == "error":
+                    return {"error": "space: job failed (space unhealthy right now)"}
+                try:
+                    out = (json.loads(payload).get("data") or [])
+                except Exception:
+                    return {"error": "space: bad response"}
+                for comp in out[:2]:
+                    if isinstance(comp, dict) and comp.get("url"):
+                        u = comp["url"]
+                        return {"ok": True, "urls": [(base + u) if u.startswith("/") else u]}
+                return {"error": "space: no video in result"}
+        return {"error": "space: timed out"}
+    except Exception as e:
+        return {"error": "space: " + str(e)[:120]}
+
+def _hf_wan22_video(prompt, image_url=None):
+    """Wan 2.2 generation — HF Inference Providers first (when HF_TOKEN set),
+    then the live public Wan2.2 I2V spaces (free, auto-failover)."""
+    failures = []
+    r = _hf_router_video("Wan-AI/Wan2.2-T2V-A14B", prompt)
+    if r.get("ok"):
+        return {**r, "model": "Wan-AI/Wan2.2-T2V-A14B", "via": "HF Inference Providers"}
+    if r.get("error") and r["error"] != "no HF_TOKEN":
+        failures.append("HF-router: " + r["error"][:100])
+    for name, base in HF_WAN22_SPACES:
+        try:
+            health = _hf_space_health(base)
+            if health < 0.35:
+                failures.append(name + ": space unhealthy (" + str(round(health * 100)) + "% recent success)")
+                continue
+            img = image_url
+            if not img:
+                im = _cvron_image(prompt)
+                if im.get("ok"):
+                    img = im["urls"][0]
+                else:
+                    failures.append(name + ": frame failed (" + str(im.get("error"))[:80] + ")")
+                    continue
+            v = _hf_space_video(base, prompt, img)
+            if v.get("ok"):
+                return {**v, "model": "Wan-AI/Wan2.2-I2V-A14B (Lightning 480p)", "via": "HF Space " + name}
+            failures.append(name + ": " + str(v.get("error"))[:100])
+        except Exception as e:
+            failures.append(name + ": " + str(e)[:100])
+    return {"error": "Wan2.2: " + " | ".join(failures) if failures else "Wan2.2: no engine available"}
+
 AGNES_BASE = "https://apihub.agnes-ai.com/v1"
 
 
@@ -2551,8 +2717,9 @@ def gen_image(prompt, aspect_ratio="1:1"):
 
 
 def gen_video(prompt, duration=None, want_audio=False):
-    """Text-to-video cascade: HiAPI (premium) → CVRON free (flux frame + WAN-22
-    animation). Errors are surfaced honestly with the exact fix."""
+    """Text-to-video cascade: Agnes free → Hugging Face Wan 2.2 (router with a
+    free HF token, else the live public Wan2.2 I2V-14B Lightning spaces) →
+    HiAPI (premium) → CVRON free WAN-22. Errors are surfaced honestly."""
     prompt = (prompt or "").strip()
     if not prompt:
         return {"error": "Describe the video you want, e.g. 'a drone flying over a rainforest'."}
@@ -2569,6 +2736,17 @@ def gen_video(prompt, duration=None, want_audio=False):
                     "note": "Free Agnes engine — silent clip. Ask with 'sound' to route to an audio model once HiAPI has credits."}
         if ag.get("error") and ag["error"] != "no key":
             failures.append("Agnes: " + str(ag["error"])[:130])
+        # Wan 2.2 (the owner-requested models): HF Inference Providers when a
+        # free HF token is set, otherwise the live public Wan2.2 I2V spaces.
+        hf = _hf_wan22_video(prompt)
+        if hf.get("ok"):
+            return {"ok": True, "provider": "hf-wan22", "model": hf.get("model", "Wan2.2"),
+                    "via": hf.get("via", ""), "prompt": prompt, "videos": hf["urls"],
+                    "audio": False,
+                    "note": "Generated with Hugging Face Wan 2.2 (" + str(hf.get("via") or "") + "). "
+                            "Silent clip — ask with 'sound' for an audio model."}
+        if hf.get("error"):
+            failures.append("Wan2.2: " + str(hf["error"])[:160])
     k = key("HIA_API_KEY")
     if k:
         if want_audio:
@@ -2619,8 +2797,8 @@ def gen_video(prompt, duration=None, want_audio=False):
         if notes:
             out["note"] = " ".join(notes)
         return out
-    return {"error": "Video generation unavailable — " + " | ".join(failures + [cv.get("error", "cvron failed")])
-            + ". If the balance is empty, top up at hiapi.ai or nexawapi.com and premium video activates instantly."}
+    return {"error": "Video engines are down right now (" + " | ".join(failures + [cv.get("error", "cvron failed")])
+            + "). Please try again in a few minutes — the free Wan 2.2 and Agnes engines retry automatically."}
 
 
 # ---------------------------------------------------------------- dark-web OSINT
@@ -4037,7 +4215,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch20-no-twilio",
+        "build": "patch21-wan22",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6826,7 +7004,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch20-no-twilio",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch21-wan22",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
