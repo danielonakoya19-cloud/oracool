@@ -24,6 +24,7 @@ import ssl
 import sys
 import threading
 import time
+import shutil
 import struct
 import urllib.request
 import urllib.parse
@@ -2720,7 +2721,49 @@ def gen_image(prompt, aspect_ratio="1:1"):
     return {"error": "Image generation unavailable — " + " | ".join(failures + ["free engines failed"])}
 
 
-def gen_video(prompt, duration=None, want_audio=False):
+def _tts_narration(text):
+    """Free neural TTS (edge-tts, no key) → /generated/<id>.mp3 or None."""
+    try:
+        import asyncio
+        import edge_tts
+        fn = os.path.join(_gen_dir(), "tts-" + secrets.token_hex(6) + ".mp3")
+        for voice in ("en-NG-AbeoNeural", "en-NG-EzinneNeural", "en-US-ChristopherNeural"):
+            try:
+                async def _run(v=voice):
+                    c = edge_tts.Communicate(text[:420], v)
+                    await c.save(fn)
+                asyncio.run(_run())
+                if os.path.exists(fn) and os.path.getsize(fn) > 1500:
+                    return "/generated/" + os.path.basename(fn)
+            except Exception:
+                continue
+    except Exception as e:
+        print("TTS narration failed:", str(e)[:140])
+    return None
+
+def _mux_video_audio(video_url, audio_url):
+    """Mux the narration into the silent clip using the bundled static ffmpeg
+    (imageio-ffmpeg ships the binary — no apt needed). Returns /generated/<id>.mp4."""
+    try:
+        import subprocess
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        def _local(u):
+            return os.path.join(DATA_DIR, "generated", os.path.basename(u))
+        vf, af = _local(video_url), _local(audio_url)
+        if not (os.path.exists(vf) and os.path.exists(af)):
+            return None
+        out = os.path.join(_gen_dir(), "va-" + secrets.token_hex(6) + ".mp4")
+        subprocess.run([exe, "-y", "-i", vf, "-i", af,
+                        "-c:v", "copy", "-c:a", "aac", "-shortest", out],
+                       check=True, timeout=240, capture_output=True)
+        if os.path.exists(out) and os.path.getsize(out) > 10000:
+            return "/generated/" + os.path.basename(out)
+    except Exception as e:
+        print("video+audio mux failed:", str(e)[:140])
+    return None
+
+def _gen_video_raw(prompt, duration=None, want_audio=False):
     """Text-to-video cascade: Agnes free → Hugging Face Wan 2.2 (router with a
     free HF token, else the live public Wan2.2 I2V-14B Lightning spaces) →
     HiAPI (premium) → CVRON free WAN-22. Errors are surfaced honestly."""
@@ -2803,6 +2846,42 @@ def gen_video(prompt, duration=None, want_audio=False):
         return out
     return {"error": "Video engines are down right now (" + " | ".join(failures + [cv.get("error", "cvron failed")])
             + "). Please try again in a few minutes — the free Wan 2.2 and Agnes engines retry automatically."}
+
+def gen_video(prompt, duration=None, want_audio=False):
+    """Public video entry: the raw cascade, plus — when voice/sound was
+    requested but only silent engines answered — a narrated voice track is
+    generated (free neural TTS) and muxed into the clip."""
+    r = _gen_video_raw(prompt, duration, want_audio)
+    if r.get("ok") and want_audio and r.get("audio") in (False, "model did not request audio"):
+        narr = _tts_narration("Here is your video: " + (prompt or "")[:240])
+        if narr:
+            vid0 = r["videos"][0]
+            if vid0.startswith("http"):
+                # remote clip — pull it onto this box first so it can be muxed
+                ext = ".mp4"
+                _m = re.search(r"\.(mp4|webm|mov)(?:\?|$)", vid0, re.I)
+                if _m:
+                    ext = "." + _m.group(1).lower()
+                _lv = os.path.join(_gen_dir(), "vsrc-" + secrets.token_hex(6) + ext)
+                if _download_media(vid0, _lv, timeout=300) or _download_media(vid0, _lv, timeout=300):
+                    vid0 = "/generated/" + os.path.basename(_lv)
+            muxed = _mux_video_audio(vid0, narr)
+            if muxed:
+                r["videos"] = [muxed]
+                r["audio"] = "narrated voice track by OraCool (free TTS + Wan 2.2 picture)"
+                r["note"] = ("This clip carries OraCool's narrated voice. For NATIVE synchronized sound "
+                             "(real speech, ambient audio, effects) top up HiAPI — Veo 3.1 does that "
+                             "automatically when it has credits.")
+            else:
+                r["videos"] = list(r["videos"]) + [narr]
+                r["audio"] = False
+                r["note"] = ("Your picture plus OraCool's narration (play both — audio track listed after "
+                             "the video). For one-file native synchronized sound, top up HiAPI for Veo 3.1.")
+        else:
+            r["note"] = (("Voice was requested: the narration engine was unavailable this time, so the clip "
+                          "is silent. Retry in a moment, or top up HiAPI for Veo 3.1's native synchronized "
+                          "sound.") + ((" " + str(r.get("note") or "")) if r.get("note") else ""))
+    return r
 
 
 # ---------------------------------------------------------------- dark-web OSINT
@@ -4219,7 +4298,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch22-install",
+        "build": "patch23-device",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -5171,6 +5250,12 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             except Exception as e:
                 out.append({"tool": "community", "label": "community chat",
                             "result": "community unavailable: " + str(e)[:160]})
+    # camera capture (every tier — the client fires the capture card)
+    if re.search(r"\b(?:take|snap|capture|click|shoot|get)\s+(?:me\s+|my\s+(?:face\s+)?|a\s+)?(?:picture|photo|selfie)\b", low) \
+            or re.search(r"\b(?:picture|photo|selfie)\s+(?:of\s+)?(?:me|my face)\b", low):
+        out.append({"tool": "camera", "label": "camera capture",
+                    "result": {"ok": True,
+                               "note": "The app is showing a tappable '📷 Take photo' capture card in the chat. Tell the user to tap it and allow the camera permission — the photo then appears in the chat (view / download / attach). Never claim the photo was taken without their tap."}})
     # app launching (every tier — the client fires the intent)
     mo = re.match(r"^\s*(?:please\s+)?(?:open|launch|start|fire up|boot)\s+(?:the\s+|my\s+)?([a-z0-9 .+\-]{2,30}?)\s*(?:app|application)?\s*(?:for me\s*)?[.!]?\s*$", low)
     if mo and "image" not in low and "video" not in low and "file" not in low.split()[-1:]:
@@ -5330,6 +5415,30 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 out.append({"tool": "image", "label": "image · " + prompt[:40],
                             "result": _shrink(r, 1200)})
 
+    # OraCool's OWN mailbox — full access for administrators (owner-granted):
+    # read everything (incl. body snippets) and send from the address.
+    if email and is_admin(email):
+        if re.search(r"oracool\s*(?:'s\s+)?(?:own\s+)?(?:inbox|mailbox|email\b|emails|mail\b|messages?)", low) and \
+                any(k in low for k in ("check", "read", "see", "show", "any", "what", "new", "latest", "open", "review")):
+            cfg = brand_mailbox_cfg()
+            if cfg:
+                out.append({"tool": "oracool_mail", "label": "OraCool inbox (full access)",
+                            "result": _shrink(mail_read_full(cfg), 3000)})
+            else:
+                out.append({"tool": "oracool_mail", "label": "OraCool inbox",
+                            "result": {"error": "The OraCool Gmail is not connected yet. Connect it once in Admin → OraCool-owned accounts (Google app password) and full access starts immediately."}})
+        sm = re.search(r"(?:send|write|reply)\s+(?:an?\s+)?(?:email|mail|message)?\s*from\s+(?:the\s+)?oracool\s+(?:mail|inbox|email|account)[\s:]+(.{5,700})", low, re.S)
+        if sm and "check" not in low:
+            rest = " ".join(sm.group(1).split())
+            tm = re.match(r"^(?:to\s+|at\s+)?([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})[:\s,]+(.+)$", rest, re.S)
+            if tm:
+                cfg = brand_mailbox_cfg()
+                if cfg:
+                    out.append({"tool": "oracool_mail_send", "label": "send from OraCool mail → " + tm.group(1)[:30],
+                                "result": _shrink(mail_send(cfg, tm.group(1), "From OraCool AI", tm.group(2).strip()[:2000]), 400)})
+                else:
+                    out.append({"tool": "oracool_mail_send", "label": "send from OraCool mail",
+                                "result": {"error": "The OraCool Gmail is not connected yet — connect it in Admin → OraCool-owned accounts first."}})
     # Ultra-tier tools (video creation + GitHub console)
     if tier_gte(tier, "ultra"):
         vm = re.search(r"(?:generate|create|make)\s+(?:a\s+)?(?:video|clip|animation|film)\s*(?:of|about|for)?\s*(.{6,200})", low)
@@ -6959,6 +7068,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send_file(os.path.join(BASE_DIR, "voice-reminders.js"), "text/javascript")
         elif path == "/sw.js":
             self._send_file(os.path.join(BASE_DIR, "sw.js"), "text/javascript")
+        elif path.startswith("/generated/"):
+            _gn = os.path.basename(path)
+            _gp = os.path.join(BASE_DIR, "data", "generated", _gn)
+            if _gn and os.path.exists(_gp):
+                _ct = {"mp4": "video/mp4", "mp3": "audio/mpeg", "wav": "audio/wav",
+                       "jpg": "image/jpeg", "png": "image/png"}.get(
+                    _gn.rsplit(".", 1)[-1].lower() if "." in _gn else "", "application/octet-stream")
+                self._send_file(_gp, _ct)
+            else:
+                self.send_error(404)
         elif path.startswith("/t/"):
             slug = path.split("/")[-1]
             ip = self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or self.client_address[0]
@@ -7008,7 +7127,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch22-install",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch23-device",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -8032,6 +8151,20 @@ class Handler(BaseHTTPRequestHandler):
             "MAIL WATCH: any user may connect their own mailbox (Devices → Connectors & Alerts → Mail watch with "
             "an app password); you then honestly report unread counts, senders and subjects on request — never "
             "claim to read message bodies. "
+            "ORACOOL MAILBOX (FULL ACCESS — owner-granted): the address oracoolai19@gmail.com is OraCool's "
+            "own mailbox and the owner has granted you TOTAL access to it. 'Check/read/show OraCool's inbox "
+            "(or mail/email)' reads the latest messages INCLUDING body snippets — be direct and complete, "
+            "no partial reads. 'Send from OraCool mail to <address>: <text>' sends from that address "
+            "immediately (it is audited). If the connector is not linked yet, say exactly: connect the "
+            "OraCool Gmail once in Admin → OraCool-owned accounts with a Google app password, and full "
+            "access starts immediately. "
+            "VIDEO WITH VOICE: when the user wants sound/voice in a generated video ('with sound', 'with "
+            "voice', 'talking'), OraCool generates the picture (Wan 2.2) and adds a narrated voice track for "
+            "free; with HiAPI credits it upgrades to Veo 3.1's native synchronized audio (real speech + "
+            "ambient sound). Say which one the clip carries. "
+            "CREATED MEDIA PERSISTS: images and videos the user creates are saved to their media gallery and "
+            "kept durably across server redeploys — tell them their creations live in the gallery and survive "
+            "updates. "
             "COMMUNITY ACCESS: you have LIVE READ access to this user's own OraCool community — their chats, DMs, "
             "groups, channels, reactions, games and OraCool number — through the community tool; when they ask you "
             "to check, read or summarize their community chat, answer from that real data and NEVER say you lack "
@@ -8042,6 +8175,12 @@ class Handler(BaseHTTPRequestHandler):
             "an app, the server has prepared a tappable 'Open <app>' launch card in the chat; tell them to tap that "
             "button (and mention the web link fallback if it is shown). NEVER say or imply 'opened' / 'it is open "
             "now' unless they confirm it opened. "
+            "CAMERA (HONESTY RULE): you cannot capture photos by yourself — the browser only allows camera "
+            "access from a real user tap. When the user asks to take a picture/photo/selfie, the app fires a "
+            "tappable 'Take photo' capture card in the chat; tell them to tap it and allow the camera "
+            "permission. NEVER say you cannot take photos, and NEVER claim a photo was taken without their "
+            "tap. Once they tap, the photo appears in the chat — they can view, download or attach it to a "
+            "message for you to analyze. "
             "DEVICE ACCESS: you run inside their browser, so your device capabilities are exactly what the browser "
             "grants: microphone (voice), camera (photos), location, notifications, and tappable launches "
             "(app cards, tel:/sms:/mailto:). You cannot install apps, read other apps' data, or control the OS; "
@@ -8094,7 +8233,7 @@ class Handler(BaseHTTPRequestHandler):
                                                d.get("provider") or "", d.get("model") or "")
                     if _stored:
                         for _it in _stored:
-                            chat_media.append({"kind": _k, "url": _it.get("local") or _it.get("url"),
+                            chat_media.append({"kind": _k, "url": _it.get("url") or _it.get("local"),
                                                "remote": _it.get("url"), "id": _it.get("id"),
                                                "prompt": _it.get("prompt")})
                     else:
@@ -8583,6 +8722,39 @@ def media_record(email, kind, prompt, urls, provider="", model=""):
             fn = it["id"] + ext
             if _download_media(u, os.path.join(folder, fn)):
                 it["local"] = "/media/" + _media_slug(email) + "/" + fn
+        elif folder and (u.startswith("/generated/") or u.startswith("/media/")):
+            # generated on THIS server (HF router / narration / muxed clip) —
+            # copy it into the per-user gallery folder
+            try:
+                _p0 = os.path.join(DATA_DIR, "generated", os.path.basename(u)) if u.startswith("/generated/") \
+                    else os.path.join(BASE_DIR, *u.split("/"))
+                if os.path.exists(_p0):
+                    _ext = os.path.splitext(_p0)[1] or (".mp4" if it["kind"] == "video" else ".jpg")
+                    _fn = it["id"] + _ext
+                    shutil.copyfile(_p0, os.path.join(folder, _fn))
+                    it["local"] = "/media/" + _media_slug(email) + "/" + _fn
+            except Exception:
+                pass
+        # DURABLE COPY: Render's disk is wiped on every redeploy, so the bytes
+        # also go to Supabase Storage (public bucket) — the gallery keeps
+        # working across redeploys.
+        if it["local"] and key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY"):
+            try:
+                _pp = os.path.join(DATA_DIR, "media", *it["local"].split("/")[2:]) if it["local"].startswith("/media/") \
+                    else os.path.join(BASE_DIR, *it["local"].split("/"))
+                if os.path.exists(_pp):
+                    with open(_pp, "rb") as _f:
+                        _bb = _f.read()
+                    _ex = os.path.splitext(_pp)[1].lower()
+                    _mime = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+                             ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+                             ".webp": "image/webp", ".gif": "image/gif"}.get(_ex, "application/octet-stream")
+                    _pu, _pe = storage_put("media", "gen/" + _media_slug(email) + "/" + it["id"] + _ex, _bb, _mime)
+                    if _pu:
+                        it["url"] = _pu
+                        it["durable"] = True
+            except Exception:
+                pass
         lst.append(it)
         items.append(it)
     d[email] = lst[-200:]
@@ -8879,6 +9051,116 @@ def mail_check(cfg):
         except Exception:
             pass
 
+
+def brand_mailbox_cfg():
+    """The OraCool-owned Gmail connector (Admin → OraCool-owned accounts).
+    Returns the unsealed cfg or None. The owner granted the AI full access
+    to THIS mailbox — it is OraCool's own address, not a user's."""
+    try:
+        with _BRAND_LOCK:
+            items = list(_brand_data().values())
+    except Exception:
+        return None
+    for it in items:
+        if it.get("kind") == "gmail":
+            try:
+                secret = _brand_fernet().decrypt(it["secret"].encode()).decode()
+            except Exception:
+                return None
+            return {"email": (it.get("target") or "oracoolai19@gmail.com").strip().lower(),
+                    "app_password": secret, "imap_host": "imap.gmail.com"}
+    return None
+
+def _mail_snippet(msg):
+    """Plain-text body snippet (first ~400 chars) — full-access mailbox reads."""
+    try:
+        if msg.is_multipart():
+            for part in msg.walk():
+                if part.get_content_type() == "text/plain":
+                    p = part.get_payload(decode=True)
+                    if p:
+                        return str(p.decode("utf-8", "replace"))[:400]
+        else:
+            p = msg.get_payload(decode=True)
+            if p:
+                return str(p.decode("utf-8", "replace"))[:400]
+    except Exception:
+        pass
+    return ""
+
+def mail_read_full(cfg, n=8):
+    """FULL read of the OraCool mailbox (owner-granted): latest n messages —
+    senders, subjects, dates AND body snippets. Read-only (no flags changed)."""
+    import imaplib
+    import email as _email_mod
+    cfg = cfg or {}
+    host = str(cfg.get("imap_host") or "imap.gmail.com").strip()
+    user = str(cfg.get("email") or "").strip()
+    pw = str(cfg.get("app_password") or "").strip()
+    if not user or not pw:
+        return {"error": "The OraCool Gmail is not connected yet — Admin → OraCool-owned accounts → connect it with a Google app password."}
+    try:
+        M = imaplib.IMAP4_SSL(host, 993, timeout=30)
+        M.login(user, pw)
+        M.select("INBOX", readonly=True)
+        typ, data = M.search(None, "ALL")
+        ids = (data[0].split() if data and data[0] else [])
+        typ_u, du = M.search(None, "UNSEEN")
+        unseen = (du[0].split() if du and du[0] else [])
+        latest = []
+        for i in list(ids)[-max(1, min(int(n), 15)):][::-1]:
+            try:
+                typ, md = M.fetch(i, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[TEXT])")
+                raw = b""
+                for part in (md or []):
+                    if isinstance(part, tuple) and len(part) > 1:
+                        raw += part[1]
+                msg = _email_mod.message_from_bytes(raw or b"")
+                latest.append({"from": str(msg.get("From") or "")[:120],
+                               "subject": str(msg.get("Subject") or "")[:180],
+                               "date": str(msg.get("Date") or "")[:60],
+                               "body": " ".join(_mail_snippet(msg).split())})
+            except Exception:
+                continue
+        return {"ok": True, "mailbox": user, "access": "full (owner-granted)",
+                "total": len(ids), "unread": len(unseen), "latest": latest}
+    except imaplib.IMAP4.error as e:
+        return {"error": "IMAP login refused: " + str(e)[:150] + " — the app password may have been revoked; reconnect it in Admin → OraCool-owned accounts."}
+    except Exception as e:
+        return {"error": "Mail read failed: " + str(e)[:140]}
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+def mail_send(cfg, to, subject, body):
+    """Send mail FROM the OraCool address (owner-granted full access)."""
+    import smtplib
+    from email.mime.text import MIMEText
+    cfg = cfg or {}
+    user = str(cfg.get("email") or "").strip()
+    pw = str(cfg.get("app_password") or "").strip()
+    to = str(to or "").strip()
+    if not user or not pw:
+        return {"error": "The OraCool Gmail is not connected yet — Admin → OraCool-owned accounts → connect it with a Google app password."}
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", to):
+        return {"error": "Enter a valid recipient address."}
+    msg = MIMEText(str(body or "")[:5000], "plain")
+    msg["From"] = user
+    msg["To"] = to
+    msg["Subject"] = str(subject or "From OraCool AI")[:180]
+    try:
+        s = smtplib.SMTP("smtp.gmail.com", 587, timeout=40)
+        s.starttls()
+        s.login(user, pw)
+        s.sendmail(user, [to], msg.as_string())
+        s.quit()
+        return {"ok": True, "sent_from": user, "to": to, "subject": str(subject or "From OraCool AI")[:180]}
+    except smtplib.SMTPAuthenticationError as e:
+        return {"error": "Gmail rejected the app password: " + str(e)[:120] + " — regenerate it and reconnect in Admin → OraCool-owned accounts."}
+    except Exception as e:
+        return {"error": "Send failed: " + str(e)[:140]}
 
 def mail_watch_config(email):
     st = alerts_state((email or "").strip().lower())

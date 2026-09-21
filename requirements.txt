@@ -4,3 +4,7 @@ cryptography>=42
 qrcode>=7.4        # crypto payment QR (pure-python SVG, no Pillow needed)
 
 tzdata>=2024.1       # IANA timezone data for alarms on minimal server images
+
+# Patch 23: free narrated voice track for generated videos (TTS + static ffmpeg mux)
+edge-tts>=6.1
+imageio-ffmpeg>=0.5
