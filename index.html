@@ -1194,9 +1194,37 @@ function speechClean(t){
   try { s = s.replace(new RegExp('\\p{Extended_Pictographic}','gu'), ' ').replace(/\s{2,}/g,' ').trim(); } catch(e){}
   return s;
 }
+/* Phones block audio until the user first interacts — prime speech + audio on
+   every real gesture so the AI can speak the moment its reply arrives. */
+function unlockAudio(){
+  try{
+    if('speechSynthesis' in window){
+      if(!window.__ttsPrimed){
+        window.__ttsPrimed=true;
+        const u=new SpeechSynthesisUtterance(' '); u.volume=0;
+        try{ speechSynthesis.speak(u); }catch(e){}
+      }
+      loadVoices();
+    }
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(AC){
+      if(!window.__ac){ try{ window.__ac=new AC(); }catch(e){} }
+      if(window.__ac && window.__ac.state==='suspended'){ try{ window.__ac.resume(); }catch(e){} }
+    }
+  }catch(e){}
+}
+let _ttsWarned=false;
 function speak(text){
   if(window.OraVoice){window.OraVoice.say(text);return;}
-  if(!settings.ttsOn || !('speechSynthesis' in window)) return;
+  if(!settings.ttsOn){
+    if(!_ttsWarned){ _ttsWarned=true; addSystemNote('🔇 Voice output is switched off — turn it on in <b>Settings → Voice</b> and I will speak.'); }
+    return;
+  }
+  if(!('speechSynthesis' in window)){
+    if(!_ttsWarned){ _ttsWarned=true; addSystemNote('This browser cannot do speech output. Try Chrome or Safari for spoken answers.'); }
+    return;
+  }
+  if(!voices.length) loadVoices();
   try{
     speechSynthesis.cancel();
     const u=new SpeechSynthesisUtterance(speechClean(text)); u.rate=1.02; u.pitch=0.92; u.volume=1;
@@ -1487,7 +1515,7 @@ function runDeviceCommand(text){
   for(const r of R){
     const m=text.match(r[0]);
     if(m){
-      if(r[2]==='smart'){ try{ r[1](m); }catch(e){} return {handled:true, reply:null}; }
+      if(r[2]==='smart'){ try{ const rr=r[1](m); if(rr && rr.then){ rr.catch(()=>{}); } }catch(e){} return {handled:true, reply:null}; }
       try{ if(r[1]) r[1](m); }catch(e){}
       return {handled:true, reply: r[2]||('Done, sir.')};
     }
@@ -1559,6 +1587,7 @@ function predictIntent(){
 
 let busy=false;
 async function send(text){
+  unlockAudio();
   text=(text||'').trim();
   lastUserAt = Date.now();
   if(isBlockedSession()){ showBlockedScreen(); return; }
@@ -1689,9 +1718,11 @@ if(SR){
   rec.onstart=()=>{ setOrbStatus('listening'); };
   rec.onend=()=>{ listening=false; $('#micBtn').classList.remove('listening'); setOrbStatus('online'); const v=$('#input').value.trim(); if(v)send(v); };
   rec.onerror=e=>{ listening=false; $('#micBtn').classList.remove('listening');
-    if(e.error==='not-allowed')addErr('🎙️ Microphone blocked. Voice input works best in a full browser tab (not the sandboxed preview).'); };
+    if(e.error==='not-allowed')addErr('🎙️ Microphone blocked — tap the padlock icon in your browser address bar → Site settings → allow Microphone, then try again.');
+    else addErr('🎙️ Could not start the microphone: '+(e.message||e)+' — check the site permissions in your browser.'); };
 }
 $('#micBtn').onclick=()=>{
+  unlockAudio();
   if(!SR){ addErr('Voice input not supported in this browser.'); return; }
   if(listening){ rec.stop(); return; }
   listening=true; $('#micBtn').classList.add('listening'); $('#input').value='';
@@ -1852,7 +1883,8 @@ function mediaHtml(url){
   if(!url) return '';
   const ext=(url.toLowerCase().split('/').pop().split('?')[0].split('.').pop()||'');
   if(['jpg','jpeg','png','webp','gif'].includes(ext)) return `<img class="wa-img" src="${escapeHtml(url)}" alt="photo">`;
-  if(['webm','ogg','m4a','mp4','opus','mp3'].includes(ext)) return `<audio class="cmessaudio" controls preload="metadata" src="${escapeHtml(url)}"></audio>`;
+  if(['webm','ogg','m4a','opus','mp3'].includes(ext)) return `<audio class="cmessaudio" controls preload="metadata" src="${escapeHtml(url)}"></audio>`;
+  if(['mp4','webm'].includes(ext)) return `<video class="wa-video" controls playsinline preload="metadata" src="${escapeHtml(url)}"></video>`;
   if(['pdf','txt','csv','json','zip','doc','docx','xls','xlsx','ppt','pptx'].includes(ext)) return `<a class="wa-file" href="${escapeHtml(url)}" target="_blank" rel="noopener">📎 <span>Download file</span> <small>· ${escapeHtml(ext.toUpperCase())}</small></a>`;
   return '';
 }
@@ -1972,11 +2004,12 @@ function renderCommRooms(){
     ${cur.banned?`<div class="warnbox" style="margin-bottom:8px">🚫 This ${escapeHtml(cur.kind||'room')} has been <b>banned by an administrator</b>${cur.ban_reason?' — reason: '+escapeHtml(cur.ban_reason):''}. Posting is disabled.</div>`:''}
     ${(!cur.banned&&((cur.kind==='channel'&&!cur.yours&&!(session&&session.admin))||((cur.kind==='group'&&cur.owner_only)&&!cur.yours&&!(session&&session.admin))))?`<div class="warnbox" style="margin-bottom:8px">🔒 ${cur.kind==='channel'?'Only the channel admin (the creator) can post in this channel.':'This group is locked — only the group admin can post.'} Reading is open to everyone.</div>`:''}
     <div class="commmsgs" id="commMsgs" style="border-color:#182229"><div class="muted">${cur.banned?'This room is locked.':'Loading…'}</div></div>
-    ${postingLocked?`<div class="muted" style="font-size:12px;text-align:center;padding:8px">${cur.banned?'Posting is disabled in banned rooms.':'🔒 Posting is closed here — reading is open, but only the '+(cur.kind==='channel'?'channel admin':'group admin')+' can send messages.'}</div>`:`<div class="wa-compose"><button class="wa-ico" id="roomEmoji" title="Emoji">😀</button><div class="pill"><input type="text" id="commInput" maxlength="800" autocomplete="off" placeholder="Message #${escapeHtml(cur.name)}"></div><button class="wa-send" id="commSend" title="Send">➤</button></div>`}
+    ${postingLocked?`<div class="muted" style="font-size:12px;text-align:center;padding:8px">${cur.banned?'Posting is disabled in banned rooms.':'🔒 Posting is closed here — reading is open, but only the '+(cur.kind==='channel'?'channel admin':'group admin')+' can send messages.'}</div>`:`<div class="wa-compose"><button class="wa-ico" id="roomAttach" title="Send a photo, video, voice note or file">➕</button><button class="wa-ico" id="roomEmoji" title="Emoji">😀</button><div class="pill"><input type="text" id="commInput" maxlength="800" autocomplete="off" placeholder="Message #${escapeHtml(cur.name)}"></div><button class="wa-send" id="commSend" title="Send">➤</button></div>`}
   `;
   $('#commBody').querySelectorAll('.chip[data-r]').forEach(c=>{ c.onclick=()=>{ COMM.room=c.dataset.r; COMM.lastRoomId=null; renderCommRooms(); }; });
   $('#commNewRoom').onclick=openNewRoomModal;
   const rem=$('#roomEmoji'); if(rem) rem.onclick=e=>{ e.stopPropagation(); waEmojiPop(rem, $('#commInput')); };
+  const ra=$('#roomAttach'); if(ra) ra.onclick=e=>{ e.stopPropagation(); if(window.REC2 && REC2.mr){ roomVoiceToggle(ra); return; } waAttachPop(ra, 'room'); };
   const rd=$('#commRoomDel'); if(rd) rd.onclick=async()=>{ if(!confirm('Delete this '+cur.kind+'? Its messages and members will be permanently removed.')) return; const r=await post('/api/community/rooms/delete',{slug:COMM.room}); if(r.error) addErr('Room: '+r.error); else { COMM.room='lounge'; addSystemNote('🗑 The '+cur.kind+' was deleted.'); renderCommunity(); } };
   const rl=$('#commRoomLock'); if(rl) rl.onclick=async()=>{ const on=!(cur.owner_only); const r=await post('/api/community/rooms/owner-only',{slug:COMM.room, on}); if(r.error) addErr('Room: '+r.error); else { addSystemNote(on?'🔒 Only you can post in this group now.':'🔓 The group is open again — members can post.'); renderCommunity(); } };
   const rr=$('#commRoomRep'); if(rr) rr.onclick=async()=>{
@@ -2250,14 +2283,14 @@ function waEmojiPop(anchorEl, input){
   pop.style.left=Math.max(8, Math.min(r.left-120, window.innerWidth-304))+'px';
   pop.classList.add('open');
 }
-function waAttachPop(anchorEl){
+function waAttachPop(anchorEl, target){
   let pop=document.getElementById('waAttachPop');
   if(pop && pop.classList.contains('open')){ closeWaPops(); return; }
   if(!pop){
     pop=document.createElement('div'); pop.id='waAttachPop'; pop.className='wa-pop wa-attach';
-    pop.innerHTML=`<button type="button" data-a="photo">🖼️ <span>Photo</span></button><button type="button" data-a="voice">🎵 <span>Voice note (file)</span></button><button type="button" data-a="file">📄 <span>Document / file</span></button>`;
+    pop.innerHTML=`<button type="button" data-a="photo">🖼️ <span>Photo</span></button><button type="button" data-a="video">🎬 <span>Video</span></button><button type="button" data-a="voice">🎵 <span>Voice note</span></button><button type="button" data-a="file">📄 <span>Document / file</span></button>`;
     document.body.appendChild(pop);
-    pop.querySelectorAll('button').forEach(b=>{ b.onclick=()=>commAttachPick(b.dataset.a); });
+    pop.querySelectorAll('button').forEach(b=>{ b.onclick=()=>commAttachPick(b.dataset.a, target||'dm'); });
   }
   const r=anchorEl.getBoundingClientRect();
   pop.style.bottom=(window.innerHeight-r.top+8)+'px';
@@ -2267,13 +2300,18 @@ function waAttachPop(anchorEl){
 document.addEventListener('click', e=>{
   if(!e.target.closest('.wa-pop') && !e.target.closest('#dmEmoji') && !e.target.closest('#dmAttach') && !e.target.closest('#roomEmoji')) closeWaPops();
 });
-async function commAttachPick(kind){
+async function commAttachPick(kind, target){
   closeWaPops();
+  target=target||'dm';
+  // In rooms the voice note is recorded live with the mic (WhatsApp-style);
+  // in DMs the menu item stays an audio-file picker (the mic button sits in the bar).
+  if(target==='room' && kind==='voice'){ roomVoiceToggle(document.getElementById('roomAttach')); return; }
   const inp=document.createElement('input'); inp.type='file';
   if(kind==='file') inp.accept='.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.json,application/pdf';
+  else if(kind==='video') inp.accept='video/mp4,video/webm,.mp4,.webm';
   else if(kind==='voice') inp.accept='audio/*';
   else inp.accept='image/jpeg,image/png,image/webp';
-  const maxMb=kind==='file'?10:(kind==='voice'?8:5);
+  const maxMb=kind==='video'?20:(kind==='file'?10:(kind==='voice'?8:5));
   inp.onchange=async()=>{
     const f=inp.files && inp.files[0]; if(!f) return;
     if(f.size>maxMb*1024*1024){ addErr('That file must be under '+maxMb+' MB.'); return; }
@@ -2282,11 +2320,46 @@ async function commAttachPick(kind){
     if(!dataUrl) return;
     const up=await post('/api/community/media',{data_url:dataUrl});
     if(up.error){ addErr('Attach: '+up.error); return; }
-    const r=await post('/api/community/dm/send',{handle:COMM.peer, body:caption, media_url:up.media_url});
+    const r = target==='room'
+      ? await post('/api/community/room/send',{room:COMM.room, body:caption, media_url:up.media_url})
+      : await post('/api/community/dm/send',{handle:COMM.peer, body:caption, media_url:up.media_url});
     if(r.error){ addErr('Attach: '+r.error); return; }
-    const el=$('#dmMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); el.scrollTop=el.scrollHeight; }
+    const el=target==='room'?$('#commMsgs'):$('#dmMsgs');
+    if(el&&r.message){ appendCommMsg(el, r.message); el.scrollTop=el.scrollHeight; }
   };
   inp.click();
+}
+/* ---------- live voice note for rooms (mic record → upload → send) ---------- */
+const REC2={mr:null, chunks:[], timer:null, secs:0};
+async function roomVoiceToggle(btn){
+  if(REC2.mr){ try{ REC2.mr.stop(); }catch(e){} return; }
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const mime=(window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm'))?'audio/webm':undefined;
+    REC2.mr=new MediaRecorder(stream, mime?{mimeType:mime}:undefined);
+    REC2.chunks=[]; REC2.secs=0;
+    REC2.mr.ondataavailable=e=>{ if(e.data && e.data.size) REC2.chunks.push(e.data); };
+    REC2.mr.onstop=async()=>{
+      stream.getTracks().forEach(t=>t.stop());
+      if(btn){ btn.classList.remove('rec'); btn.textContent='🎤'; }
+      if(REC2.timer){ clearInterval(REC2.timer); REC2.timer=null; }
+      const blob=new Blob(REC2.chunks,{type:mime||'audio/webm'}); REC2.chunks=[];
+      if(blob.size<2000) return;
+      const f=new FileReader();
+      f.onload=async()=>{
+        const up=await post('/api/community/media',{data_url:f.result});
+        if(up.error){ addErr('Voice note: '+up.error); return; }
+        const r=await post('/api/community/room/send',{room:COMM.room, body:'', media_url:up.media_url});
+        if(r.error){ addErr('Voice note: '+r.error); return; }
+        const el=$('#commMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); el.scrollTop=el.scrollHeight; }
+      };
+      f.onerror=()=>{ addErr('Voice note: could not read the recording.'); };
+      f.readAsDataURL(blob);
+    };
+    REC2.mr.start();
+    if(btn){ btn.classList.add('rec'); btn.textContent='⏹'; }
+    REC2.timer=setInterval(()=>{ REC2.secs++; if(btn) btn.textContent=REC2.secs+'s'; if(REC2.secs>=60){ try{ REC2.mr.stop(); }catch(e){} } }, 1000);
+  }catch(e){ addErr('Microphone unavailable — allow microphone access for this site in your browser settings, then try again.'); }
 }
 
 /* ---------- community calls: audio & video (P2P WebRTC, OraCool signals) ---------- */
@@ -3845,6 +3918,42 @@ async function renderKeyVault(){
     ${Object.keys(k).map(n=>`<div class="keyrow"><span class="n">${escapeHtml(n)}</span><span class="s" style="color:${k[n]?'var(--ok)':'var(--dim)'}">${k[n]?'✓ loaded':'—'}</span></div>`).join('')}
     <div class="hint" style="margin-top:8px">Statuses only — values never leave the server (environment / keys.json). Visible to administrators only.</div>`;
 }
+/* ---------- device access: one-tap full access (honest browser permissions) ---------- */
+async function devAccGrant(btn){
+  if(btn) btn.disabled=true;
+  const res={};
+  try{
+    const st=await navigator.mediaDevices.getUserMedia({audio:true});
+    st.getTracks().forEach(t=>t.stop()); res.mic='granted';
+  }catch(e){ res.mic=(e && (e.name==='NotAllowedError'||e.name==='PermissionDeniedError'))?'denied':'blocked'; }
+  try{
+    const st=await navigator.mediaDevices.getUserMedia({video:true});
+    st.getTracks().forEach(t=>t.stop()); res.cam='granted';
+  }catch(e){ res.cam=(e && (e.name==='NotAllowedError'||e.name==='PermissionDeniedError'))?'denied':'blocked'; }
+  if('Notification' in window){
+    try{ res.notif=await Notification.requestPermission(); }catch(e){ res.notif='unsupported'; }
+  } else { res.notif='unsupported'; }
+  renderDevAccStatus(res);
+  if(btn){ btn.disabled=false; }
+  const okM=res.mic==='granted', okC=res.cam==='granted';
+  addSystemNote(okM&&okC ? '✅ Full access granted — I can now use your microphone, camera and notifications on this device.'
+    : '⚠️ Some permissions were not granted — check the padlock icon in your browser address bar (Site settings) to allow them.');
+}
+function renderDevAccStatus(res){
+  const el=document.getElementById('devAccStatus'); if(!el) return;
+  if(!res){
+    el.innerHTML='<div class="hint">Tap <b>Give OraCool full access</b> above — your browser will ask for microphone, camera and notifications.</div>';
+    return;
+  }
+  const chip=(label,val)=>{
+    const cls=val==='granted'?'okbox':((val==='denied'||val==='blocked')?'errbox':'warnbox');
+    const txt=val==='granted'?'granted':(val==='denied'?'denied':(val==='blocked'?'blocked':(val==='unsupported'?'not supported on this browser':'tap to allow')));
+    const icon=val==='granted'?'✅':((val==='denied'||val==='blocked')?'🚫':'');
+    return `<div class="${cls}" style="margin:6px 0">${icon} <b>${label}</b>: ${txt}</div>`;
+  };
+  el.innerHTML=chip('Microphone (voice chat)',res.mic)+chip('Camera (photos)',res.cam)+chip('Notifications',res.notif);
+}
+
 function renderSettings(){
   const admin=isAdminSession();
   if(!admin) purgeOperatorSettings();
@@ -3900,6 +4009,10 @@ function renderSettings(){
     <div class="hint">Wake word needs Chrome/Edge + mic permission. While armed, saying "Hey OraCool" triggers a chime, then it listens for your command.</div>
     <label class="lbl">Voice</label>
     <select id="sVoice"><option value="">System default</option>${voices.map(v=>`<option value="${escapeHtml(v.name)}" ${v.name===settings.voiceName?'selected':''}>${escapeHtml(v.name)} (${escapeHtml(v.lang||'')})</option>`).join('')}</select>
+    <h3 class="ptitle" style="margin-top:20px">📱 Device access</h3>
+    <div class="hint">OraCool runs inside your browser, so it gets exactly what you grant it: <b>microphone</b> (voice chat), <b>camera</b> (photos), <b>location</b> and <b>notifications</b>. Tap once below to give it full access — your browser will ask for each permission. You can change any of them later in the site settings (padlock icon in the address bar). Opening apps works through the tap-to-launch buttons OraCool sends you — phones never allow a website to open an app by itself.</div>
+    <div class="row" style="margin-top:10px"><button class="btn primary" id="sDevAccess" style="min-height:48px;width:100%;justify-content:center">🔓 Give OraCool full access to this device</button></div>
+    <div id="devAccStatus" style="margin-top:10px"></div>
     <div class="row" style="margin-top:16px"><button class="btn primary" id="sSave">Save settings</button><button class="btn ghost" id="sTest">🔊 Test voice</button></div>
     ${operatorControls}
 
@@ -3912,6 +4025,8 @@ function renderSettings(){
   const _lkn=$('#sLockNow'); if(_lkn) _lkn.onclick=()=>showLockScreen();
   const _lla=$('#sLockAlways'); if(_lla) _lla.onclick=()=>{ settings.lockAlways=!settings.lockAlways; _lla.classList.toggle('on',settings.lockAlways); saveSettings(); addAI(settings.lockAlways?'Chat lock enabled — this app will demand your password or Face ID every time it opens.':'Chat lock turned off.'); };
   $('#sTest').onclick=()=>speak('All systems operational. This is OraCool AI.');
+  const _da=$('#sDevAccess'); if(_da) _da.onclick=()=>devAccGrant(_da);
+  try{ renderDevAccStatus(null); }catch(e){}
   $('#sUpgrade').onclick=openUpgrade;
   const lg=$('#sLogout'); if(lg)lg.onclick=()=>{ setProToken(''); renderSettings(); renderStatus(); addAI('Signed out of PRO mode.'); };
   if(admin) renderKeyVault();

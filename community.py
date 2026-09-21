@@ -569,7 +569,7 @@ class Service:
         self.last_post[email] = now
         return None
 
-    def room_send(self, email, room, body):
+    def room_send(self, email, room, body, media_url=""):
         self._need()
         email = email.lower()
         r = self._room(str(room or "lounge"))
@@ -587,7 +587,18 @@ class Service:
         elif r.get("kind") == "group" and r.get("owner_only_post"):
             if r.get("owner_email") != email and not self.d["is_admin"](email):
                 return {"error": "This group is locked — only the group admin can post here.", "locked": True}
-        body = _clean(body, MSG_MAX)
+        media_url = str(media_url or "")
+        if media_url and "storage/v1/object/public/" not in media_url:
+            return {"error": "Attachments must be uploaded first."}
+        _ext = media_url.lower().split(".")[-1].split("?")[0]
+        _is_photo = _ext in ("jpg", "jpeg", "png", "webp")
+        # voice notes upload to the 'dm' folder; videos to the 'media' folder
+        _is_video = _ext in ("mp4",) or (_ext == "webm" and "/dm/" not in media_url)
+        _is_file = _ext in ("pdf", "txt", "csv", "json", "zip", "doc", "docx", "xls", "xlsx", "ppt", "pptx")
+        body = _clean(body, MSG_MAX) or ("\U0001f5bc\ufe0f Photo" if media_url and _is_photo
+                                         else ("\U0001f3ac Video" if media_url and _is_video
+                                               else ("\U0001f4ce File" if media_url and _is_file
+                                                     else ("\U0001f3a4 Voice note" if media_url else ""))))
         if not body:
             return {"error": "Write a message first."}
         err = self._rate_ok(email)
@@ -603,8 +614,17 @@ class Service:
                                   returning=False, on_conflict="room_id,email")
             except _StoreError:
                 pass
-        m = self.store.insert("comm_messages",
-                              {"room_id": r["id"], "sender_email": email, "body": body, "kind": "chat"})
+        _kind = "voice" if media_url else "chat"
+        try:
+            m = self.store.insert("comm_messages",
+                                  {"room_id": r["id"], "sender_email": email, "body": body,
+                                   "kind": _kind, "media_url": media_url or ""})
+        except _StoreError:
+            # Legacy DBs carry a kind check-constraint without 'voice' (informational
+            # column — clients render from media_url); retry as 'chat'.
+            m = self.store.insert("comm_messages",
+                                  {"room_id": r["id"], "sender_email": email, "body": body,
+                                   "kind": "chat", "media_url": media_url or ""})
         if not m:
             return {"error": "Message could not be saved. Try again."}
         pros = self._profiles_for([email])
@@ -765,10 +785,12 @@ class Service:
             return {"error": "Attachments must be uploaded first."}
         _ext = media_url.lower().split(".")[-1].split("?")[0]
         _is_photo = _ext in ("jpg", "jpeg", "png", "webp")
+        _is_video = _ext in ("mp4",) or (_ext == "webm" and "/dm/" not in media_url)
         _is_file = _ext in ("pdf", "txt", "csv", "json", "zip", "doc", "docx", "xls", "xlsx", "ppt", "pptx")
         body = _clean(body, MSG_MAX) or ("🖼️ Photo" if media_url and _is_photo
-                                         else ("📎 File" if media_url and _is_file
-                                               else ("🎤 Voice note" if media_url else "")))
+                                         else ("🎬 Video" if media_url and _is_video
+                                               else ("📎 File" if media_url and _is_file
+                                                     else ("🎤 Voice note" if media_url else ""))))
         if not body:
             return {"error": "Write a message first."}
         err = self._rate_ok(email)
@@ -1453,6 +1475,97 @@ class Service:
         return {"ok": True, "case": self._case_view(self._case(cid))}
 
     # ------------------------------------------------------------ chat prompt
+    def chat_brief(self, email):
+        """Live, READ-ONLY digest of this user's own community — what the main AI
+        quotes when the user asks to check their chats, DMs, groups or channels.
+        Never posts, never marks read, never exposes other members' private DMs."""
+        self._need()
+        email = (email or "").lower()
+        prof = self._prof(email)
+        if not prof:
+            return {"error": "This account has no community profile yet (open the Community tab once)."}
+        out = {"username": prof.get("username"), "oracool_number": prof.get("oracool_number"),
+               "rooms": [], "dm_threads": [], "unread_dm": 0, "games": []}
+        # rooms this user is in (or public) with their 3 latest messages
+        try:
+            rooms = self.store.get("comm_rooms", "kind=in.(room,group,channel)&is_public=eq.true&order=created_at.asc&limit=100")
+            mem = self.store.get("comm_members", "email=eq." + email + "&limit=200")
+            mine_ids = {m.get("room_id") for m in mem if m.get("room_id")}
+        except _StoreError:
+            rooms, mine_ids = [], set()
+        for r in (rooms or []):
+            if r.get("id") not in mine_ids and r.get("kind") == "group":
+                continue
+            try:
+                rows = self.store.get("comm_messages", "room_id=eq." + str(r["id"]) + "&order=id.desc&limit=3")
+            except _StoreError:
+                rows = []
+            msgs = []
+            for m in (rows or []):
+                if m.get("sender_email") == MODERATOR:
+                    who = "moderator"
+                else:
+                    who = self.handle_of(m.get("sender_email") or "") or "member"
+                msgs.append({"who": who, "text": str(m.get("body") or "")[:140],
+                             "media": bool(m.get("media_url")), "t": str(m.get("created_at") or "")})
+            out["rooms"].append({"name": r.get("name"), "kind": r.get("kind"), "latest": msgs})
+        # DM threads (rooms of kind 'dm') — only this user's own conversations
+        try:
+            dm_rooms = self.store.get("comm_rooms", "kind=eq.dm&order=created_at.desc&limit=50")
+            for r in (dm_rooms or []):
+                if r.get("owner_email") != email and not self._is_dm_peer(r, email):
+                    continue
+                try:
+                    rows = self.store.get("comm_messages", "room_id=eq." + str(r["id"]) + "&order=id.desc&limit=3")
+                except _StoreError:
+                    rows = []
+                msgs = []
+                for m in (rows or []):
+                    who = "you" if m.get("sender_email") == email else (self.handle_of(m.get("sender_email") or "") or "member")
+                    msgs.append({"who": who, "text": str(m.get("body") or "")[:140],
+                                 "media": bool(m.get("media_url")), "t": str(m.get("created_at") or "")})
+                if msgs:
+                    out["dm_threads"].append({"latest": msgs})
+        except _StoreError:
+            pass
+        # unread DM count (read state vs latest)
+        try:
+            me = self.store.one("comm_read_state", "email=eq." + email)
+            last_read = int(me.get("last_read_id") or 0) if me else 0
+            cnt = 0
+            for r in (dm_rooms or []):
+                try:
+                    newest = self.store.get("comm_messages", "room_id=eq." + str(r["id"]) + "&order=id.desc&limit=1")
+                    if newest and int(newest[0].get("id") or 0) > last_read:
+                        cnt += 1
+                except _StoreError:
+                    pass
+            out["unread_dm"] = cnt
+        except _StoreError:
+            pass
+        # active games
+        try:
+            games = self.store.get("comm_games", "status=eq.playing&limit=5")
+            for g in (games or []):
+                if email in (g.get("email_a"), g.get("email_b")):
+                    other = g.get("email_b") if g.get("email_a") == email else g.get("email_a")
+                    out["games"].append({"type": g.get("type") or "tictactoe",
+                                         "with": self.handle_of(other or "") or "member",
+                                         "your_turn": g.get("turn") == email})
+        except _StoreError:
+            pass
+        out["note"] = ("READ-ONLY digest of this user's own community. Quote it when asked to check their "
+                       "chats; never claim to have sent or posted anything, and never reveal other "
+                       "members' DMs.")
+        return out
+
+    def _is_dm_peer(self, room, email):
+        try:
+            mem = self.store.get("comm_members", "room_id=eq." + str(room.get("id")) + "&email=eq." + email + "&limit=1")
+            return bool(mem)
+        except _StoreError:
+            return False
+
     def brief_for(self, email):
         """One line the main AI gets so it knows this user's community identity."""
         try:

@@ -356,7 +356,7 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 
 ## Patch 15 — Community chat, OraCool numbers, usernames, groups & channels, friends-by-number, AI moderator
 
-- **Build marker** `/api/health` → `patch18-chatgames-perms`.
+- **Build marker** `/api/health` → `patch19-mobile-access`.
 - **One-time step (60 seconds): run the community SQL in Supabase.**
   1. Supabase dashboard → **SQL Editor** → **New query**
   2. Paste the entire file **`supabase_patch15.sql`** (in this workspace / repo root) → **Run**.
@@ -373,7 +373,7 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 
 ## Patch 18 — Profile picture fix, room permissions, delete, WhatsApp-style chat extras, in-chat game
 
-- **Build marker** `/api/health` → `patch18-chatgames-perms`.
+- **Build marker** `/api/health` → `patch19-mobile-access`.
 - **One-time step (60 seconds): run the Patch 18 SQL in Supabase.**
   1. Supabase dashboard → **SQL Editor** → **New query**
   2. Paste the entire file **`supabase_patch18.sql`** (repo root) → **Run**.
@@ -393,3 +393,16 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 - **Play a game in chat (iMessage-style):** private conversations show **“🎮 Play Tic-Tac-Toe with @friend”**; the 3×3 board, turn state, win/draw result and **↻ Rematch** live in the conversation, server-authoritative (turns and squares are enforced; polling keeps both sides in sync). (`comm_games` table)
 - **Tests**: `tests/test_patch18.py` (14 tests: bucket payload regression, error passthrough, channel/group permissions, delete, reactions, win/draw/rematch turn enforcement, file placeholder) — suite now **166 tests, all green**.
 - Deploy: Render auto-deploys `main`; confirm the marker, then run the SQL.
+
+## Patch 19 — Spacious phone layout, group media, AI community access, honest device access
+
+- **Build marker** `/api/health` → `patch19-mobile-access`.
+- **No SQL change needed.** `supabase_complete.sql` remains the single complete, current Supabase file — this patch adds no tables or columns (groups use the existing `comm_messages.media_url`/`kind` columns).
+- **Group & channel media**: every room's compose now has a ➕ attach menu — **Photo / Video / Voice note / Document or file** (videos up to 20 MB, files 10 MB, photos 5 MB). In rooms the voice note is recorded live with the mic (WhatsApp-style, tap again to stop & send). Files render as a 📎 download chip; videos with an in-chat player.
+- **The AI can now check your community chat**: ask "check my community chat" / "any new messages?" — the server runs a live read-only digest of your own rooms, DM threads, unread counts and active games and the AI answers from it. It only ever reads your own data, never posts as you, never shows other members' DMs.
+- **Honest app launching**: the AI no longer claims "opened" — it sends a tappable **Open <app> now** launch card (Android intent / iOS scheme / web fallback), because phones only allow app launches from a real tap. Calls and email use the same tappable cards.
+- **Device access**: Settings → **📱 Device access** → one-tap **"Give OraCool full access to this device"** requests microphone, camera and notifications at once and shows the granted/denied status of each. The page honestly explains that a web app only gets what the browser grants.
+- **Phone voice fixed**: speech + audio are now primed on your first tap (phones block audio until a user gesture — the usual reason the AI was silent), TTS off/unavailable now says so instead of staying silent, and microphone problems show the exact permission fix (padlock icon → Site settings → allow Microphone).
+- **Spacious phone UI**: chat-history rows, settings (16 px inputs — stops iOS auto-zoom), nav, community compose and buttons all get bigger touch targets (≥44 px) and more padding on small screens.
+- **Tests**: `tests/test_patch19.py` (13 tests) — suite now **179 tests, all green**.
+- Deploy: Render auto-deploys `main`; confirm the marker. No environment changes, no SQL.

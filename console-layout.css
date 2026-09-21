@@ -105,3 +105,47 @@ main{display:flex}
 .dg-cell:disabled{cursor:default}
 .dg-cell.x{color:#ff8a80}
 .dg-cell.o{color:#83b5eb}
+/* ============ patch19: spacious phone layout, bigger touch targets, media ============ */
+.wa-video{max-width:100%;max-height:300px;border-radius:10px;display:block;background:#000}
+.dg-card{max-width:100%}
+@media(max-width:720px){
+  /* chat history — roomy, big tap targets */
+  .sesslist{padding:10px 12px;gap:9px}
+  .sess{padding:13px 13px 12px;border-radius:13px;position:relative}
+  .sess .st{font-size:15px;font-weight:600}
+  .sess .sp{font-size:13px;margin-top:3px}
+  .sess .sm{font-size:12px;margin-top:4px}
+  .sess .sdel{min-width:44px;min-height:44px;font-size:17px;border-radius:11px}
+  /* settings — spacious + no iOS zoom (16px inputs) */
+  .settings-sheet{font-size:14.5px}
+  .sheet-head h2{font-size:21px}
+  .sheet-body{padding:20px 18px!important}
+  .settings-sheet h4,.settings-sheet h3.ptitle{font-size:17px}
+  .settings-sheet label,.settings-sheet .lbl{font-size:14.5px}
+  .settings-sheet input:not([type=checkbox]),.settings-sheet select,.settings-sheet textarea{font-size:16px!important;padding:13px!important;min-height:50px!important}
+  .settings-sheet .hint{font-size:13px;line-height:1.7}
+  .settings-sheet button{min-height:46px}
+  /* sidebar user card + nav: bigger touch */
+  .side-item{min-height:46px;font-size:15px}
+  .side-new{min-height:48px;font-size:15px}
+  /* AI chat pill: 16px input stops iOS zoom; bigger icon buttons */
+  .gpt-input .chatinput{font-size:16px}
+  .gpt-input .iconbtn{min-width:46px;min-height:46px;font-size:20px}
+  .gpt-input .gpt-send{min-width:46px;min-height:46px;font-size:19px}
+  .chat{font-size:15px}
+  /* community: roomy compose + big attach/send */
+  .wa-compose{padding:10px 10px calc(10px + env(safe-area-inset-bottom))}
+  .wa-ico{min-width:46px;min-height:46px;font-size:21px;border-radius:12px}
+  .wa-ico.rec{background:#e34d59}
+  .wa-send{min-width:48px;min-height:48px;font-size:20px;border-radius:14px}
+  .wa-compose .pill{margin:0 8px}
+  .wa-compose input{font-size:16px}
+  .commmsgs{font-size:15px}
+  .wa-bub{font-size:15px;padding:11px 13px}
+  .chiprow{padding:6px 10px 12px}
+  .chip{font-size:12px;padding:9px 12px}
+  .dmgame-offer{min-height:48px;font-size:14px}
+  .dg-cell{font-size:28px}
+  .wa-file{padding:12px 12px}
+  .wa-file span{font-size:14px}
+}

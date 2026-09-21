@@ -3346,7 +3346,7 @@ def open_app(target):
         return {"ok": True, "app": hit["name"], "url": hit.get("url") or "",
                 "android_intent": hit.get("android") or "", "ios_scheme": hit.get("ios") or "",
                 "play_package": hit.get("play") or "",
-                "note": "Client opens the installed app (Android intent / iOS scheme); falls back to the official website, or Play Store install if known."}
+                "note": "The client renders a tappable 'Open <app>' launch button in the chat (browsers only allow app launches from a real user tap — never claim the app is already open). Android: intent opens the installed app else the website; iOS: scheme, else the website. Falls back to Play Store install when known."}
     slug = re.sub(r"[^a-z0-9]", "", t.split()[0]) if re.match(r"^[a-z0-9 .+-]{2,30}$", t) else ""
     if slug:
         return {"ok": True, "app": t.title(), "url": "https://" + slug + ".com",
@@ -4007,7 +4007,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch18-chatgames-perms",
+        "build": "patch19-mobile-access",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -4944,6 +4944,21 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         return []
     low = t.lower()
     out = []
+    # community chat access (every tier — the AI reads THIS user's own community)
+    if any(k in low for k in ("community", "my chats", "my chat", "my messages", "my message",
+                              "my dms", "my dm", "direct messages", "check my chat", "check my community",
+                              "any new messages", "any messages", "who messaged", "who wrote",
+                              "unread messages", "group chat", "channel message", "lounge")) \
+            and any(k in low for k in ("check", "read", "see", "show", "any", "who", "what",
+                                       "new", "message", "chat", "unread", "community")):
+        if email:
+            try:
+                cb = community_service().chat_brief(email)
+                out.append({"tool": "community", "label": "community chat",
+                            "result": _shrink(cb, 2600)})
+            except Exception as e:
+                out.append({"tool": "community", "label": "community chat",
+                            "result": "community unavailable: " + str(e)[:160]})
     # app launching (every tier — the client fires the intent)
     mo = re.match(r"^\s*(?:please\s+)?(?:open|launch|start|fire up|boot)\s+(?:the\s+|my\s+)?([a-z0-9 .+\-]{2,30}?)\s*(?:app|application)?\s*(?:for me\s*)?[.!]?\s*$", low)
     if mo and "image" not in low and "video" not in low and "file" not in low.split()[-1:]:
@@ -6781,7 +6796,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch18-chatgames-perms",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch19-mobile-access",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -7846,7 +7861,22 @@ class Handler(BaseHTTPRequestHandler):
             "Phone reminders verify the signed-in user’s own phone and require a time/timezone preview. "
             "MAIL WATCH: any user may connect their own mailbox (Devices → Connectors & Alerts → Mail watch with "
             "an app password); you then honestly report unread counts, senders and subjects on request — never "
-            "claim to read message bodies."}
+            "claim to read message bodies. "
+            "COMMUNITY ACCESS: you have LIVE READ access to this user's own OraCool community — their chats, DMs, "
+            "groups, channels, reactions, games and OraCool number — through the community tool; when they ask you "
+            "to check, read or summarize their community chat, answer from that real data and NEVER say you lack "
+            "access. You only read their own data; you cannot post on their behalf and you never reveal other "
+            "members' private DMs to anyone. "
+            "APP LAUNCHING (HONESTY RULE): you cannot open, launch or install apps on the user's device by "
+            "yourself — the operating system only allows a launch from a real user tap. When the user asks to open "
+            "an app, the server has prepared a tappable 'Open <app>' launch card in the chat; tell them to tap that "
+            "button (and mention the web link fallback if it is shown). NEVER say or imply 'opened' / 'it is open "
+            "now' unless they confirm it opened. "
+            "DEVICE ACCESS: you run inside their browser, so your device capabilities are exactly what the browser "
+            "grants: microphone (voice), camera (photos), location, notifications, and tappable launches "
+            "(app cards, tel:/sms:/mailto:). You cannot install apps, read other apps' data, or control the OS; "
+            "Settings → Device access has a one-tap 'Give OraCool full access' that requests microphone, camera and "
+            "notifications at once. Be truthful about these limits instead of pretending."}
         ] + messages
         # Community identity: the AI knows this user's OraCool number + username.
         try:
@@ -9628,13 +9658,18 @@ def upload_community_media(email, data_url):
         label = "Photo is too large (max 5 MB)."
         ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[mime]
         folder = "dm"
+    elif mime in ("video/mp4", "video/webm"):
+        limit = 20 * 1024 * 1024
+        label = "That video is too large (max 20 MB)."
+        ext = "mp4" if "mp4" in mime else "webm"
+        folder = "media"
     elif mime in _FILE_MIME:
         limit = 10 * 1024 * 1024
         label = "That file is too large (max 10 MB)."
         ext = _FILE_MIME[mime]
         folder = "files"
     else:
-        return {"error": "Unsupported type — send a photo, voice note or a file (PDF, Word, Excel, PowerPoint, TXT, CSV, ZIP, JSON)."}
+        return {"error": "Unsupported type — send a photo, video, voice note or a file (PDF, Word, Excel, PowerPoint, TXT, CSV, ZIP, JSON)."}
     if not data or len(data) > limit:
         return {"error": label}
     path = "%s/%s_%d.%s" % (folder, hashlib.sha1((email or "").encode()).hexdigest()[:8], int(time.time()), ext)
@@ -9683,7 +9718,8 @@ def community_route(action, body, self_host=""):
         if action == "room/messages":
             return svc.room_messages(me, str(body.get("room") or "lounge"), body.get("after"))
         if action == "room/send":
-            return svc.room_send(me, str(body.get("room") or "lounge"), body.get("body"))
+            return svc.room_send(me, str(body.get("room") or "lounge"), body.get("body"),
+                                 media_url=str(body.get("media_url") or ""))
         if action == "people":
             return svc.people(me, body.get("q"))
         if action == "lookup":
