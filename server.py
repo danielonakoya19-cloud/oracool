@@ -2392,7 +2392,11 @@ def _cvron_video(prompt, attempts=2):
 # Lightning 480p model (auto-failover; each is health-probed via /monitoring).
 HF_ROUTER = "https://router.huggingface.co"
 HF_WAN22_SPACES = [
+    ("kekkonapoli", "https://kekkonapoli-wan2-2-14b-i2v-480p-lightning-nsfw-diffusers.hf.space"),
+    ("kingkladze", "https://kingkladze-wan2-2-14b-i2v-480p-lightning-nsfw-diffusers.hf.space"),
     ("tmtanu", "https://tmtanu-wan2-2-14b-i2v-480p-lightning-nsfw-diffusers.hf.space"),
+    ("gum798", "https://gum798-wan2-2-i2v-lightning-4-8step-custom.hf.space"),
+    ("ivannm", "https://ivannm-wan2-2-i2v-lightning-4-8step-custom-copy.hf.space"),
     ("saravutw", "https://saravutw-wan2-2-i2v-lightning-4-8step-custom.hf.space"),
 ]
 
