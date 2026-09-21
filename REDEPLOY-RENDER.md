@@ -356,7 +356,7 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 
 ## Patch 15 — Community chat, OraCool numbers, usernames, groups & channels, friends-by-number, AI moderator
 
-- **Build marker** `/api/health` → `patch15-community-ai-moderation`.
+- **Build marker** `/api/health` → `patch18-chatgames-perms`.
 - **One-time step (60 seconds): run the community SQL in Supabase.**
   1. Supabase dashboard → **SQL Editor** → **New query**
   2. Paste the entire file **`supabase_patch15.sql`** (in this workspace / repo root) → **Run**.
@@ -370,3 +370,26 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 - **Privacy & IP safety**: no community table stores an IP address and no API returns one IP to another member; RLS is on every new table with zero public policies (only the server’s service-role key touches them); chat shows usernames + numbers only.
 - **Tables created**: `comm_profiles`, `comm_rooms`, `comm_members`, `comm_messages`, `comm_reports`, `comm_cases`, `comm_contacts`, `comm_read_state` + sequence `comm_number_seq`.
 - Deploy: Render auto-deploys `main`; confirm the marker. No environment changes.
+
+## Patch 18 — Profile picture fix, room permissions, delete, WhatsApp-style chat extras, in-chat game
+
+- **Build marker** `/api/health` → `patch18-chatgames-perms`.
+- **One-time step (60 seconds): run the Patch 18 SQL in Supabase.**
+  1. Supabase dashboard → **SQL Editor** → **New query**
+  2. Paste the entire file **`supabase_patch18.sql`** (repo root) → **Run**.
+  3. Idempotent; safe to run again. Until it has run, the new pieces (reactions, games, the group “only I can post” switch) show a short *“being set up — run the Patch 18 SQL”* note; everything else (profile pictures, files, channels, deletion) already works.
+- **Profile pictures now save.** The Supabase storage API requires the bucket `name` in the create body; the old code sent only `id` + `public`, Supabase answered 400 and the server silently treated it as “bucket exists” — so every upload failed with “Could not save the picture”. The payload is fixed, real errors are no longer masked, and the exact failure reason is now shown to the user. The public `avatars` and `media` buckets exist in production (verified: upload + public read 200).
+- **Fixed a hidden bug found while testing:** the live database still carried the old `comm_messages.kind` check constraint (without `'voice'`), which rejected **every photo / voice-note / file DM** with a 400. The server now retries with a compatible kind, and the SQL repairs the constraint permanently.
+- **Sidebar scrolls.** The middle of the left sidebar (Menu + Chats) is now its own scroll area on short screens; the brand, + New chat and the account card stay pinned.
+- **Rooms: delete + posting permissions.**
+  - **Channels**: only the creator (the channel admin) can post. Non-owners see a lock banner and no compose box; the server enforces it too.
+  - **Groups**: the creator gets a **“🔒 Only I can post / 🔓 Anyone can post”** switch (stored in `comm_rooms.owner_only_post`); locked groups behave the same as channels for members.
+  - **Delete**: the creator (or an administrator) can delete their group/channel (🗑 in the room header) — messages, members, reports and games go with it.
+- **WhatsApp-style extras (suitable for this product, all in Community):**
+  - **Tap reactions** — click any message bubble → 6-emoji bar (❤️ 👍 😂  😢 🙏); counts render under the bubble; toggle to undo. (`comm_messages.reactions`)
+  - **Reply** — ↩ on a message quotes it in the compose bar (cancel with ✕); the quote is prefixed to the sent text.
+  - **Files** — the ➕ attach menu in private chats now offers **Photo / Voice note / Document or file** (PDF, Word, Excel, PowerPoint, TXT, CSV, ZIP, JSON up to 10 MB); files render as a 📎 download chip.
+  - **Emoji** button added to the main AI chat pill input (same picker as Community).
+- **Play a game in chat (iMessage-style):** private conversations show **“🎮 Play Tic-Tac-Toe with @friend”**; the 3×3 board, turn state, win/draw result and **↻ Rematch** live in the conversation, server-authoritative (turns and squares are enforced; polling keeps both sides in sync). (`comm_games` table)
+- **Tests**: `tests/test_patch18.py` (14 tests: bucket payload regression, error passthrough, channel/group permissions, delete, reactions, win/draw/rematch turn enforcement, file placeholder) — suite now **166 tests, all green**.
+- Deploy: Render auto-deploys `main`; confirm the marker, then run the SQL.

@@ -4007,7 +4007,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch17-chatgpt-layout",
+        "build": "patch18-chatgames-perms",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6781,7 +6781,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch17-chatgpt-layout",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch18-chatgames-perms",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -9410,39 +9410,57 @@ def verified_status(email):
 _STORAGE_BUCKETS = set()
 
 
+def _storage_detail(e):
+    try:
+        raw = e.read()[:300].decode("utf-8", "ignore")
+        try:
+            return str(json.loads(raw).get("message") or raw)
+        except Exception:
+            return raw
+    except Exception:
+        return str(e)[:160]
+
+
 def storage_ensure_bucket(name):
+    """Returns (ok, error). Supabase requires both id AND name in the body."""
     url, svc = key("SUPABASE_URL"), key("SUPABASE_SERVICE_KEY")
     if not url or not svc:
-        return False
+        return False, "Supabase storage is not configured on the server."
     if name in _STORAGE_BUCKETS:
-        return True
+        return True, ""
     try:
         http_fetch(url.rstrip("/") + "/storage/v1/bucket", method="POST",
                    headers={"apikey": svc, "Authorization": "Bearer " + svc,
                             "Content-Type": "application/json"},
-                   json_body={"id": name, "public": True}, timeout=20)
+                   json_body={"id": name, "name": name, "public": True}, timeout=20)
     except urllib.error.HTTPError as e:
-        if e.code not in (400, 409):
-            return False
-    except Exception:
-        return False
+        detail = _storage_detail(e)
+        if e.code == 409 or (e.code == 400 and "exist" in detail.lower()):
+            _STORAGE_BUCKETS.add(name)
+            return True, ""
+        return False, "Could not create the storage bucket: " + detail[:140]
+    except Exception as e:
+        return False, "Could not create the storage bucket: " + str(e)[:120]
     _STORAGE_BUCKETS.add(name)
-    return True
+    return True, ""
 
 
 def storage_put(bucket, path, data, content_type):
-    """Upload bytes to a public bucket; returns the public URL or None."""
+    """Upload bytes to a public bucket; returns (public_url, error)."""
     url, svc = key("SUPABASE_URL"), key("SUPABASE_SERVICE_KEY")
-    if not url or not svc or not storage_ensure_bucket(bucket):
-        return None
+    ok, err = storage_ensure_bucket(bucket)
+    if not ok:
+        return None, err
     try:
         http_fetch(url.rstrip("/") + "/storage/v1/object/" + bucket + "/" + path, method="POST",
                    headers={"apikey": svc, "Authorization": "Bearer " + svc,
                             "Content-Type": content_type, "x-upsert": "true"},
-                   data=data, timeout=90)
-        return url.rstrip("/") + "/storage/v1/object/public/" + bucket + "/" + path
-    except Exception:
-        return None
+                   data=data, timeout=120)
+        return url.rstrip("/") + "/storage/v1/object/public/" + bucket + "/" + path, ""
+    except urllib.error.HTTPError as e:
+        return None, "Upload failed: " + _storage_detail(e)[:160]
+    except Exception as e:
+        return None, "Upload failed: " + str(e)[:140]
 
 
 def data_url_decode(data_url):
@@ -9578,9 +9596,9 @@ def set_community_avatar(email, data_url):
     if not data or len(data) > 2 * 1024 * 1024:
         return {"error": "Picture is too large (max 2 MB)."}
     ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[mime]
-    url = storage_put("avatars", hashlib.sha1((email or "").encode()).hexdigest()[:16] + "." + ext, data, mime)
+    url, err = storage_put("avatars", hashlib.sha1((email or "").encode()).hexdigest()[:16] + "." + ext, data, mime)
     if not url:
-        return {"error": "Could not save the picture. Try again in a moment."}
+        return {"error": "Could not save the picture. " + (err or "Try again in a moment.")}
     try:
         community_service().store.patch("comm_profiles", "email=eq." + email.lower(), {"avatar_url": url})
     except Exception:
@@ -9590,22 +9608,39 @@ def set_community_avatar(email, data_url):
 
 def upload_community_media(email, data_url):
     mime, data = data_url_decode(data_url)
+    _FILE_MIME = {
+        "application/pdf": "pdf", "text/plain": "txt", "text/csv": "csv",
+        "application/json": "json", "application/zip": "zip",
+        "application/msword": "doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "application/vnd.ms-excel": "xls",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+        "application/vnd.ms-powerpoint": "ppt",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    }
     if mime in ("audio/webm", "audio/ogg", "audio/mp4"):
         limit = 8 * 1024 * 1024
         label = "Voice note is too large (max about one minute)."
         ext = "webm" if "webm" in mime else ("ogg" if "ogg" in mime else "m4a")
+        folder = "dm"
     elif mime in ("image/jpeg", "image/png", "image/webp"):
         limit = 5 * 1024 * 1024
         label = "Photo is too large (max 5 MB)."
         ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[mime]
+        folder = "dm"
+    elif mime in _FILE_MIME:
+        limit = 10 * 1024 * 1024
+        label = "That file is too large (max 10 MB)."
+        ext = _FILE_MIME[mime]
+        folder = "files"
     else:
-        return {"error": "Unsupported media type (voice note or JPG/PNG/WebP photo)."}
+        return {"error": "Unsupported type — send a photo, voice note or a file (PDF, Word, Excel, PowerPoint, TXT, CSV, ZIP, JSON)."}
     if not data or len(data) > limit:
         return {"error": label}
-    path = "dm/%s_%d.%s" % (hashlib.sha1((email or "").encode()).hexdigest()[:8], int(time.time()), ext)
-    url = storage_put("media", path, data, mime)
+    path = "%s/%s_%d.%s" % (folder, hashlib.sha1((email or "").encode()).hexdigest()[:8], int(time.time()), ext)
+    url, err = storage_put("media", path, data, mime)
     if not url:
-        return {"error": "Could not save the voice note. Try again."}
+        return {"error": "Could not save that. " + (err or "Try again in a moment.")}
     return {"ok": True, "media_url": url}
 
 
@@ -9670,6 +9705,16 @@ def community_route(action, body, self_host=""):
                               [str(x) for x in ids if x], number=body.get("number"))
         if action == "rooms/report":
             return svc.report_room(me, str(body.get("slug") or body.get("room") or ""), body.get("reason"))
+        if action == "rooms/delete":
+            return svc.delete_room(me, str(body.get("slug") or body.get("room") or ""))
+        if action == "rooms/owner-only":
+            return svc.room_set_owner_only(me, str(body.get("slug") or body.get("room") or ""), bool(body.get("on")))
+        if action == "react":
+            return svc.react(me, body.get("message_id"), body.get("emoji"))
+        if action == "game/start":
+            return svc.game_start(me, body.get("username") or body.get("handle"))
+        if action == "game/move":
+            return svc.game_move(me, body.get("game_id"), body.get("idx"))
         if action == "avatar":
             return set_community_avatar(me, body.get("data_url"))
         if action == "media":

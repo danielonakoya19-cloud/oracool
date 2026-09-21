@@ -72,3 +72,36 @@ main{display:flex}
 @media(prefers-reduced-motion:reduce){.settings-sheet[open]{animation:none}}
 
 .reactorhead .orbcore{width:100%!important;height:100%!important}.reactorhead .orbcore .emblem{width:50%;height:50%}.reactorhead .orbring{width:32px;height:32px;margin:-16px 0 0 -16px}
+
+/* ============ patch18: sidebar scroll, reactions, reply, files, chat game ============ */
+.sidebar-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:4px;scrollbar-width:thin;scrollbar-color:rgba(120,170,210,.25) transparent;padding-right:3px;margin-right:-3px}
+.sidebar-scroll::-webkit-scrollbar{width:6px}
+.sidebar-scroll::-webkit-scrollbar-thumb{background:rgba(120,170,210,.22);border-radius:6px}
+.sidebar-scroll::-webkit-scrollbar-track{background:transparent}
+.wa-reps{display:flex;gap:4px;flex-wrap:wrap;margin:3px 2px 0 38px;max-width:88%}
+.wa-row.me .wa-reps{margin-left:0;justify-content:flex-end}
+.wa-rep{display:inline-flex;align-items:center;gap:3px;background:#111b21;border:1px solid #2a3942;border-radius:11px;padding:1px 7px;font-size:12px;line-height:18px;color:#cfd8dc}
+.wa-repbar{display:flex;gap:2px;padding:5px}
+.wa-repbar button{border:none;background:transparent;font-size:21px;line-height:1;padding:4px 6px;border-radius:9px;cursor:pointer;transition:transform .12s}
+.wa-repbar button:hover{transform:scale(1.25);background:rgba(120,170,210,.12)}
+.wa-quote{display:flex;align-items:center;gap:8px;background:#0d1a24;border:1px solid #233645;border-radius:10px 10px 0 0;padding:6px 10px;font-size:12px;color:#8696a0}
+.wa-quote span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wa-quote b{color:#cfd8dc}
+.wa-quote button{border:none;background:transparent;color:#8696a0;cursor:pointer;font-size:13px;padding:2px 4px;flex:none}
+.wa-quote button:hover{color:#ff8a80}
+.wa-file{display:flex;align-items:center;gap:8px;background:#13242f;border:1px solid #2a3942;border-radius:10px;padding:9px 11px;margin:2px 0 6px;text-decoration:none;color:#e9edef;max-width:250px}
+.wa-file span{font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wa-file small{color:#8696a0;font-size:10px;flex:none}
+.wa-file:hover{background:#182e3a}
+.dmgame{padding:0 12px 6px}
+.dmgame-offer{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(83,181,235,.08);border:1px dashed rgba(83,181,235,.4);color:#7cc7f2;border-radius:12px;padding:9px;font-size:13px;cursor:pointer;font-family:inherit}
+.dmgame-offer:hover{background:rgba(83,181,235,.16)}
+.dg-card{background:#0d1a24;border:1px solid #233645;border-radius:14px;padding:12px;margin:4px 2px}
+.dg-head{display:flex;align-items:center;gap:10px;font-size:13px;color:#e9edef;margin-bottom:10px;flex-wrap:wrap}
+.dg-status{flex:1;font-size:12px;color:#8696a0;min-width:120px}
+.dg-board{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-width:240px;margin:0 auto}
+.dg-cell{aspect-ratio:1;border-radius:10px;border:1px solid #2a3942;background:#111b21;font-size:24px;font-weight:800;color:#8696a0;cursor:pointer;transition:background .15s;padding:0}
+.dg-cell:hover:not(:disabled){background:#16293a}
+.dg-cell:disabled{cursor:default}
+.dg-cell.x{color:#ff8a80}
+.dg-cell.o{color:#83b5eb}

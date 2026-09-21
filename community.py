@@ -433,6 +433,7 @@ class Service:
             out.append({"id": r.get("slug"), "name": r.get("name"), "about": r.get("description", ""),
                         "kind": r.get("kind"), "owner": owner,
                         "banned": bool(r.get("banned")),
+                        "owner_only": bool(r.get("owner_only_post")),
                         "yours": bool(viewer and (r.get("owner_email") == viewer))})
         out.sort(key=lambda x: (x["kind"] != "room", x["kind"] != "group", x["name"]))
         return out
@@ -523,6 +524,7 @@ class Service:
                 "number": row.get("oracool_number"), "avatar": row.get("avatar_url", ""),
                 "verified": bool(self.d.get("is_verified") and self.d["is_verified"](sender)),
                 "body": m.get("body", ""), "media_url": m.get("media_url", ""),
+                "reactions": self._reactions_count(m.get("reactions")),
                 "t": m.get("created_at", ""), "mine": sender == viewer,
                 "admin": bool(sender and self.d["is_admin"](sender)), "mod": False}
 
@@ -577,6 +579,14 @@ class Service:
             return {"error": "This " + str(r.get("kind") or "room") + " has been banned by an administrator.", "banned": True}
         if r.get("kind") == "dm":
             return {"error": "Use the DM thread for that."}
+        # Channels: only the creator (channel admin) may post. Groups: locked when the
+        # creator switches on "only I can post". Administrators are always allowed.
+        if r.get("kind") == "channel":
+            if r.get("owner_email") != email and not self.d["is_admin"](email):
+                return {"error": "This is a channel — only its creator (the channel admin) can post here.", "locked": True}
+        elif r.get("kind") == "group" and r.get("owner_only_post"):
+            if r.get("owner_email") != email and not self.d["is_admin"](email):
+                return {"error": "This group is locked — only the group admin can post here.", "locked": True}
         body = _clean(body, MSG_MAX)
         if not body:
             return {"error": "Write a message first."}
@@ -719,17 +729,26 @@ class Service:
         rows = list(reversed(rows[-limit:]))
         self._mark_read(email, r["id"], rows[-1].get("id") if rows else self._read_state(email, r["id"]))
         pros = self._profiles_for([m.get("sender_email") for m in rows])
+        game = self._latest_game(r["id"])
         return {"username": self.handle_of(peer), "mod": peer == MODERATOR, "online": self._online(peer),
                 "avatar": (self._prof(peer) or {}).get("avatar_url", ""),
                 "peer_seen_upto": self._read_state(peer, r["id"]),
+                "game": self._game_view(game, email),
                 "messages": [self._view(m, email, pros) for m in rows]}
 
     def _dm_append(self, sender, recipient, body, mod=False, media_url=""):
         r = self._ensure_dm_room(sender if sender != MODERATOR else recipient, recipient if sender != MODERATOR else sender)
-        m = self.store.insert("comm_messages",
-                              {"room_id": r["id"], "sender_email": sender, "body": body,
-                               "kind": "mod" if mod else ("voice" if media_url else "chat"),
-                               "media_url": media_url or ""})
+        kind = "mod" if mod else ("voice" if media_url else "chat")
+        try:
+            m = self.store.insert("comm_messages",
+                                  {"room_id": r["id"], "sender_email": sender, "body": body,
+                                   "kind": kind, "media_url": media_url or ""})
+        except _StoreError:
+            # Legacy databases still carry a kind check-constraint without 'voice';
+            # the column is informational (clients render from media_url), retry as 'chat'.
+            m = self.store.insert("comm_messages",
+                                  {"room_id": r["id"], "sender_email": sender, "body": body,
+                                   "kind": "chat", "media_url": media_url or ""})
         if sender != MODERATOR and m:
             self._mark_read(sender, r["id"], m.get("id"))
         return m
@@ -744,8 +763,12 @@ class Service:
         media_url = str(media_url or "")
         if media_url and "storage/v1/object/public/" not in media_url:
             return {"error": "Attachments must be uploaded first."}
-        _is_photo = media_url.lower().split(".")[-1].split("?")[0] in ("jpg", "jpeg", "png", "webp")
-        body = _clean(body, MSG_MAX) or ("🖼️ Photo" if media_url and _is_photo else ("🎤 Voice note" if media_url else ""))
+        _ext = media_url.lower().split(".")[-1].split("?")[0]
+        _is_photo = _ext in ("jpg", "jpeg", "png", "webp")
+        _is_file = _ext in ("pdf", "txt", "csv", "json", "zip", "doc", "docx", "xls", "xlsx", "ppt", "pptx")
+        body = _clean(body, MSG_MAX) or ("🖼️ Photo" if media_url and _is_photo
+                                         else ("📎 File" if media_url and _is_file
+                                               else ("🎤 Voice note" if media_url else "")))
         if not body:
             return {"error": "Write a message first."}
         err = self._rate_ok(email)
@@ -930,6 +953,199 @@ class Service:
         rr = self._room(str(slug or ""))
         return {"ok": True, "room": {"id": rr.get("slug"), "name": rr.get("name"), "kind": rr.get("kind"),
                                      "banned": bool(rr.get("banned")), "ban_reason": rr.get("ban_reason", "")}}
+
+    # --------------------------------------- room permissions, delete, reactions, games
+    @staticmethod
+    def _reactions_count(raw):
+        try:
+            r = json.loads(raw or "{}")
+        except Exception:
+            r = {}
+        if not isinstance(r, dict):
+            return {}
+        return {str(k): len(v) for k, v in r.items() if isinstance(v, list) and v}
+
+    def room_set_owner_only(self, email, slug, on):
+        self._need()
+        email = email.lower()
+        r = self._room(str(slug or ""))
+        if not r or r.get("kind") not in ("group", "channel"):
+            return {"error": "Only your groups and channels support posting settings."}
+        if r.get("kind") == "channel":
+            return {"error": "Channels are always owner-only — no setting needed."}
+        if r.get("owner_email") != email and not self.d["is_admin"](email):
+            return {"error": "Only the group creator (or an administrator) can change this."}
+        try:
+            self.store.patch("comm_rooms", "id=eq." + r["id"], {"owner_only_post": bool(on)})
+        except _StoreError:
+            return {"error": "Room settings are being set up — run the Patch 18 SQL in Supabase, then try again."}
+        rr = self._room(str(slug or "")) or r
+        return {"ok": True, "owner_only": bool(rr.get("owner_only_post"))}
+
+    def delete_room(self, email, slug):
+        self._need()
+        email = email.lower()
+        r = self._room(str(slug or ""))
+        if not r:
+            return {"error": "Unknown room."}
+        if r.get("kind") not in ("group", "channel"):
+            return {"error": "You can only delete your own groups and channels."}
+        if r.get("owner_email") != email and not self.d["is_admin"](email):
+            return {"error": "Only the creator (or an administrator) can delete this " + str(r.get("kind")) + "."}
+        for t in ("comm_games", "comm_room_reports", "comm_members", "comm_messages"):
+            try:
+                self.store.delete(t, "room_id=eq." + str(r["id"]))
+            except _StoreError:
+                pass
+        try:
+            self.store.delete("comm_rooms", "id=eq." + str(r["id"]))
+        except _StoreError as e:
+            return {"error": "Could not delete it yet: " + str(e)[:120]}
+        self._safe_notify("moderation", str(r.get("kind") or "room") + " deleted: #" + str(r.get("name") or slug),
+                          "Deleted by " + email)
+        return {"ok": True, "deleted": r.get("name") or slug}
+
+    REACTION_SET = ("\u2764\ufe0f", "\U0001f44d", "\U0001f602", "\U0001f62e", "\U0001f622", "\U0001f64f")
+
+    def react(self, email, message_id, emoji):
+        self._need()
+        email = email.lower()
+        emoji = str(emoji or "")
+        if emoji not in self.REACTION_SET:
+            return {"error": "Pick one of the quick reactions."}
+        try:
+            mid = str(int(message_id))
+        except Exception:
+            return {"error": "Message not found."}
+        try:
+            m = self.store.one("comm_messages", "id=eq." + mid)
+        except _StoreError:
+            m = None
+        if not m:
+            return {"error": "Message not found (it may be from before reactions existed)."}
+        try:
+            reps = json.loads(m.get("reactions") or "{}")
+        except Exception:
+            reps = {}
+        if not isinstance(reps, dict):
+            reps = {}
+        users = reps.get(emoji)
+        if not isinstance(users, list):
+            users = []
+        if email in users:
+            users.remove(email)
+        else:
+            users.append(email)
+        if users:
+            reps[emoji] = users
+        else:
+            reps.pop(emoji, None)
+        try:
+            self.store.patch("comm_messages", "id=eq." + mid, {"reactions": json.dumps(reps)})
+        except _StoreError:
+            return {"error": "Reactions are being set up — run the Patch 18 SQL in Supabase, then try again."}
+        return {"ok": True, "reactions": self._reactions_count(json.dumps(reps)), "on": email in users}
+
+    # --------------------------------------------- 2-player chat games (Tic-Tac-Toe)
+    _WIN_LINES = ((0, 1, 2), (3, 4, 5), (6, 7, 8), (0, 3, 6), (1, 4, 7), (2, 5, 8), (0, 4, 8), (2, 4, 6))
+
+    @staticmethod
+    def _parse_board(b):
+        try:
+            rows = json.loads(b or "[]")
+            if isinstance(rows, list) and len(rows) == 9:
+                return [None if x is None else str(x) for x in rows]
+        except Exception:
+            pass
+        return [None] * 9
+
+    @classmethod
+    def _winner_of(cls, board):
+        for a, b2, c in cls._WIN_LINES:
+            if board[a] is not None and board[a] == board[b2] == board[c]:
+                return board[a]
+        return None
+
+    def _game_view(self, g, viewer):
+        if not g:
+            return None
+        a, b = g.get("email_a"), g.get("email_b")
+        you = "X" if a == viewer else ("O" if b == viewer else None)
+        return {"id": g.get("id"), "type": g.get("type") or "tictactoe",
+                "board": self._parse_board(g.get("board")), "you": you,
+                "turn_is_you": g.get("turn") == viewer,
+                "status": g.get("status") or "playing",
+                "winner": self.handle_of(g.get("winner") or "") or "",
+                "you_won": g.get("winner") == viewer,
+                "created": str(g.get("created_at") or "")}
+
+    def _latest_game(self, room_id):
+        try:
+            rows = self.store.get("comm_games", "room_id=eq." + str(room_id) + "&order=id.desc&limit=1")
+            return rows[0] if rows else None
+        except _StoreError:
+            return None
+
+    def game_start(self, email, username):
+        self._need()
+        email = email.lower()
+        peer = self._resolve_peer(email, username)
+        if not peer or peer == MODERATOR:
+            return {"error": "No member with that username."}
+        self.ensure_profile(email)
+        r = self._ensure_dm_room(email, peer)
+        g = self._latest_game(r["id"])
+        if g and g.get("status") == "playing":
+            return {"ok": True, "game": self._game_view(g, email), "resumed": True}
+        try:
+            g = self.store.insert("comm_games",
+                                  {"room_id": r["id"], "email_a": email, "email_b": peer,
+                                   "type": "tictactoe", "board": json.dumps([None] * 9),
+                                   "turn": email, "status": "playing", "winner": None})
+        except _StoreError as e:
+            return {"error": "Games are being set up — run the Patch 18 SQL in Supabase, then try again."}
+        return {"ok": True, "game": self._game_view(g, email)}
+
+    def game_move(self, email, game_id, idx):
+        self._need()
+        email = email.lower()
+        try:
+            gid = str(int(game_id))
+            idx = int(idx)
+        except Exception:
+            return {"error": "Bad move."}
+        try:
+            g = self.store.one("comm_games", "id=eq." + gid)
+        except _StoreError:
+            g = None
+        if not g:
+            return {"error": "Games are being set up — run the Patch 18 SQL in Supabase, then try again."}
+        if email not in (g.get("email_a"), g.get("email_b")):
+            return {"error": "You are not in this game."}
+        if g.get("status") != "playing":
+            return {"error": "This game has ended — start a rematch."}
+        if g.get("turn") != email:
+            return {"error": "Wait — it's not your turn yet."}
+        board = self._parse_board(g.get("board"))
+        if not (0 <= idx <= 8) or board[idx] is not None:
+            return {"error": "That square is taken."}
+        me = "X" if g.get("email_a") == email else "O"
+        board[idx] = me
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        win = self._winner_of(board)
+        if win is not None:
+            patch = {"board": json.dumps(board), "status": "won", "winner": email, "updated_at": now}
+        elif all(x is not None for x in board):
+            patch = {"board": json.dumps(board), "status": "draw", "updated_at": now}
+        else:
+            other = g.get("email_b") if g.get("email_a") == email else g.get("email_a")
+            patch = {"board": json.dumps(board), "turn": other, "updated_at": now}
+        try:
+            self.store.patch("comm_games", "id=eq." + gid, patch)
+        except _StoreError as e:
+            return {"error": "Could not save the move: " + str(e)[:120]}
+        g2 = self.store.one("comm_games", "id=eq." + gid) or g
+        return {"ok": True, "game": self._game_view(g2, email)}
 
     # ------------------------------------------------------------ the AI review
     def dossier(self, reported, reporters):

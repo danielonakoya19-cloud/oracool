@@ -615,6 +615,7 @@
       <div><div class="sb-title">ORACOOL AI</div><div class="sb-sub">Personal Intelligence</div></div>
     </div>
     <button class="side-new" id="newChatBtn" title="Start a new chat">＋ New chat</button>
+    <div class="sidebar-scroll">
     <div class="side-label">Menu</div>
     <nav class="side-nav" id="sideNav">
       <div class="side-item active" data-v="chat"><span class="sic">💬</span>Chat</div>
@@ -635,6 +636,7 @@
     </nav>
     <div class="side-label">Chats</div>
     <div class="sesslist" id="sessList"><div class="muted" style="padding:8px;font-size:11px">Sign in to keep your chat history across devices.</div></div>
+    </div>
     <div class="sb-foot">
       <div class="side-user" id="acctChip" title="Account">
         <span class="avatar" id="acctAvatar">?</span>
@@ -686,6 +688,7 @@
         <div class="gpt-input">
           <button class="iconbtn" id="attachBtn" title="Attach a file (PDF, Word, Excel, text, code…)">📎</button>
           <input type="text" class="chatinput" id="input" placeholder="Ask OraCool anything…" autocomplete="off">
+          <button class="iconbtn" id="chatEmoji" title="Emoji">😀</button>
           <button class="iconbtn" id="micBtn" title="Speak to OraCool">🎙️</button>
           <button class="gpt-send" id="sendBtn" title="Send">↑</button>
           <input type="file" id="fileInput" style="display:none" multiple>
@@ -1850,6 +1853,7 @@ function mediaHtml(url){
   const ext=(url.toLowerCase().split('/').pop().split('?')[0].split('.').pop()||'');
   if(['jpg','jpeg','png','webp','gif'].includes(ext)) return `<img class="wa-img" src="${escapeHtml(url)}" alt="photo">`;
   if(['webm','ogg','m4a','mp4','opus','mp3'].includes(ext)) return `<audio class="cmessaudio" controls preload="metadata" src="${escapeHtml(url)}"></audio>`;
+  if(['pdf','txt','csv','json','zip','doc','docx','xls','xlsx','ppt','pptx'].includes(ext)) return `<a class="wa-file" href="${escapeHtml(url)}" target="_blank" rel="noopener">📎 <span>Download file</span> <small>· ${escapeHtml(ext.toUpperCase())}</small></a>`;
   return '';
 }
 function waDateLabel(t){
@@ -1917,6 +1921,36 @@ async function editCommProfile(){
   if(r.error){ addErr('Community: '+r.error); return; }
   addSystemNote('You are now <b>@'+escapeHtml(r.profile.username||u)+'</b> in the community.'); renderCommunity();
 }
+/* ---------- 2-player Tic-Tac-Toe inside the DM ---------- */
+function renderDmGame(g){
+  const el=document.getElementById('dmGame'); if(!el) return;
+  if(!g){
+    el.innerHTML=`<button class="dmgame-offer" id="dmGameStart" type="button">🎮 <span>Play Tic-Tac-Toe with @${escapeHtml(COMM.peer||'')}</span></button>`;
+    const b=document.getElementById('dmGameStart');
+    if(b) b.onclick=async()=>{ b.disabled=true; b.innerHTML='Starting…';
+      const r=await post('/api/community/game/start',{username:COMM.peer});
+      if(r.error){ addErr('Game: '+r.error); renderDmGame(null); return; }
+      addSystemNote('🎮 Tic-Tac-Toe started — you are ✕.');
+      renderDmGame(r.game);
+    };
+    return;
+  }
+  const over=g.status!=='playing';
+  let status;
+  if(over) status = g.status==='draw' ? "It's a draw — no winner." : (g.you_won ? '🏆 You won the game!' : '🏆 @'+escapeHtml(g.winner||COMM.peer)+' wins this round.');
+  else status = (g.turn_is_you ? 'Your move ' : 'Waiting for @'+escapeHtml(COMM.peer||'')+' ') + (g.you ? '· you are '+g.you : '');
+  el.innerHTML=`<div class="dg-card"><div class="dg-head">🎮 <b>Tic-Tac-Toe</b><span class="dg-status">${status}</span>${over?'<button class="btn small primary" id="dmRematch" type="button">↻ Rematch</button>':''}</div><div class="dg-board">${g.board.map((c,i)=>`<button class="dg-cell ${c?('filled '+(c==='X'?'x':'o')):''}" type="button" data-i="${i}" ${over||!g.turn_is_you?'disabled':''}>${c==='X'?'✕':(c==='O'?'◯':'')}</button>`).join('')}</div></div>`;
+  el.querySelectorAll('.dg-cell').forEach(c=>c.onclick=async()=>{
+    el.querySelectorAll('.dg-cell').forEach(x=>x.disabled=true);
+    const r=await post('/api/community/game/move',{game_id:g.id, idx:c.dataset.i});
+    if(r.error){ addErr('Game: '+r.error); renderDmGame(g); return; }
+    if(r.game && r.game.status!=='playing') addSystemNote(r.game.status==='draw' ? '🎮 It’s a draw.' : (r.game.you_won ? '🏆 You won the game!' : '🏮 '+(r.game.winner||'')+' wins.'));
+    renderDmGame(r.game);
+  });
+  const rm=document.getElementById('dmRematch');
+  if(rm) rm.onclick=async()=>{ const r=await post('/api/community/game/start',{username:COMM.peer}); if(r.error) addErr('Game: '+r.error); else { addSystemNote('🎮 Rematch started.'); renderDmGame(r.game); } };
+}
+
 async function commPoll(){
   if(!session || isBlockedSession()){ return; }
   if(!commActive()){ return; }
@@ -1931,22 +1965,28 @@ setInterval(async()=>{ try{ if(session && !isBlockedSession() && !commActive() &
 function kindTag(k){ return k==='room'?'<span class="tag" style="color:var(--cyan2)">ROOM</span> ':(k==='channel'?'<span class="tag" style="color:var(--gold)">CHANNEL</span> ':(k==='group'?'<span class="tag" style="color:var(--ok)">GROUP</span> ':'')); }
 function renderCommRooms(){
   const rooms=(COMM.me&&COMM.me.rooms)||[]; const cur=rooms.find(r=>r.id===COMM.room)||rooms[0]||{id:'lounge',name:'Lounge'}; COMM.room=cur.id;
-  $('#commBody').innerHTML=`<div class="chiprow" style="padding:0 0 8px; align-items:center">${rooms.map(r=>`<span class="chip ${r.id===COMM.room?'on':''}" data-r="${escapeHtml(r.id)}" title="${escapeHtml(r.about||'')}">${r.banned?'🚫 ':''}${kindTag(r.kind)}#${escapeHtml(r.name)}</span>`).join('')}<button class="btn small ghost" id="commNewRoom" title="Create a group or channel">+ New group/channel</button></div>
-    <div class="muted" style="font-size:11px;margin-bottom:6px;display:flex;align-items:center;gap:8px"><span style="flex:1">${escapeHtml(cur.about||'')}${cur.owner?(' · by @'+escapeHtml(cur.owner)):''}</span>${cur.kind!=='room'&&!cur.banned?`<button class="btn small ghost" id="commRoomRep" style="color:var(--danger)" title="Report this group/channel to the administrators">⚑</button>`:''}</div>
+  const _isAdmin=(session&&session.admin);
+  const postingLocked = cur.banned || ((cur.kind==='channel' && !cur.yours && !_isAdmin) || ((cur.kind==='group' && cur.owner_only) && !cur.yours && !_isAdmin));
+  $('#commBody').innerHTML=`<div class="chiprow" style="padding:0 0 8px; align-items:center">${rooms.map(r=>`<span class="chip ${r.id===COMM.room?'on':''}" data-r="${escapeHtml(r.id)}" title="${escapeHtml(r.about||'')}">${r.banned?'🚫 ':''}${r.owner_only?'🔒 ':''}${kindTag(r.kind)}#${escapeHtml(r.name)}</span>`).join('')}<button class="btn small ghost" id="commNewRoom" title="Create a group or channel">+ New group/channel</button></div>
+    <div class="muted" style="font-size:11px;margin-bottom:6px;display:flex;align-items:center;gap:8px"><span style="flex:1">${escapeHtml(cur.about||'')}${cur.owner?(' · by @'+escapeHtml(cur.owner)):''}</span>${(cur.yours||(session&&session.admin))&&cur.kind!=='room'?`<button class="btn small ghost" id="commRoomDel" style="color:var(--danger)" title="Delete this ${escapeHtml(cur.kind)}">🗑</button>`:''}${cur.yours&&cur.kind==='group'?`<button class="btn small ghost" id="commRoomLock" title="Toggle who can post">${cur.owner_only?'🔓 anyone can post':'🔒 only I can post'}</button>`:''}${cur.kind!=='room'&&!cur.banned?`<button class="btn small ghost" id="commRoomRep" style="color:var(--danger)" title="Report this group/channel to the administrators">⚑</button>`:''}</div>
     ${cur.banned?`<div class="warnbox" style="margin-bottom:8px">🚫 This ${escapeHtml(cur.kind||'room')} has been <b>banned by an administrator</b>${cur.ban_reason?' — reason: '+escapeHtml(cur.ban_reason):''}. Posting is disabled.</div>`:''}
+    ${(!cur.banned&&((cur.kind==='channel'&&!cur.yours&&!(session&&session.admin))||((cur.kind==='group'&&cur.owner_only)&&!cur.yours&&!(session&&session.admin))))?`<div class="warnbox" style="margin-bottom:8px">🔒 ${cur.kind==='channel'?'Only the channel admin (the creator) can post in this channel.':'This group is locked — only the group admin can post.'} Reading is open to everyone.</div>`:''}
     <div class="commmsgs" id="commMsgs" style="border-color:#182229"><div class="muted">${cur.banned?'This room is locked.':'Loading…'}</div></div>
-    ${cur.banned?`<div class="muted" style="font-size:12px;text-align:center;padding:8px">Posting is disabled in banned rooms.</div>`:`<div class="wa-compose"><button class="wa-ico" id="roomEmoji" title="Emoji">😀</button><div class="pill"><input type="text" id="commInput" maxlength="800" autocomplete="off" placeholder="Message #${escapeHtml(cur.name)}"></div><button class="wa-send" id="commSend" title="Send">➤</button></div>`}
+    ${postingLocked?`<div class="muted" style="font-size:12px;text-align:center;padding:8px">${cur.banned?'Posting is disabled in banned rooms.':'🔒 Posting is closed here — reading is open, but only the '+(cur.kind==='channel'?'channel admin':'group admin')+' can send messages.'}</div>`:`<div class="wa-compose"><button class="wa-ico" id="roomEmoji" title="Emoji">😀</button><div class="pill"><input type="text" id="commInput" maxlength="800" autocomplete="off" placeholder="Message #${escapeHtml(cur.name)}"></div><button class="wa-send" id="commSend" title="Send">➤</button></div>`}
   `;
   $('#commBody').querySelectorAll('.chip[data-r]').forEach(c=>{ c.onclick=()=>{ COMM.room=c.dataset.r; COMM.lastRoomId=null; renderCommRooms(); }; });
   $('#commNewRoom').onclick=openNewRoomModal;
   const rem=$('#roomEmoji'); if(rem) rem.onclick=e=>{ e.stopPropagation(); waEmojiPop(rem, $('#commInput')); };
+  const rd=$('#commRoomDel'); if(rd) rd.onclick=async()=>{ if(!confirm('Delete this '+cur.kind+'? Its messages and members will be permanently removed.')) return; const r=await post('/api/community/rooms/delete',{slug:COMM.room}); if(r.error) addErr('Room: '+r.error); else { COMM.room='lounge'; addSystemNote('🗑 The '+cur.kind+' was deleted.'); renderCommunity(); } };
+  const rl=$('#commRoomLock'); if(rl) rl.onclick=async()=>{ const on=!(cur.owner_only); const r=await post('/api/community/rooms/owner-only',{slug:COMM.room, on}); if(r.error) addErr('Room: '+r.error); else { addSystemNote(on?'🔒 Only you can post in this group now.':'🔓 The group is open again — members can post.'); renderCommunity(); } };
   const rr=$('#commRoomRep'); if(rr) rr.onclick=async()=>{
     const why=prompt('Report #'+cur.name+' to the administrators (what is happening here?):',''); if(why===null) return;
     const r=await post('/api/community/rooms/report',{slug:COMM.room, reason:why});
     if(r.error) addErr('Room report: '+r.error); else addSystemNote(' Room report about <b>#'+escapeHtml(cur.name)+'</b> sent to the administrators.');
   };
-  const send=async()=>{ const inp=$('#commInput'); const body=(inp.value||'').trim(); if(!body) return; inp.value=''; const r=await post('/api/community/room/send',{room:COMM.room, body}); if(r.error){ addErr('Community: '+r.error); inp.value=body; return; } const el=$('#commMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); COMM.lastRoomId=r.message.id; el.scrollTop=el.scrollHeight; } };
-  $('#commSend').onclick=send; $('#commInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
+  const send=async()=>{ const inp=$('#commInput'); let body=(inp.value||'').trim(); const pre=replyPrefix(); if(!body && !pre) return; inp.value=''; clearReply(); const r=await post('/api/community/room/send',{room:COMM.room, body:(pre+body).trim()}); if(r.error){ addErr('Community: '+r.error); inp.value=body; return; } const el=$('#commMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); COMM.lastRoomId=r.message.id; el.scrollTop=el.scrollHeight; } };
+  if($('#commSend')) $('#commSend').onclick=send;
+  if($('#commInput')) $('#commInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
   COMM.lastRoomId=null; if(!cur.banned) loadCommRoom(true);
 }
 function openNewRoomModal(){
@@ -2005,14 +2045,58 @@ function appendCommMsg(el,m){
     ? `<div class="wa-sender" style="color:${m.admin?'var(--gold)':(m.verified?'#e6b34d':'#53bdeb')}">${m.mod?'🛡 Moderator':'@'+escapeHtml(m.username||'member')}${m.verified?' <span class="vbadge">✦</span>':''}${m.admin?' <span class="tag" style="color:var(--gold);font-size:8px">ADMIN</span>':''}</div>`
     : '';
   const actions=(isRoom && !m.mine && !cont)
-    ? `<span style="float:right;margin:0 0 0 8px;cursor:pointer"><a class="cdm" data-h="${escapeHtml(m.username||'')}" title="Message privately" style="color:#8696a0">✉</a>${m.mod?'':`<a class="crep" data-h="${escapeHtml(m.username||'')}" data-id="${escapeHtml(m.id)}" title="Report to the moderator" style="color:#8696a0;margin-left:7px">⚑</a>`}</span>`
-    : '';
-  row.innerHTML=`${av}<div class="wa-col">${senderLine}<div class="wa-bub">${media}${cap}${actions}<span class="wa-time">${escapeHtml(fmtCommTime(m.t))}${tick}</span></div></div>`;
+    ? `<span style="float:right;margin:0 0 0 8px;cursor:pointer"><a class="cdm" data-h="${escapeHtml(m.username||'')}" title="Message privately" style="color:#8696a0">✉</a><a class="creply" data-h="${escapeHtml(m.username||'')}" title="Reply" style="color:#8696a0;margin-left:7px">↩</a>${m.mod?'':`<a class="crep" data-h="${escapeHtml(m.username||'')}" data-id="${escapeHtml(m.id)}" title="Report to the moderator" style="color:#8696a0;margin-left:7px">⚑</a>`}</span>`
+    : (!cont && !m.mine ? `<span style="float:right;margin:0 0 0 8px;cursor:pointer"><a class="creply" data-h="${escapeHtml(m.username||'')}" title="Reply" style="color:#8696a0">↩</a></span>` : '');
+  const reps=(m.reactions||{});
+  const repRow=Object.entries(reps).length?`<div class="wa-reps">${Object.entries(reps).map(([e2,n])=>`<span class="wa-rep">${e2} ${n}</span>`).join('')}</div>`:'';
+  row.innerHTML=`${av}<div class="wa-col">${senderLine}<div class="wa-bub">${media}${cap}${actions}<span class="wa-time">${escapeHtml(fmtCommTime(m.t))}${tick}</span></div>${repRow}</div>`;
   el.appendChild(row);
   WA_LAST={sender:senderKey, t:m.t||''};
   const rep=row.querySelector('.crep'); if(rep) rep.onclick=()=>openCommReport(rep.dataset.h, rep.dataset.id);
   const dm=row.querySelector('.cdm'); if(dm) dm.onclick=()=>{ COMM.view='dms'; COMM.peer=dm.dataset.h; COMM.lastDmId=null; waResetGroup(); renderCommunity(); };
+  const rp=row.querySelector('.creply'); if(rp) rp.onclick=()=>{ COMM.replyTo={handle:rp.dataset.h, name:rp.dataset.h, excerpt:(m.body||'').slice(0,80)}; showReplyQuote(); };
+  const bub=row.querySelector('.wa-bub');
+  if(bub) bub.addEventListener('click', e=>{ if(e.target.closest('a,button,audio,video,img,.crep,.creply,.cdm')) return; waQuickReactions(bub, m); });
 }
+/* ---------- WhatsApp-style tap reactions ---------- */
+function waQuickReactions(bub, m){
+  let pop=document.getElementById('waRepPop');
+  if(pop && pop.dataset.mid===String(m.id)){ pop.remove(); return; }
+  if(pop) pop.remove();
+  pop=document.createElement('div'); pop.id='waRepPop'; pop.className='wa-pop wa-repbar'; pop.dataset.mid=String(m.id);
+  pop.innerHTML=['❤️','👍','😂','😮','😢','🙏'].map(e=>`<button type="button" data-e="${e}">${e}</button>`).join('');
+  document.body.appendChild(pop);
+  const r=bub.getBoundingClientRect();
+  pop.style.top=Math.max(8,(r.top-48))+'px';
+  pop.style.left=Math.max(8, Math.min(r.left, window.innerWidth-264))+'px';
+  pop.querySelectorAll('button').forEach(b=>b.onclick=async ev=>{
+    ev.stopPropagation();
+    const res=await post('/api/community/react',{message_id:m.id, emoji:b.dataset.e});
+    pop.remove();
+    if(res.error){ addErr('Reaction: '+res.error); return; }
+    const row=bub.closest('.wa-row'); if(!row) return;
+    let rr=row.querySelector('.wa-reps');
+    if(!rr){ rr=document.createElement('div'); rr.className='wa-reps'; row.appendChild(rr); }
+    rr.innerHTML=Object.entries(res.reactions||{}).map(([e2,n])=>`<span class="wa-rep">${e2} ${n}</span>`).join('');
+  });
+}
+/* ---------- reply (quote) in the compose bar ---------- */
+function showReplyQuote(){
+  document.querySelectorAll('.wa-quote').forEach(x=>x.remove());
+  if(!COMM.replyTo) return;
+  const inp=COMM.view==='rooms'?document.getElementById('commInput'):document.getElementById('dmInput');
+  if(!inp) return;
+  const wrap=inp.closest('.wa-compose'); if(!wrap) return;
+  const q=document.createElement('div'); q.className='wa-quote';
+  q.innerHTML=`<span>↩️ Replying to <b>@${escapeHtml(COMM.replyTo.name)}</b>: ${escapeHtml(COMM.replyTo.excerpt||'')}</span><button type="button" title="Cancel reply">✕</button>`;
+  q.querySelector('button').onclick=()=>{ COMM.replyTo=null; q.remove(); };
+  wrap.insertBefore(q, wrap.firstChild);
+}
+function replyPrefix(){
+  const q=COMM.replyTo; if(!q) return '';
+  return '↩️ @'+q.name+': '+(q.excerpt||'')+'\n';
+}
+function clearReply(){ COMM.replyTo=null; document.querySelectorAll('.wa-quote').forEach(x=>x.remove()); }
 async function renderCommDms(){
   const body=$('#commBody'); if(!body) return;
   if(!COMM.peer){
@@ -2043,6 +2127,7 @@ async function renderCommDms(){
     <button class="wa-ico" id="dmReport" title="Report" style="color:var(--danger)">⚑</button>
   </div>
   <div class="commmsgs" id="dmMsgs" style="border-color:#182229"><div class="muted">Loading…</div></div>
+  <div class="dmgame" id="dmGame"></div>
   <div class="wa-compose" id="dmCompose">
     <button class="wa-ico" id="dmAttach" title="Attach photo or audio">➕</button>
     <button class="wa-ico" id="dmEmoji" title="Emoji">😀</button>
@@ -2059,7 +2144,7 @@ async function renderCommDms(){
   const at=$('#dmAttach'), em=$('#dmEmoji');
   if(at) at.onclick=e=>{ e.stopPropagation(); waAttachPop(at); };
   if(em) em.onclick=e=>{ e.stopPropagation(); waEmojiPop(em, $('#dmInput')); };
-  const send=async()=>{ const inp=$('#dmInput'); const text=(inp.value||'').trim(); if(!text) return; inp.value=''; const r=await post('/api/community/dm/send',{handle:COMM.peer, body:text}); if(r.error){ addErr('Community: '+r.error); inp.value=text; return; } const el=$('#dmMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); COMM.lastDmId=r.message.id; el.scrollTop=el.scrollHeight; } };
+  const send=async()=>{ const inp=$('#dmInput'); let text=(inp.value||'').trim(); const pre=replyPrefix(); if(!text && !pre) return; inp.value=''; clearReply(); const r=await post('/api/community/dm/send',{handle:COMM.peer, body:(pre+text).trim()}); if(r.error){ addErr('Community: '+r.error); inp.value=text; return; } const el=$('#dmMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); COMM.lastDmId=r.message.id; el.scrollTop=el.scrollHeight; } };
   $('#dmSend').onclick=send; $('#dmInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
   loadCommDm(true);
 }
@@ -2072,6 +2157,7 @@ async function loadCommDm(initial){
   if((r.messages||[]).length){ COMM.lastDmId=r.messages[r.messages.length-1].id; el.scrollTop=el.scrollHeight; }
   if(r.peer_seen_upto!=null) COMM.peerSeen=r.peer_seen_upto;
   if(r.avatar) COMM.headAvatar=r.avatar;
+  if(!r.mod) renderDmGame(r.game); else { const g2=document.getElementById('dmGame'); if(g2) g2.innerHTML=''; }
   const on=$('#dmOnline'); if(on) on.textContent=r.mod?'moderator':(r.online?'online':'last seen recently');
   const ha=$('#dmHeadAv');
   if(ha && !ha.dataset.set){ ha.innerHTML=r.mod?'🛡':(COMM.headAvatar?`<img src="${escapeHtml(COMM.headAvatar)}" alt="">`:escapeHtml(String(COMM.peer||'?').slice(0,1).toUpperCase())); ha.dataset.set='1'; }
@@ -2169,7 +2255,7 @@ function waAttachPop(anchorEl){
   if(pop && pop.classList.contains('open')){ closeWaPops(); return; }
   if(!pop){
     pop=document.createElement('div'); pop.id='waAttachPop'; pop.className='wa-pop wa-attach';
-    pop.innerHTML=`<button type="button" data-a="photo">🖼️ <span>Photo</span></button><button type="button" data-a="voice">🎵 <span>Audio file</span></button>`;
+    pop.innerHTML=`<button type="button" data-a="photo">🖼️ <span>Photo</span></button><button type="button" data-a="voice">🎵 <span>Voice note (file)</span></button><button type="button" data-a="file">📄 <span>Document / file</span></button>`;
     document.body.appendChild(pop);
     pop.querySelectorAll('button').forEach(b=>{ b.onclick=()=>commAttachPick(b.dataset.a); });
   }
@@ -2184,16 +2270,19 @@ document.addEventListener('click', e=>{
 async function commAttachPick(kind){
   closeWaPops();
   const inp=document.createElement('input'); inp.type='file';
-  inp.accept=kind==='voice'?'audio/*':'image/jpeg,image/png,image/webp';
+  if(kind==='file') inp.accept='.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.json,application/pdf';
+  else if(kind==='voice') inp.accept='audio/*';
+  else inp.accept='image/jpeg,image/png,image/webp';
+  const maxMb=kind==='file'?10:(kind==='voice'?8:5);
   inp.onchange=async()=>{
     const f=inp.files && inp.files[0]; if(!f) return;
-    if(kind==='photo' && f.size>5*1024*1024){ addErr('Photo must be under 5 MB.'); return; }
-    if(kind==='voice' && f.size>8*1024*1024){ addErr('Audio file is too large.'); return; }
+    if(f.size>maxMb*1024*1024){ addErr('That file must be under '+maxMb+' MB.'); return; }
+    const caption=kind==='file'?(f.name||''):(kind==='photo'?'':'');
     const dataUrl=await new Promise(res=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=()=>res(null); fr.readAsDataURL(f); });
     if(!dataUrl) return;
     const up=await post('/api/community/media',{data_url:dataUrl});
     if(up.error){ addErr('Attach: '+up.error); return; }
-    const r=await post('/api/community/dm/send',{handle:COMM.peer, body:'', media_url:up.media_url});
+    const r=await post('/api/community/dm/send',{handle:COMM.peer, body:caption, media_url:up.media_url});
     if(r.error){ addErr('Attach: '+r.error); return; }
     const el=$('#dmMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); el.scrollTop=el.scrollHeight; }
   };
@@ -2438,6 +2527,7 @@ function showView(v, skipRender){
   if(window.innerWidth<=1100) document.getElementById('app').classList.remove('menu-open');
 }
 document.querySelectorAll('#sideNav .side-item').forEach(t=>{ t.onclick=()=>showView(t.dataset.v); });
+const _chatEmoji=document.getElementById('chatEmoji'); if(_chatEmoji) _chatEmoji.onclick=e=>{ e.stopPropagation(); waEmojiPop(_chatEmoji, document.getElementById('input')); };
 const _lockTab=document.getElementById('lockTab'); if(_lockTab) _lockTab.onclick=showLockScreen;
 const _menuBtn=document.getElementById('menuBtn'); if(_menuBtn) _menuBtn.onclick=()=>{ document.getElementById('app').classList.toggle('menu-open'); loadSessions(); };
 const _sbUpgrade=document.getElementById('sbUpgrade'); if(_sbUpgrade) _sbUpgrade.onclick=(e)=>{ e.stopPropagation(); showView('plans'); };

@@ -219,7 +219,7 @@ class Patch13Tests(unittest.TestCase):
         server, t = self.serve()
         try:
             with urllib.request.urlopen('http://127.0.0.1:%d/api/health' % server.server_port, timeout=3) as r:
-                self.assertEqual(json.loads(r.read())['build'], 'patch17-chatgpt-layout')
+                self.assertEqual(json.loads(r.read())['build'], 'patch18-chatgames-perms')
         finally:
             server.shutdown(); server.server_close(); t.join()
 
