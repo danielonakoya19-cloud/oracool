@@ -9,7 +9,15 @@
 --      safe whether you have already run the Patch 15, 16 or 18 files
 --      (or none of them). Nothing here can lose data.
 --
--- What this file contains (the WHOLE community platform):
+-- Supersedes (you never need to run these separately anymore):
+--   SUPABASE-SETUP.sql, SUPABASE-COMPLETE-SETUP.sql, CHAT-STORAGE-SETUP.sql,
+--   supabase_patch15.sql, supabase_patch16.sql, supabase_patch18.sql,
+--   supabase_patch27.sql
+--
+-- What this file contains (the ENTIRE OraCool database, beginning to end):
+--   * Community backend tables + the durable website vaults (sections 13-16).
+--   * The three server-only tables (subscribers, user_flags, case_store).
+--   * One guarded RLS/grants lockdown at the end, then a verification query.
 --   * comm_profiles      — public identity: unique username, unique 10-digit
 --                          OraCool number, display name, bio, PROFILE PICTURE
 --                          (avatar_url) and the paid VERIFIED BADGE
@@ -266,24 +274,6 @@ create index if not exists comm_games_status_idx on public.comm_games (status);
 comment on table public.comm_games is
     'Two-player games played inside a private conversation (e.g. Tic-Tac-Toe).';
 
--- ---------------------------------------------- 12. Row Level Security (all)
--- The browser holds no Supabase keys; the OraCool server uses service_role
--- (which bypasses RLS). RLS on + no policies = total lockout for everyone else.
-do $$
-declare
-    t text;
-begin
-    foreach t in array array['comm_profiles','comm_rooms','comm_members','comm_messages',
-                             'comm_reports','comm_cases','comm_contacts','comm_read_state',
-                             'comm_room_reports','comm_games','published_sites','published_sites_meta']
-    loop
-        execute format('alter table public.%I enable row level security', t);
-        execute format('drop policy if exists "public_read" on public.%I', t);
-    end loop;
-end;
-$$;
-
-
 -- --------------------------------------- 13. Building coins + published sites (patch27)
 -- Weekly build-coin wallet mirrored onto the user record (1,000,000 coins/week free;
 -- a site build costs 10,000). Stored as JSON text so it survives redeploys.
@@ -317,13 +307,196 @@ create table if not exists public.published_sites_meta (
 comment on table public.published_sites is
     'Files of websites users published to <sub>.oracoolai.com (durable across redeploys).';
 
+
+-- ------------------------------------- 14. The build vault — previews survive every redeploy (patch28)
+-- Render's disk is ephemeral: without this, every app update erased build
+-- previews ("the link does not work"). The server mirrors each build here the
+-- moment it finishes and re-hydrates it on first open after a deploy.
+create table if not exists public.oracool_builds (
+    slug    text not null,
+    path    text not null,
+    content text not null,
+    primary key (slug, path)
+);
+create index if not exists oracool_builds_slug_idx on public.oracool_builds (slug);
+
+create table if not exists public.oracool_builds_meta (
+    slug     text primary key,
+    owner    text not null default '',
+    name     text not null default '',
+    brief    text not null default '',
+    provider text not null default '',
+    template text not null default '',
+    t        text not null default '',
+    files    text not null default '[]'
+);
+
+comment on table public.oracool_builds is
+    'Files of every AI-built site, so previews and downloads survive redeploys.';
+comment on table public.oracool_builds_meta is
+    'Registry of build workspaces (owner, name, template, file list).';
+
+-- ------------------------------------- 15. Server-only core tables (billing, flags, snapshots)
+create table if not exists public.subscribers (
+    id             uuid primary key default gen_random_uuid(),
+    email          text not null,
+    tier           text default 'pro',
+    plan           text,
+    reference      text,
+    amount_ngn     numeric,
+    amount_usd     numeric,
+    paid_at        text,
+    expires_at     text,
+    channel        text,
+    days           integer,
+    "by"           text,
+    subscribed_at  timestamptz default now(),
+    created_at     timestamptz default now()
+);
+alter table public.subscribers
+    add column if not exists email text,
+    add column if not exists tier text default 'pro',
+    add column if not exists plan text,
+    add column if not exists reference text,
+    add column if not exists amount_ngn numeric,
+    add column if not exists amount_usd numeric,
+    add column if not exists paid_at text,
+    add column if not exists expires_at text,
+    add column if not exists channel text,
+    add column if not exists days integer,
+    add column if not exists "by" text,
+    add column if not exists subscribed_at timestamptz default now(),
+    add column if not exists created_at timestamptz default now();
+create index if not exists subscribers_email_idx on public.subscribers (email);
+create index if not exists oracool_subscribers_reference_idx on public.subscribers (reference);
+create index if not exists oracool_subscribers_subscribed_at_idx on public.subscribers (subscribed_at desc);
+
+create table if not exists public.user_flags (
+    email                        text primary key,
+    created                      text,
+    last_seen                    text,
+    last_ip                      text,
+    blocked                      boolean default false,
+    block_reason                 text,
+    blocked_by                   text,
+    blocked_at                   text,
+    verified                     boolean,
+    email_verification_required  boolean default false,
+    updated_at                   timestamptz default now()
+);
+alter table public.user_flags
+    add column if not exists created text,
+    add column if not exists last_seen text,
+    add column if not exists last_ip text,
+    add column if not exists blocked boolean default false,
+    add column if not exists block_reason text,
+    add column if not exists blocked_by text,
+    add column if not exists blocked_at text,
+    add column if not exists verified boolean,
+    add column if not exists email_verification_required boolean default false,
+    add column if not exists updated_at timestamptz default now();
+create unique index if not exists oracool_user_flags_email_uidx on public.user_flags (email);
+create index if not exists user_flags_blocked_idx on public.user_flags (blocked);
+
+create table if not exists public.case_store (
+    k           text primary key,
+    v           jsonb not null,
+    updated_at  timestamptz default now()
+);
+alter table public.case_store
+    add column if not exists v jsonb,
+    add column if not exists updated_at timestamptz default now();
+create unique index if not exists oracool_case_store_k_uidx on public.case_store (k);
+
+comment on table public.subscribers is
+    'OraCool backend-only subscription and payment records. Not a password store.';
+comment on table public.user_flags is
+    'OraCool backend-only account flags, activity and the weekly coin wallet. Not an admin-role authority.';
+comment on table public.case_store is
+    'OraCool backend-only JSON snapshots: main, conversations, alerts, brand_accounts.';
+
+-- ------------------------------------- 16. Lockdown — every table, RLS on, zero policies.
+-- The browser holds no Supabase keys; the OraCool server uses service_role
+-- (which bypasses RLS). RLS on + no policies = total lockout for everyone else.
+-- Guarded by to_regclass so the block can never fail on a partial install.
+do $$
+declare
+    t text;
+begin
+    foreach t in array array[
+        'comm_profiles','comm_rooms','comm_members','comm_messages',
+        'comm_reports','comm_cases','comm_contacts','comm_read_state',
+        'comm_room_reports','comm_games',
+        'published_sites','published_sites_meta',
+        'oracool_builds','oracool_builds_meta',
+        'subscribers','user_flags','case_store']
+    loop
+        if to_regclass('public.' || t) is not null then
+            execute format('alter table public.%I enable row level security', t);
+            execute format('drop policy if exists "public_read" on public.%I', t);
+        end if;
+    end loop;
+end;
+$$;
+
+-- Extra hardening for the three server-only tables: no direct grants at all,
+-- service_role may operate (it also bypasses RLS). Never give service_role to
+-- users or browsers.
+do $$
+declare
+    tbl text;
+    cols text;
+begin
+    foreach tbl in array array['subscribers', 'user_flags', 'case_store',
+                               'published_sites', 'published_sites_meta',
+                               'oracool_builds', 'oracool_builds_meta'] loop
+        if to_regclass('public.' || tbl) is null then
+            continue;
+        end if;
+        execute format('alter table public.%I enable row level security', tbl);
+        begin
+            execute format('revoke all privileges on table public.%I from public, anon, authenticated', tbl);
+            select string_agg(quote_ident(column_name), ', ' order by ordinal_position)
+              into cols
+              from information_schema.columns
+             where table_schema = 'public' and table_name = tbl;
+            if cols is not null then
+                execute format('revoke select (%s), insert (%s), update (%s), references (%s) on table public.%I from public, anon, authenticated',
+                               cols, cols, cols, cols, tbl);
+            end if;
+            execute format('grant usage on schema public to service_role');
+            execute format('grant select, insert, update, delete on table public.%I to service_role', tbl);
+        exception when insufficient_privilege then
+            raise notice 'skipped grant hardening on % (not table owner — RLS lock above still applies)', tbl;
+        end;
+    end loop;
+end;
+$$;
+
+-- Make new tables/columns visible to the PostgREST API immediately.
+notify pgrst, 'reload schema';
 -- ============================================================  DONE  ========
--- After running this, everything is live: usernames, OraCool numbers,
--- friends-by-number, groups & channels, DMs with photos/files/voice notes,
--- profile pictures, the paid verified badge, reported & bannable groups,
--- the AI moderator, tap reactions, reply quotes, group "only I can post"
--- locking, room deletion, Tic-Tac-Toe in private chats, PLUS (patch27):
--- durable weekly build-coin wallets and one-tap published websites hosted
--- on OraCool (<name>.oracoolai.com / oracoolai.com/sites/<name>/).
--- The running server detects the changes automatically within ~1 minute.
--- No code deploy is needed for the tables themselves.
+-- Everything the app needs now lives in this ONE file. After running it:
+--   * usernames, 10-digit OraCool numbers, friends-by-number, groups & channels,
+--     DMs with photos/files/voice notes, profile pictures, the paid verified
+--     badge, reported & bannable groups, the AI moderator, tap reactions, reply
+--     quotes, group "only I can post" locking, room deletion, Tic-Tac-Toe.
+--   * weekly build-coin wallets (Free 1,000,000/wk, 10,000 per site build).
+--   * one-tap published websites hosted on OraCool — durable across redeploys
+--     (oracoolai.com/sites/<name>/ now, <name>.oracoolai.com once wildcard DNS
+--     is active) — AND every AI build workspace auto-saved to the vault, so
+--     previews in chat NEVER die when the app updates (patch28).
+--   * billing, account flags and case snapshots on the backend tables.
+-- The running server detects all of it automatically — no code deploy needed.
+-- Re-running this file is always safe: it can update columns, never deletes rows.
+
+-- Verification — every row should exist; rls_enabled should be true for all:
+select c.relname as table_name, c.relrowsecurity as rls_enabled
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+ where n.nspname = 'public' and c.relkind = 'r'
+   and c.relname in ('comm_profiles','comm_rooms','comm_members','comm_messages',
+                     'comm_reports','comm_cases','comm_contacts','comm_read_state',
+                     'comm_room_reports','comm_games','published_sites','published_sites_meta',
+                     'oracool_builds','oracool_builds_meta','subscribers','user_flags','case_store')
+ order by c.relname;

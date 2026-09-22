@@ -165,7 +165,11 @@ def test_publish_serve_unpublish_cycle(monkeypatch):
     try:
         r = server.site_publish(email, slug, sub)
         assert r["ok"] and r["sub"] == sub
-        assert r["url"] == "https://" + sub + ".oracoolai.com/"
+        # patch28: primary url is the link that works instantly; the vanity
+        # subdomain arrives with wildcard DNS and both serve the same site
+        assert r["url"] == "https://oracoolai.com/sites/" + sub + "/"
+        assert r["vanity_url"] == "https://" + sub + ".oracoolai.com/"
+        assert r["path_url"] == "/sites/" + sub + "/"
         sdir = os.path.join(server._SITES_DIR, sub)
         assert open(os.path.join(sdir, "index.html"), encoding="utf-8").read() == "<html>hello p27</html>"
         reg = server._sites_load()

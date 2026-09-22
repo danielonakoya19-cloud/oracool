@@ -3218,18 +3218,21 @@ def build_site(email, name, prompt):
     meta[slug] = {"owner": email, "name": name, "brief": prompt[:300], "provider": prov,
                   "files": [f["path"] for f in clean], "t": _now(), "template": template}
     _builds_save(meta)
+    bsaved = builds_sup_save(slug, clean)
     _BUILD_DAILY.setdefault(email, []).append(now)
     st = coins_charge(email, COIN_COST_BUILD)
     coins_left = None if (not st or st.get("unlimited")) else st.get("balance")
     return {"ok": True, "slug": slug, "url": "/builds/" + slug + "/", "name": name,
             "template": template, "files": [f["path"] for f in clean], "provider": prov,
             "coins_spent": COIN_COST_BUILD, "coins_left": coins_left,
-            "note": "Live preview is in the card above. Tap PUBLISH to put it online at <sub>.oracoolai.com "
+            "build_saved": bool(bsaved),
+            "note": "Live preview is in the card above (auto-saved to the account vault — it survives app updates). Tap PUBLISH to put it online at <sub>.oracoolai.com "
                     "(free, stays live, counts nothing) — or use 'How to deploy' for Netlify / Vercel / GitHub "
                     "one-click push (Devices → Connectors). Build coins this week show in the header pill."}
 
 
 def build_list(email):
+    builds_warm()
     meta = _builds_load()
     # newest first by build time (patch27: slug-alphabetical ordering pushed real
     # builds past the cap once the registry grew)
@@ -3239,7 +3242,11 @@ def build_list(email):
 def build_zip(slug):
     slug = os.path.basename(str(slug or ""))
     dest = os.path.normpath(os.path.join(_BUILDS_DIR, slug))
-    if not slug or not dest.startswith(os.path.normpath(_BUILDS_DIR)) or not os.path.isdir(dest):
+    if not slug or not dest.startswith(os.path.normpath(_BUILDS_DIR)):
+        return None
+    if not os.path.isdir(dest):
+        build_hydrate(slug)
+    if not os.path.isdir(dest):
         return None
     import zipfile
     buf = __import__("io").BytesIO()
@@ -3478,6 +3485,132 @@ def site_sup_meta(field, value):
         return None
 
 
+_BUILDS_SUP_EXT = _SITE_TEXT_EXT | {".md"}
+_builds_warmed = False
+
+
+def builds_sup_save(slug, files):
+    """Mirror a build workspace + its registry row to Supabase so previews
+    survive redeploys (Render's disk is ephemeral). Best effort."""
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return False
+    u = url.rstrip("/")
+    try:
+        http_fetch(u + "/rest/v1/oracool_builds?slug=eq." + urllib.parse.quote(slug, safe=""),
+                   method="DELETE", headers=_site_headers(), timeout=15)
+        rows = [{"slug": slug, "path": f["path"], "content": f["content"][:1_500_000]}
+                for f in files if os.path.splitext(f["path"])[1].lower() in _BUILDS_SUP_EXT]
+        if rows:
+            http_fetch(u + "/rest/v1/oracool_builds", method="POST",
+                       headers=dict(_site_headers(), **{"Prefer": "return=minimal"}),
+                       json_body=rows, timeout=30)
+        m = _builds_load().get(slug) or {}
+        mrow = {"slug": slug, "owner": m.get("owner", ""), "name": m.get("name", ""),
+                "brief": (m.get("brief") or "")[:300], "provider": m.get("provider", ""),
+                "template": m.get("template", ""), "t": m.get("t", ""),
+                "files": json.dumps(m.get("files") or [])}
+        http_fetch(u + "/rest/v1/oracool_builds_meta", method="POST",
+                   headers=dict(_site_headers(), **{"Prefer": "return=minimal, resolution=merge-duplicates"}),
+                   json_body=mrow, timeout=15)
+        return True
+    except Exception:
+        return False
+
+
+def build_hydrate(slug):
+    """Restore a build workspace (and its registry row) from the durable vault
+    after an ephemeral-disk wipe. Returns True when index.html is present."""
+    slug = os.path.basename(str(slug or ""))
+    if not slug:
+        return False
+    d = os.path.normpath(os.path.join(_BUILDS_DIR, slug))
+    if not d.startswith(os.path.normpath(_BUILDS_DIR)):
+        return False
+    if os.path.isfile(os.path.join(d, "index.html")):
+        return True
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return False
+    u = url.rstrip("/")
+    try:
+        _, raw, _ = http_fetch(
+            u + "/rest/v1/oracool_builds?slug=eq." + urllib.parse.quote(slug, safe="")
+            + "&select=path,content&order=path.asc", headers=_site_headers(), timeout=20)
+        rows = json.loads(raw) if raw else []
+        if not rows:
+            return False
+        os.makedirs(d, exist_ok=True)
+        for r in rows:
+            p = str(r.get("path") or "").strip().lstrip("/").replace("\\", "/")
+            if not p or ".." in p:
+                continue
+            fp = os.path.normpath(os.path.join(d, p))
+            if not fp.startswith(d):
+                continue
+            os.makedirs(os.path.dirname(fp), exist_ok=True)
+            with open(fp, "w", encoding="utf-8") as fh:
+                fh.write(str(r.get("content") or ""))
+        if not os.path.isfile(os.path.join(d, "index.html")):
+            return False
+        meta = _builds_load()
+        if slug not in meta:
+            _, raw2, _ = http_fetch(
+                u + "/rest/v1/oracool_builds_meta?slug=eq." + urllib.parse.quote(slug, safe=""),
+                headers=_site_headers(), timeout=15)
+            g = (json.loads(raw2) or [{}])[0] if raw2 else {}
+            try:
+                fl = json.loads(g.get("files") or "[]")
+            except Exception:
+                fl = []
+            meta[slug] = {"owner": g.get("owner") or "", "name": g.get("name") or slug,
+                          "brief": g.get("brief") or "", "t": g.get("t") or _now(),
+                          "provider": g.get("provider") or "", "template": g.get("template") or "",
+                          "files": [x for x in fl if isinstance(x, str)]}
+            _builds_save(meta)
+        return True
+    except Exception:
+        return False
+
+
+def builds_warm():
+    """Once per process: rebuild the registry from the vault so 'My builds'
+    lists survive redeploys even before anyone opens a preview."""
+    global _builds_warmed
+    if _builds_warmed:
+        return
+    _builds_warmed = True
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/oracool_builds_meta?select=*",
+                               headers=_site_headers(), timeout=15)
+        rows = json.loads(raw) if raw else []
+        if not isinstance(rows, list):
+            return
+        meta = _builds_load()
+        changed = False
+        for g in rows:
+            slug = os.path.basename(str(g.get("slug") or ""))
+            if not slug or slug in meta:
+                continue
+            try:
+                fl = json.loads(g.get("files") or "[]")
+            except Exception:
+                fl = []
+            meta[slug] = {"owner": g.get("owner") or "", "name": g.get("name") or slug,
+                          "brief": g.get("brief") or "", "t": g.get("t") or _now(),
+                          "provider": g.get("provider") or "", "template": g.get("template") or "",
+                          "files": [x for x in fl if isinstance(x, str)]}
+            os.makedirs(os.path.join(_BUILDS_DIR, slug), exist_ok=True)
+            changed = True
+        if changed:
+            _builds_save(meta)
+    except Exception:
+        pass
+
+
 def site_hydrate(sub):
     """If local files vanished (redeploy), restore from Supabase and re-cache on disk."""
     rows = site_sup_load(sub)
@@ -3551,8 +3684,10 @@ def site_publish(email, slug, sub=""):
     if (b.get("owner") or "").lower() != email and not is_admin(email):
         return {"error": "That build belongs to a different account."}
     src_dir = os.path.normpath(os.path.join(_BUILDS_DIR, slug))
-    if not os.path.isdir(src_dir):
-        return {"error": "The build files are missing on this server. Rebuild it once, then publish."}
+    if not os.path.isfile(os.path.join(src_dir, "index.html")):
+        build_hydrate(slug)
+    if not os.path.isfile(os.path.join(src_dir, "index.html")):
+        return {"error": "This build predates the auto-save vault — ask OraCool to rebuild it once (new builds are saved forever), then publish."}
     sub_raw = str(sub or "").strip()
     if sub_raw:
         sub = _build_slug(sub_raw)
@@ -3589,10 +3724,14 @@ def site_publish(email, slug, sub=""):
     durable = site_sup_save(sub, reg[sub], files)
     _SITE_EXIST_CACHE[sub] = (True, time.time() + 3600)
     return {"ok": True, "sub": sub, "slug": slug,
-            "url": "https://" + sub + ".oracoolai.com/", "path_url": "/sites/" + sub + "/",
+            "url": "https://oracoolai.com/sites/" + sub + "/",
+            "vanity_url": "https://" + sub + ".oracoolai.com/",
+            "path_url": "/sites/" + sub + "/",
             "name": reg[sub]["name"], "durable": bool(durable),
-            "note": ("Live at https://" + sub + ".oracoolai.com/ (share that URL). If it does not open yet, "
-                     "wildcard DNS may still be propagating — the same site is also at " + "/sites/" + sub + "/. "
+            "share_url": reg[sub].get("custom_domain") and ("https://" + reg[sub]["custom_domain"] + "/") or ("https://" + sub + ".oracoolai.com/"),
+            "note": ("Live at " + "https://oracoolai.com/sites/" + sub + "/ — that link opens right now on every device. "
+                     "The short vanity link https://" + sub + ".oracoolai.com/ becomes active once wildcard DNS is set up "
+                     "(CNAME * -> oracool-ai.onrender.com). Both serve the same saved copy. "
                      "Later, users can buy any domain and attach it from the Publish panel (we serve it by host). "
                      + ("Files are mirrored to Supabase and survive redeploys." if durable else
                         "Durable mirror unavailable (Supabase not configured) — files live on this server."))}
@@ -8321,6 +8460,9 @@ class Handler(BaseHTTPRequestHandler):
             _full = os.path.normpath(os.path.join(_base, _rel))
             if not _full.startswith(_base):
                 self.send_error(404); return
+            if not os.path.exists(_full) and _rel.split("/", 1)[0]:
+                build_hydrate(urllib.parse.unquote(_rel.split("/", 1)[0]))
+                _full = os.path.normpath(os.path.join(_base, _rel))
             if _rel.endswith("/download.zip") or _rel.endswith(".zip"):
                 _z = build_zip(_rel.rsplit("/", 1)[0].rsplit(".zip", 1)[0])
                 if _z:
@@ -8369,6 +8511,27 @@ class Handler(BaseHTTPRequestHandler):
                        ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg",
                        ".svg": "image/svg+xml", ".ico": "image/x-icon"}.get(_ext, "application/octet-stream")
                 self._send_file(_full, _ct)
+            elif _rel == "" or _rel.endswith("/") or _full.endswith(".html"):
+                # pre-vault builds get a friendly page so chat iframes explain
+                # what happened instead of showing a blank dead frame
+                _gone = ("<!doctype html><meta charset=utf-8><title>Preview archived</title>"
+                         "<body style='margin:0;min-height:100vh;display:flex;align-items:center;"
+                         "justify-content:center;background:#0a0d14;color:#e8ecf8;"
+                         "font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif'>"
+                         "<div style='max-width:460px;padding:36px 28px;text-align:center;"
+                         "border:1px solid rgba(120,150,255,.25);border-radius:18px;"
+                         "background:rgba(18,23,38,.9)'>"
+                         "<div style='font-size:34px'>&#9203;</div>"
+                         "<h2 style='margin:10px 0 6px;font-size:19px'>This preview predates the vault</h2>"
+                         "<p style='margin:0;color:#93a0c0'>OraCool now auto-saves every build forever, but this one "
+                         "was created before that shipped. Ask OraCool in chat to rebuild it &mdash; "
+                         "it will reappear here and stay through every update.</p></div></body>")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(_gone)))
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(_gone.encode("utf-8"))
             else:
                 self.send_error(404)
         elif path.startswith("/generated/"):
