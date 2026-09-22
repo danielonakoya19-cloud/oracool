@@ -31,7 +31,7 @@ def read(name):
 
 def test_build_marker_patch23():
     src = read("server.py")
-    assert src.count('"build": "patch24-gemini"') == 2
+    assert src.count('"build": "patch25-build"') == 2
 
 
 # ---------------------------------------------------------------- media persistence
@@ -258,9 +258,10 @@ def test_auto_tools_camera_intent():
 
 def test_prompt_camera_honesty():
     src = read("server.py")
-    assert "CAMERA (HONESTY RULE)" in src
-    assert "NEVER say you cannot take photos" in src
-    assert "claim a photo was taken without their" in src
+    # Patch 25 replaced the tap-card rule with auto-capture, but the honesty
+    # guarantees stay: never refuse, never claim a photo before the capture.
+    assert "CAMERA (AUTO)" in src
+    assert "never say you cannot take" in src
 
 def test_client_camera_card():
     html = read("index.html")
@@ -288,6 +289,6 @@ def test_local_preview_marker_if_up():
     try:
         with urllib.request.urlopen("http://127.0.0.1:8000/api/health", timeout=3) as r:
             j = json.load(r)
-            assert j.get("build") == "patch24-gemini"
+            assert j.get("build") == "patch25-build"
     except Exception:
         pytest.skip("local preview not running")

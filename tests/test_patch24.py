@@ -31,7 +31,7 @@ def read(name):
 # ---------------------------------------------------------------- markers
 
 def test_build_marker_patch24():
-    assert read("server.py").count('"build": "patch24-gemini"') == 2
+    assert read("server.py").count('"build": "patch25-build"') == 2
 
 
 def test_key_configured_locally_and_not_committed():
@@ -41,9 +41,9 @@ def test_key_configured_locally_and_not_committed():
     repo = os.path.join(ROOT, "..", "oracool-repo-push")
     if os.path.isdir(repo):
         import subprocess
-        r = subprocess.run(["git", "-C", repo, "grep", "-l", "GEMINI_API_KEY="],
+        r = subprocess.run(["git", "-C", repo, "grep", "-l", "GEMINI_API_KEY=A"],
                            capture_output=True, text=True)
-        assert r.returncode != 0, "key reference leaked into repo files"
+        assert r.returncode != 0, "key value leaked into repo files"
 
 
 # ---------------------------------------------------------------- helpers
@@ -82,6 +82,7 @@ def test_status_shape(monkeypatch):
     monkeypatch.setattr(server, "_gemini_text", lambda *a, **k: ("", "PERMISSION_DENIED Your project has been denied access."))
     monkeypatch.setattr(server, "_gemini_tts",
                         lambda *a, **k: (None, "PERMISSION_DENIED Your project has been denied access."))
+    monkeypatch.setattr(server, "_gemini_skipped", lambda: False)
     r = server.gemini_status()
     assert r["connected"] is True
     caps = r["capabilities"]

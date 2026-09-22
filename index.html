@@ -612,26 +612,27 @@
     <div class="sb-brand">
       <div id="hdrReactor"></div>
       <div><div class="sb-title">ORACOOL AI</div><div class="sb-sub">Personal Intelligence</div></div>
+      <button class="sb-collapse" id="sbCollapse" title="Collapse menu">⟨</button>
     </div>
-    <button class="side-new" id="newChatBtn" title="Start a new chat">＋ New chat</button>
+    <button class="side-new" id="newChatBtn" title="Start a new chat">＋ <span class="slbl">New chat</span><span class="slbl-ic">＋</span></button>
     <div class="sidebar-scroll">
     <div class="side-label">Menu</div>
     <nav class="side-nav" id="sideNav">
-      <div class="side-item active" data-v="chat"><span class="sic">💬</span>Chat</div>
-      <div class="side-item" data-v="community" id="communityTab"><span class="sic">👥</span>Community<span class="tabbadge" id="commTabBadge"></span></div>
-      <div class="side-item" data-v="create"><span class="sic">✨</span>Create</div>
-      <div class="side-item" data-v="markets"><span class="sic">📈</span>Markets</div>
+      <div class="side-item active" data-v="chat"><span class="sic">💬</span><span class="slbl">Chat</span></div>
+      <div class="side-item" data-v="community" id="communityTab"><span class="sic">👥</span><span class="slbl">Community</span><span class="tabbadge" id="commTabBadge"></span></div>
+      <div class="side-item" data-v="create"><span class="sic">✨</span><span class="slbl">Create</span></div>
+      <div class="side-item" data-v="markets"><span class="sic">📈</span><span class="slbl">Markets</span></div>
       <div class="side-item" data-v="cases" id="casesTab"><span class="sic">🗂</span>Cases</div>
-      <div class="side-item" data-v="trading"><span class="sic">💹</span>Trading</div>
-      <div class="side-item" data-v="space"><span class="sic">🪐</span>Space</div>
-      <div class="side-item" data-v="intel"><span class="sic">🧭</span>Intel</div>
-      <div class="side-item" data-v="cores"><span class="sic">⚡</span>Cores</div>
-      <div class="side-item" data-v="devices"><span class="sic">🔗</span>Devices</div>
-      <div class="side-item" data-v="code"><span class="sic">💻</span>Code</div>
-      <div class="side-item" data-v="plans"><span class="sic">💎</span>Plans</div>
-      <div class="side-item" data-v="status"><span class="sic">📊</span>Status</div>
-      <div class="side-item" data-v="admin" id="adminTab" style="display:none"><span class="sic">🛡</span>Admin</div>
-      <div class="side-item" data-v="settings"><span class="sic">⚙</span>Settings</div>
+      <div class="side-item" data-v="trading"><span class="sic">💹</span><span class="slbl">Trading</span></div>
+      <div class="side-item" data-v="space"><span class="sic">🪐</span><span class="slbl">Space</span></div>
+      <div class="side-item" data-v="intel"><span class="sic">🧭</span><span class="slbl">Intel</span></div>
+      <div class="side-item" data-v="cores"><span class="sic">⚡</span><span class="slbl">Cores</span></div>
+      <div class="side-item" data-v="devices"><span class="sic">🔗</span><span class="slbl">Devices</span></div>
+      <div class="side-item" data-v="code"><span class="sic">💻</span><span class="slbl">Code</span></div>
+      <div class="side-item" data-v="plans"><span class="sic">💎</span><span class="slbl">Plans</span></div>
+      <div class="side-item" data-v="status"><span class="sic">📊</span><span class="slbl">Status</span></div>
+      <div class="side-item" data-v="admin" id="adminTab" style="display:none"><span class="sic">🛡</span><span class="slbl">Admin</span></div>
+      <div class="side-item" data-v="settings"><span class="sic">⚙</span><span class="slbl">Settings</span></div>
     </nav>
     <div class="side-label">Chats</div>
     <div class="sesslist" id="sessList"><div class="muted" style="padding:8px;font-size:11px">Sign in to keep your chat history across devices.</div></div>
@@ -1274,6 +1275,105 @@ function _cleanReply(t){
   s=s.replace(/\(?\*{0,2}\(?ran a tool\)?\*{0,2}\)?/g,'');
   return s.replace(/\n{3,}/g,'\n\n').trim();
 }
+function buildCard(x){
+  const d=document.createElement('div'); d.className='msg ai';
+  d.innerHTML='<div class="who">ORA-COOL</div><div class="body">🏗 <b>'+(x.name?escapeHtml(x.name)+' is built':'Your site is built')+'</b> — live preview below (real, working pages).'+
+    '<div style="border:1px solid rgba(125,211,252,.25);border-radius:12px;overflow:hidden;margin:10px 0;background:#04070c">'+
+    '<iframe src="'+escapeHtml(x.url)+'" style="width:100%;height:420px;border:0;display:block" title="Preview"></iframe></div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+    '<button class="btn ghost small" style="min-height:40px" id="bFull">⛶ Full screen</button>'+
+    '<a class="btn ghost small" style="min-height:40px" href="'+escapeHtml(x.url)+'download.zip" download>📦 Download zip</a>'+
+    '<button class="btn primary small" style="min-height:40px" id="bDeploy">🚀 How to deploy</button>'+
+    '<button class="btn ghost small" style="min-height:40px" id="bGithub">🐙 Push to GitHub</button></div>'+
+    '<div class="hint" style="margin-top:8px">Built files: '+(x.files?x.files.map(escapeHtml).join(', '):'index.html')+'. The preview is a live page served from OraCool.</div></div>';
+  chat.appendChild(d); scrollChat();
+  d.querySelector('#bFull').onclick=()=>window.open(x.url,'_blank');
+  d.querySelector('#bDeploy').onclick=()=>deployModal(x.url, x.name||'my-site');
+  d.querySelector('#bGithub').onclick=()=>deployModal(x.url, x.name||'my-site', true);
+}
+function githubPushCard(x){
+  const d=document.createElement('div'); d.className='msg ai';
+  let inner='<div class="who">ORA-COOL</div><div class="body">🐙 <b>GitHub push</b> — ';
+  if(x.pages_url){ inner+='✅ your site is live on GitHub Pages: <a href="'+escapeHtml(x.pages_url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">'+escapeHtml(x.pages_url)+'</a>'+(x.url?' · repo: <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">'+escapeHtml(x.url)+'</a>':'')+' </div>'; }
+  else if(x.error){ inner+='<div class="errbox">'+escapeHtml(x.error)+'</div></div>'; }
+  else { inner+='in progress — the result will appear in the chat reply. </div>'; }
+  d.innerHTML=inner;
+  chat.appendChild(d); scrollChat();
+}
+function deployModal(url, name, startOnGithub){
+  let m=document.getElementById('deployOv'); if(m) m.remove();
+  m=document.createElement('div'); m.id='deployOv'; m.className='modal open';
+  m.innerHTML='<div class="modalcard" style="max-width:620px"><div class="ptitle">🚀 Deploy "'+escapeHtml(name||'your site')+'"</div>'+
+    '<div class="muted" style="font-size:12px;margin:8px 0 12px;line-height:1.55">Pick one — all three make it public with a real URL:</div>'+
+    '<div style="display:flex;flex-direction:column;gap:10px;font-size:13px">'+
+    '<div style="border:1px solid rgba(125,211,252,.25);border-radius:10px;padding:10px 12px"><b>🐙 GitHub Pages (recommended, one-click)</b>'+
+    '<div id="ghBox" class="muted" style="font-size:12px;margin-top:6px">'+(startOnGithub?'Loading…':'Connect your GitHub account below, and I create the repo, push the site and switch on GitHub Pages for you.')+'</div>'+
+    '<div id="ghForm" style="display:'+(startOnGithub?'none':'flex')+';gap:8px;margin-top:8px;flex-wrap:wrap">'+
+    '<input id="ghPat" type="password" placeholder="GitHub personal access token (repo scope)" style="flex:1;min-width:220px">'+
+    '<button class="btn small primary" id="ghConnect">Connect</button></div>'+
+    '<div id="ghRepoRow" style="display:none;gap:8px;margin-top:8px;flex-wrap:wrap"><input id="ghRepo" value="'+escapeHtml((name||'my-site').toLowerCase().replace(/[^a-z0-9-]+/g,'-'))+'" style="min-width:180px"><button class="btn small primary" id="ghPush">Create repo + push + Pages</button></div>'+
+    '<div id="ghOut" style="margin-top:8px"></div></div>'+
+    '<div style="border:1px solid rgba(125,211,252,.25);border-radius:10px;padding:10px 12px"><b>📦 Netlify Drop (drag & drop, free)</b><div class="muted" style="font-size:12px;margin-top:6px">1. <a href="'+escapeHtml(url)+'download.zip" download style="color:var(--cyan2,#7dd3fc)">Download the zip</a> · 2. Open <b>app.netlify.com/drop</b> · 3. Drag the folder in → instant URL.</div></div>'+
+    '<div style="border:1px solid rgba(125,211,252,.25);border-radius:10px;padding:10px 12px"><b>▲ Vercel (free)</b><div class="muted" style="font-size:12px;margin-top:6px">1. Download the zip · 2. <b>vercel.com → Add New → Project</b> (or <code>npx vercel</code> in the folder) · 3. Deploy → your site is live.</div></div>'+
+    '</div><div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn ghost" id="depClose">Close</button></div></div>';
+  document.body.appendChild(m);
+  m.addEventListener('click', e=>{ if(e.target===m) m.remove(); });
+  m.querySelector('#depClose').onclick=()=>m.remove();
+  async function ghStatus(){
+    try{
+      const r=await post('/api/github',{action:'status'});
+      const box=m.querySelector('#ghBox'), form=m.querySelector('#ghForm'), row=m.querySelector('#ghRepoRow');
+      if(r && r.connected){
+        box.textContent='Connected as @'+r.login+' — name the repository and I push it (creates the repo if needed).';
+        form.style.display='none'; row.style.display='flex';
+      } else if(startOnGithub){
+        box.textContent='Not connected yet — paste a token (github.com → Settings → Developer settings → Personal access tokens → Generate new → check "repo"). It is stored encrypted and used only to push.';
+        form.style.display='flex';
+      }
+    }catch(e){}
+  }
+  if(startOnGithub) ghStatus();
+  m.querySelector('#ghConnect').onclick=async()=>{
+    const out=m.querySelector('#ghOut'); const pat=m.querySelector('#ghPat').value.trim();
+    if(!pat) return;
+    out.innerHTML='<span class="muted">Connecting…</span>';
+    const r=await post('/api/github',{action:'connect', pat});
+    if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+    out.innerHTML='<div style="color:#7ee787">✓ Connected as @'+escapeHtml(r.login)+'</div>';
+    m.querySelector('#ghBox').textContent='Connected — name the repository and I push it.';
+    m.querySelector('#ghForm').style.display='none';
+    m.querySelector('#ghRepoRow').style.display='flex';
+  };
+  m.querySelector('#ghPush').onclick=async()=>{
+    const out=m.querySelector('#ghOut');
+    const slug=(url||'').split('/').filter(Boolean).slice(-2)[0]||'';
+    const repoName=m.querySelector('#ghRepo').value.trim();
+    if(!repoName) return;
+    const login=m.querySelector('#ghBox').textContent.match(/@([A-Za-z0-9-]+)/);
+    out.innerHTML='<span class="muted">Pushing to GitHub (this can take a minute)…</span>';
+    const r=await post('/api/github',{action:'push', slug, repo:repoName});
+    if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+    let txt='✅ Pushed to <b>'+escapeHtml(r.repo)+'</b> ('+(r.pushed||[]).length+' files).';
+    if(r.pages_url){ txt+=' 🎉 GitHub Pages is ON: <a href="'+escapeHtml(r.pages_url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">'+escapeHtml(r.pages_url)+'</a> (goes live in 1–2 minutes)'; }
+    if((r.failed||[]).length) txt+='<br><span class="muted">Failed: '+escapeHtml(r.failed.slice(0,4).join(', '))+'</span>';
+    out.innerHTML=txt;
+  };
+}
+function sbToggleInit(){
+  const app=document.getElementById('app'); if(!app) return;
+  const btn=()=>document.getElementById('sbCollapse');
+  try{ if(localStorage.getItem('oracool_sb_collapsed')==='1') app.classList.add('sb-collapsed'); }catch(e){}
+  const paint=()=>{ const b=btn(); if(b){ b.textContent=app.classList.contains('sb-collapsed')?'⟩':'⟨'; b.title=app.classList.contains('sb-collapsed')?'Expand menu':'Collapse menu'; } };
+  paint();
+  document.addEventListener('click', e=>{
+    const b=e.target.closest && e.target.closest('#sbCollapse');
+    if(!b) return;
+    app.classList.toggle('sb-collapsed');
+    try{ localStorage.setItem('oracool_sb_collapsed', app.classList.contains('sb-collapsed')?'1':'0'); }catch(err){}
+    paint();
+  });
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', sbToggleInit); else sbToggleInit();
 function renderRich(el, text){
   text=_cleanReply(text);
   let s = escapeHtml(text||'');
@@ -1478,6 +1578,60 @@ function appLaunchCard(app, u, mode){
   };
   chat.appendChild(d); scrollChat(); saveChat&&saveChat();
 }
+function cameraAuto(){
+  window.__camAutoRunning=true;
+  const d=document.createElement('div'); d.className='msg ai';
+  d.innerHTML='<div class="who">ORA-COOL</div><div class="body">📷 <b>Camera open</b> — capturing automatically…<div id="camCount" style="font-size:34px;font-weight:800;margin-top:10px;color:var(--cyan2,#7dd3fc)">3</div></div>';
+  chat.appendChild(d); scrollChat();
+  const cnt=d.querySelector('#camCount');
+  let stream=null;
+  (async()=>{
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
+      const v=document.createElement('video');
+      v.srcObject=stream; v.muted=true; v.playsInline=true;
+      v.style.cssText='width:100%;max-width:420px;border-radius:12px;margin-top:8px;background:#000';
+      cnt.parentElement.insertBefore(v, cnt);
+      await v.play();
+      for(const n of [3,2,1]){ if(cnt) cnt.textContent=n; await new Promise(r=>setTimeout(r,1000)); }
+      const c=document.createElement('canvas');
+      c.width=v.videoWidth||720; c.height=v.videoHeight||1280;
+      c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+      const url=c.toDataURL('image/jpeg',0.92);
+      v.remove(); if(cnt) cnt.remove();
+      if(stream){ stream.getTracks().forEach(tr=>tr.stop()); stream=null; }
+      const box=document.createElement('div');
+      box.innerHTML='<img src="'+url+'" style="max-width:100%;border-radius:12px;margin-top:8px" alt="Your photo">'+
+        '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">'+
+        '<a class="btn ghost small" href="'+url+'" download="oracool-photo.jpg" style="min-height:40px">⬇️ Download</a>'+
+        '<button class="btn ghost small" style="min-height:40px" id="camAttach">➕ Attach to your message</button></div>';
+      d.querySelector('.body').appendChild(box);
+      box.querySelector('#camAttach').onclick=async(btn2)=>{
+        try{
+          const blob=await (await fetch(url)).blob();
+          const f=new File([blob],'oracool-photo.jpg',{type:'image/jpeg'});
+          if(f.size>5*1024*1024){ addErr('⚠️ Photo is over 5 MB — skipped.'); return; }
+          const dataURL=await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>res(null); r.readAsDataURL(f); });
+          if(!dataURL) throw new Error('read failed');
+          const r=await post('/api/files/analyze',{name:f.name, mime:'image/jpeg', data_b64:dataURL.split(',')[1]||''});
+          if(r.error){ addErr('⚠️ '+r.error); return; }
+          pendingFiles.push({name:f.name, type:r.type, text:r.text});
+          renderFileChips();
+          addSystemNote('📎 '+escapeHtml(f.name)+' attached'+(r.text?' — I can see it: '+escapeHtml(r.text.slice(0,140)):'')+'.');
+          btn2.disabled=true; btn2.textContent='Attached ✓';
+        }catch(e){ addErr('⚠️ Could not attach the photo: '+(e.message||e)); }
+      };
+      d.querySelector('.body').insertAdjacentHTML('afterbegin','✅ <b>Photo taken, sir.</b> ');
+      if(window.OraVoice) OraVoice.say('Photo taken, sir.');
+      window.__camAutoRunning=false;
+    }catch(e){
+      if(stream) stream.getTracks().forEach(tr=>tr.stop());
+      window.__camAutoRunning=false;
+      d.querySelector('.body').innerHTML='📷 Camera blocked or unavailable: '+escapeHtml(String(e.message||e))+
+        '<div class="errbox" style="margin-top:8px">Allow it like this: tap the padlock icon in your browser address bar → Site settings → Camera → Allow, then just ask me again — I will open it automatically.</div>';
+    }
+  })();
+}
 function cameraCard(){
   const d=document.createElement('div'); d.className='msg ai';
   d.innerHTML='<div class="who">ORA-COOL</div><div class="body">📷 <b>Camera capture</b> — tap below to take your picture. It appears right here: view it, download it, or attach it to your next message so I can look at it with you.'+
@@ -1534,8 +1688,8 @@ function runDeviceCommand(text){
   const ua=navigator.userAgent||'';
   const android=/android/i.test(ua), ios=/iphone|ipad|ipod/i.test(ua);
   if(/\b(?:take|snap|capture|click|shoot|get)\s+(?:me\s+|my\s+(?:face\s+)?|a\s+)?(?:picture|photo|selfie)\b/.test(t) || /\b(?:picture|photo|selfie)\s+of\s+(?:me|my face)\b/.test(t)){
-    cameraCard();
-    return {handled:true, reply:'Camera ready, sir — tap <b>📷 Take photo</b> below and allow the camera permission when your browser asks. Browsers only let an app use the camera from a real tap, so I cannot capture it myself — but one tap is all it takes. Your photo will appear right in the chat: view, download or attach it.'};
+    cameraAuto();
+    return {handled:true, reply:'Opening your camera now, sir — hold still, capturing in <b>3… 2… 1</b>. If your browser asks for camera permission, allow it. Your photo will appear right here in the chat to view, download or attach.'};
   }
   const open=(u)=>{ try{ window.open(u,'_blank'); }catch(e){ window.location.href=u; } };
   async function smartOpen(name){
@@ -1707,7 +1861,7 @@ async function send(text){
             if(data==='[DONE]'){ finished=true; break outer; }
             try{
               const j=JSON.parse(data);
-              if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !document.getElementById('camGo')){ try{ cameraCard(); }catch(e){} } }
+              if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build' && x.url){ try{ buildCard(x); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } }); }
               if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
               if(j.__media && j.__media.length){ streamMedia=streamMedia.concat(j.__media); }
               const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; body.textContent=_cleanReply(acc); if(turnSpeaker)turnSpeaker.feed(_cleanReply(acc)); scrollChat(); }
@@ -1939,8 +2093,9 @@ function mediaHtml(url){
   if(!url) return '';
   const ext=(url.toLowerCase().split('/').pop().split('?')[0].split('.').pop()||'');
   if(['jpg','jpeg','png','webp','gif'].includes(ext)) return `<img class="wa-img" src="${escapeHtml(url)}" alt="photo">`;
-  if(['webm','ogg','m4a','opus','mp3'].includes(ext)) return `<audio class="cmessaudio" controls preload="metadata" src="${escapeHtml(url)}"></audio>`;
-  if(['mp4','webm'].includes(ext)) return `<video class="wa-video" controls playsinline preload="metadata" src="${escapeHtml(url)}"></video>`;
+  if(['webm','ogg','m4a','opus','mp3'].includes(ext)) return `<audio class="cmessaudio" controls preload="metadata" src="${escapeHtml(url)}" onerror="this.outerHTML='<a class=&quot;wa-file&quot; href=&quot;'+this.src+'&quot; target=&quot;_blank&quot;>🎤 Download voice note (your browser cannot play it inline)</a>'"></audio>`;
+  if(['mp4'].includes(ext)) return `<video class="wa-video" controls playsinline preload="metadata" src="${escapeHtml(url)}" onerror="this.outerHTML='<a class=&quot;wa-file&quot; href=&quot;'+this.src+'&quot; target=&quot;_blank&quot;>🎬 Download video</a>'"></video>`;
+  if(['webm'].includes(ext)) return `<video class="wa-video" controls playsinline preload="metadata" src="${escapeHtml(url)}" onerror="this.outerHTML='<a class=&quot;wa-file&quot; href=&quot;'+this.src+'&quot; target=&quot;_blank&quot;>🎬 Download (webm)</a>'"></video>`;
   if(['pdf','txt','csv','json','zip','doc','docx','xls','xlsx','ppt','pptx'].includes(ext)) return `<a class="wa-file" href="${escapeHtml(url)}" target="_blank" rel="noopener">📎 <span>Download file</span> <small>· ${escapeHtml(ext.toUpperCase())}</small></a>`;
   return '';
 }
@@ -2233,7 +2388,19 @@ async function renderCommDms(){
   const at=$('#dmAttach'), em=$('#dmEmoji');
   if(at) at.onclick=e=>{ e.stopPropagation(); waAttachPop(at); };
   if(em) em.onclick=e=>{ e.stopPropagation(); waEmojiPop(em, $('#dmInput')); };
-  const send=async()=>{ const inp=$('#dmInput'); let text=(inp.value||'').trim(); const pre=replyPrefix(); if(!text && !pre) return; inp.value=''; clearReply(); const r=await post('/api/community/dm/send',{handle:COMM.peer, body:(pre+text).trim()}); if(r.error){ addErr('Community: '+r.error); inp.value=text; return; } const el=$('#dmMsgs'); if(el&&r.message){ appendCommMsg(el, r.message); COMM.lastDmId=r.message.id; el.scrollTop=el.scrollHeight; } };
+  const send=async()=>{ const inp=$('#dmInput'); let text=(inp.value||'').trim(); const pre=replyPrefix(); if(!text && !pre) return;
+    const bodyText=(pre+text).trim();
+    const el=$('#dmMsgs');
+    // optimistic bubble: the message appears instantly; the network finishes behind it
+    let optId=null;
+    if(el){ const row=document.createElement('div'); row.className='wa-row mine';
+      row.innerHTML='<span class="wa-avspace"></span><div class="wa-col"><div class="wa-bub"><div class="wa-capt">'+escapeHtml(bodyText)+'</div><span class="wa-time">⏳</span></div></div>';
+      el.appendChild(row); el.scrollTop=el.scrollHeight; optId=row; }
+    inp.value=''; clearReply();
+    const r=await post('/api/community/dm/send',{handle:COMM.peer, body:bodyText});
+    if(r.error){ if(optId){ optId.remove(); } addErr('Community: '+r.error); inp.value=text; return; }
+    if(optId) optId.remove();
+    if(el&&r.message){ appendCommMsg(el, r.message); COMM.lastDmId=r.message.id; el.scrollTop=el.scrollHeight; } };
   $('#dmSend').onclick=send; $('#dmInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
   loadCommDm(true);
 }
@@ -2420,7 +2587,22 @@ async function roomVoiceToggle(btn){
 
 /* ---------- community calls: audio & video (P2P WebRTC, OraCool signals) ---------- */
 const CALL={pc:null, stream:null, callId:null, peer:null, kind:'audio', active:false, ringing:null, tick:null, secs:0, beepTimer:null};
-function callIceServers(){ return [{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}]; }
+function callIceServers(){
+  // STUN first, then the free public TURN (TCP 443/UDP) so calls work when
+  // BOTH sides sit behind restrictive NATs (mobile networks, CGNAT, campus Wi-Fi).
+  return [
+    {urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']},
+    {urls:['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443','turn:openrelay.metered.ca:443?transport=udp'],
+     username:'openrelayproject', credential:'openrelayproject'}
+  ];
+}
+function callWatchdog(kind, ms, msg){
+  const t=setTimeout(()=>{
+    if(!CALL.active){ return; }
+    callTeardown(); addErr(msg);
+  }, ms);
+  CALL.watchdog=t;
+}
 function callBeep(){ try{ const ctx=new (window.AudioContext||window.webkitAudioContext)(); const o=ctx.createOscillator(); const g=ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.frequency.value=880; g.gain.value=0.05; o.start(); setTimeout(()=>{ try{o.stop(); ctx.close();}catch(e){} }, 800); }catch(e){} }
 function showCallUi(sub, who){
   let ov=document.getElementById('callOverlay');
@@ -2448,6 +2630,7 @@ function callTeardown(){
   if(CALL.stream){ CALL.stream.getTracks().forEach(t=>t.stop()); CALL.stream=null; }
   const ov=document.getElementById('callOverlay'); if(ov) ov.classList.remove('open');
   const ic=document.getElementById('incomingCall'); if(ic) ic.remove();
+  if(CALL.watchdog){ clearTimeout(CALL.watchdog); CALL.watchdog=null; }
   CALL.active=false; CALL.ringing=null; CALL.callId=null; CALL.peer=null;
 }
 async function callStart(peerUsername, video){
@@ -2468,6 +2651,7 @@ async function callStart(peerUsername, video){
     const offer=await CALL.pc.createOffer(); await CALL.pc.setLocalDescription(offer);
     await post('/api/community/call/sdp',{call_id:CALL.callId, sdp:JSON.stringify(offer)});
     showCallUi('Calling…', '@'+peerUsername);
+    callWatchdog('caller', 90000, '📵 No answer — their app may be closed or offline. You can try again.');
   }catch(e){ callTeardown(); addErr('Call: '+(e.message||e)); }
 }
 async function callSetRemote(sd){
@@ -2488,6 +2672,7 @@ async function callSetRemote(sd){
 }
 function showIncomingCall(c){
   if(CALL.active){ post('/api/community/call/hangup',{call_id:c.call_id}).catch(()=>null); return; }
+  if(CALL.ringing && CALL.ringing.call_id===c.call_id) return; // already ringing for this call
   let m=document.getElementById('incomingCall');
   if(!m){ m=document.createElement('div'); m.id='incomingCall'; m.className='modal open'; document.body.appendChild(m); }
   m.innerHTML=`<div class="incomingcard"><div class="big">${c.kind==='video'?'📹':''}</div>
@@ -2505,7 +2690,14 @@ function showIncomingCall(c){
     showCallUi('Connecting…','@'+CALL.peer);
     const sub=document.getElementById('callSub'); if(sub) sub.dataset.waiting='1';
     CALL.ringing=null;
+    callWatchdog('callee', 75000, '📵 Could not establish a media connection — check your network (or theirs) and try again.');
     await callSetRemote(c.offer);
+    const okTimer=setInterval(()=>{
+      try{
+        const cs=CALL.pc&&CALL.pc.connectionState;
+        if(cs==='connected'||cs==='completed'){ clearInterval(okTimer); if(CALL.watchdog){ clearTimeout(CALL.watchdog); CALL.watchdog=null; } const sub=document.getElementById('callSub'); if(sub) sub.textContent='Connected'; }
+      }catch(e){}
+    }, 2000);
   };
 }
 async function callPollTick(){
@@ -2520,7 +2712,7 @@ async function callPollTick(){
         return;
       }
       if(u.call_id!==CALL.callId) return;
-      if(u.event==='answer'){ callSetRemote(u.sdp); }
+      if(u.event==='answer'){ callSetRemote(u.sdp); if(CALL.watchdog){ clearTimeout(CALL.watchdog); CALL.watchdog=null; } }
       if(u.event==='ice'){ (u.candidates||[]).forEach(cd=>{ try{ if(CALL.pc) CALL.pc.addIceCandidate(cd); }catch(e){} }); }
     });
   }catch(e){}

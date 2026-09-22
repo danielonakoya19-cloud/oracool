@@ -2840,6 +2840,293 @@ def gemini_status():
             "note": ("All Gemini engines activate automatically the moment the project is granted access — "
                      "no redeploy needed. Until then, OraCool keeps using its free/other engines.")}
 
+# ================================================================ app builder (Arena-style) + GitHub
+
+_BUILDS_DIR = os.path.join(DATA_DIR, "builds")
+_BUILDS_LOCK = threading.Lock()
+_BUILD_MAX_FILES = 24
+_BUILD_MAX_FILE = 256 * 1024
+_BUILD_DAILY = {}  # email -> [timestamps] (free-tier cap)
+
+def _builds_meta():
+    return os.path.join(_BUILDS_DIR, "meta.json")
+
+def _builds_load():
+    try:
+        with open(_builds_meta(), encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _builds_save(d):
+    with _BUILDS_LOCK:
+        try:
+            os.makedirs(_BUILDS_DIR, exist_ok=True)
+            with open(_builds_meta(), "w", encoding="utf-8") as f:
+                json.dump(d, f, indent=1)
+        except Exception:
+            pass
+
+def _build_slug(name):
+    s = re.sub(r"[^a-z0-9]+", "-", (name or "site").lower()).strip("-")[:40]
+    return s or ("site-" + os.urandom(3).hex())
+
+def _llm_json(system, user, max_tokens=8000):
+    """Non-streaming completion that must return JSON. Tries groq -> openai -> agnes."""
+    attempts = []
+    k = key("GROQ_API_KEY")
+    if k:
+        attempts.append((k, "https://api.groq.com/openai/v1", KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), "groq"))
+    k = key("OPENAI_API_KEY")
+    if k:
+        attempts.append((k, "https://api.openai.com/v1", "gpt-4o-mini", "openai"))
+    k = key("AGNES_API_KEY")
+    if k:
+        attempts.append((k, AGNES_BASE, KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), "agnes"))
+    if not attempts:
+        return None, "no LLM key configured"
+    for k, base, model, prov in attempts:
+        try:
+            _, raw, _ = http_fetch(base.rstrip("/") + "/chat/completions", method="POST", timeout=180,
+                                   headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
+                                   json_body={"model": model, "max_tokens": max_tokens, "temperature": 0.4,
+                                              "messages": [{"role": "system", "content": system},
+                                                           {"role": "user", "content": user}]})
+            d = json.loads(raw)
+            c = (d.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+            c = c.strip()
+            m = re.search(r"\{[\s\S]*\}", c)
+            if m:
+                c = m.group(0)
+            return json.loads(c), prov
+        except Exception as e:
+            attempts_err = str(e)[:120]
+            continue
+    return None, "all LLM providers failed: " + attempts_err
+
+def build_site(email, name, prompt):
+    """Arena-style builder: the AI writes a complete static site (HTML/CSS/JS),
+    saved to data/builds/<slug>/ and served same-origin at /builds/<slug>/ for a
+    live in-chat preview. Returns an honest report of what was created."""
+    email = (email or "").strip().lower()
+    name = (name or "site").strip()[:40]
+    prompt = (prompt or "").strip()[:1200]
+    if not prompt:
+        return {"error": "Describe the site you want, e.g. 'a landing page for a coffee brand in Lagos'."}
+    # free-tier cap: 10 builds/day
+    now = time.time()
+    lst = [t for t in _BUILD_DAILY.get(email, []) if now - t < 86400]
+    if len(lst) >= 10:
+        return {"error": "Daily build limit reached (10/day on this plan). Try again tomorrow or upgrade."}
+    slug0 = _build_slug(name)
+    slug = slug0
+    i = 2
+    while slug in _builds_load():
+        slug = slug0 + "-" + str(i); i += 1
+    system = (
+        "You are a world-class frontend engineer. Build a COMPLETE, POLISHED static website exactly as "
+        "requested. Respond with ONLY a JSON object (no markdown fences) of the form: "
+        '{"files":[{"path":"index.html","content":"..."}]}. '
+        "The whole site MUST fit in ONE self-contained index.html with inline style and script tags "
+        "(no other files, no external CDNs) and MUST be under 25KB total. Make it responsive and beautiful "
+        "(dark, modern, premium feel with smooth micro-interactions); no TODO placeholders; every button "
+        "must do something real (anchor scroll, client-side form handling, etc.). Keep code compact "
+        "(short class names, dense but readable CSS).")
+    user = ("Build this website. Site name: " + name + ". Brief: " + prompt +
+            ". The site title must be exactly: " + name +
+            ". Include a header, hero, at least two content sections, and a footer in the single index.html. "
+            "Remember: reply with ONLY the JSON object, and keep it under 25KB.")
+    data, prov = _llm_json(system, user, max_tokens=16000)
+    if not data:
+        data, prov2 = _llm_json(system + " The previous reply was too long and got cut off. Reply SHORTER "
+                                      "this time: a compact single index.html under 15KB.",
+                                user, max_tokens=16000)
+        if data:
+            prov = prov2
+    if not data:
+        return {"error": "The builder brain is unavailable right now (" + str(prov)[:140] + "). Please try again in a moment."}
+    files = data.get("files") if isinstance(data, dict) else None
+    if not isinstance(files, list) or not files:
+        return {"error": "The AI returned an unexpected format. Please try again with a slightly different brief."}
+    files = files[:_BUILD_MAX_FILES]
+    clean = []
+    for f in files:
+        if not isinstance(f, dict):
+            continue
+        p = str(f.get("path") or "").strip().lstrip("/").replace("\\", "/")
+        c = str(f.get("content") or "")
+        if not p or ".." in p or p.count("/") > 3 or len(p) > 80:
+            continue
+        if len(c) > _BUILD_MAX_FILE:
+            c = c[:_BUILD_MAX_FILE]
+        clean.append({"path": p, "content": c})
+    if not any(f["path"] == "index.html" for f in clean):
+        return {"error": "The AI did not include an index.html page. Please try again."}
+    dest = os.path.join(_BUILDS_DIR, slug)
+    try:
+        for f in clean:
+            fp = os.path.normpath(os.path.join(dest, f["path"]))
+            if not fp.startswith(os.path.normpath(dest)):
+                continue
+            os.makedirs(os.path.dirname(fp), exist_ok=True)
+            with open(fp, "w", encoding="utf-8") as fh:
+                fh.write(f["content"])
+    except Exception as e:
+        return {"error": "Could not save the site: " + str(e)[:120]}
+    meta = _builds_load()
+    meta[slug] = {"owner": email, "name": name, "brief": prompt[:300], "provider": prov,
+                  "files": [f["path"] for f in clean], "t": _now()}
+    _builds_save(meta)
+    _BUILD_DAILY.setdefault(email, []).append(now)
+    return {"ok": True, "slug": slug, "url": "/builds/" + slug + "/", "name": name,
+            "files": [f["path"] for f in clean], "provider": prov,
+            "note": "Live preview is in the card above. Full-screen, download or deploy it — the 'How to deploy' button walks you through Netlify / Vercel / GitHub Pages (and one-click push if you connect your GitHub account in Devices → Connectors)."}
+
+def build_list(email):
+    meta = _builds_load()
+    out = [dict(meta[s], slug=s) for s in sorted(meta, reverse=True)]
+    return {"ok": True, "builds": out[:30]}
+
+def build_zip(slug):
+    slug = os.path.basename(str(slug or ""))
+    dest = os.path.normpath(os.path.join(_BUILDS_DIR, slug))
+    if not slug or not dest.startswith(os.path.normpath(_BUILDS_DIR)) or not os.path.isdir(dest):
+        return None
+    import zipfile
+    buf = __import__("io").BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for root, _dirs, fns in os.walk(dest):
+            for fn in fns:
+                fp = os.path.join(root, fn)
+                z.write(fp, os.path.join(slug, os.path.relpath(fp, dest)))
+    return buf.getvalue()
+
+# ------------------------------------------------------------ GitHub (user's own account, PAT-sealed in the vault)
+
+def _gh(email, path, method="GET", body=None, timeout=30):
+    pat = ""
+    try:
+        r = vault_get(email, "github_pat")
+        pat = str(r.get("value") or "")
+    except Exception:
+        pass
+    if not pat:
+        return None, "No GitHub account connected (Devices → Connectors → GitHub)."
+    try:
+        _, raw, _ = http_fetch("https://api.github.com" + path, method=method, timeout=timeout,
+                               headers={"Authorization": "Bearer " + pat, "Accept": "application/vnd.github+json",
+                                        "User-Agent": "oracool-builder"},
+                               json_body=body)
+        return json.loads(raw), None
+    except Exception as e:
+        return None, str(e)[:140]
+
+def github_connect(email, pat):
+    pat = (pat or "").strip()
+    if not pat or len(pat) < 20:
+        return {"error": "Paste a full GitHub personal access token (classic or fine-grained with repo scope)."}
+    try:
+        _, raw, _ = http_fetch("https://api.github.com/user", method="GET", timeout=30,
+                               headers={"Authorization": "Bearer " + pat, "Accept": "application/vnd.github+json",
+                                        "User-Agent": "oracool-builder"})
+        u = json.loads(raw)
+    except Exception as e:
+        return {"error": "GitHub rejected the token: " + str(e)[:140]}
+    if u.get("error") or not u.get("login"):
+        return {"error": "GitHub says this token is invalid — create a new one (Settings → Developer settings → Personal access tokens)."}
+    v = vault_set(email, "github_pat", pat)
+    if v.get("status") != "ok":
+        return {"error": v.get("error", "Could not store the token.")}
+    return {"ok": True, "login": u.get("login"), "html_url": u.get("html_url"),
+            "note": "Connected as @" + str(u.get("login")) + " — the token is stored AES-encrypted in your vault. OraCool can now list repos, create repos, push built sites and enable GitHub Pages for you."}
+
+def github_status(email):
+    try:
+        r = vault_get(email, "github_pat")
+        if r.get("value"):
+            _, raw, _ = http_fetch("https://api.github.com/user", method="GET", timeout=20,
+                                   headers={"Authorization": "Bearer " + str(r["value"]), "Accept": "application/vnd.github+json",
+                                            "User-Agent": "oracool-builder"})
+            u = json.loads(raw)
+            return {"connected": bool(u.get("login")), "login": u.get("login")}
+    except Exception:
+        pass
+    return {"connected": False}
+
+def github_repos(email, only_mine=True):
+    q = "?per_page=30&sort=updated&type=owner" if only_mine else "?per_page=30&sort=updated"
+    d, err = _gh(email, "/user/repos" + q)
+    if err:
+        return {"error": err}
+    return {"ok": True, "repos": [{"name": r.get("name"), "private": bool(r.get("private")),
+                                   "url": r.get("html_url"), "default_branch": r.get("default_branch")}
+                                  for r in (d or [])[:30]]}
+
+def github_create_repo(email, name, private=False):
+    name = re.sub(r"[^A-Za-z0-9._-]", "", name or "")[:60]
+    if not name:
+        return {"error": "Give the repository a name."}
+    d, err = _gh(email, "/user/repos", method="POST", body={"name": name, "private": bool(private),
+                                                            "auto_init": False})
+    if err:
+        return {"error": err}
+    if d.get("full_name"):
+        return {"ok": True, "repo": d.get("full_name"), "url": d.get("html_url")}
+    return {"error": (d.get("message") or "Could not create the repository.")[:160]}
+
+def github_push_build(email, slug, repo, enable_pages=True):
+    slug = os.path.basename(str(slug or ""))
+    dest = os.path.normpath(os.path.join(_BUILDS_DIR, slug))
+    if not slug or not dest.startswith(os.path.normpath(_BUILDS_DIR)) or not os.path.isdir(dest):
+        return {"error": "That build no longer exists on this server (builds live on disk)."}
+    m = re.match(r"^([^/]+)/([^/]+)$", (repo or "").strip())
+    if not m:
+        return {"error": "Pick a repository like 'yourname/sitename' (or create one first)."}
+    owner, rname = m.group(1), m.group(2)
+    # ensure the repo exists
+    d, err = _gh(email, "/repos/" + owner + "/" + rname)
+    if err:
+        return {"error": err}
+    if not d or d.get("message") == "Not Found" or "404" in str(d.get("message", "")):
+        cr = github_create_repo(email, rname, private=True)
+        if not cr.get("ok"):
+            return cr
+        d = _gh(email, "/repos/" + owner + "/" + rname)[0]
+        if not d or not d.get("full_name"):
+            return {"error": "Repository creation did not confirm — check your GitHub and retry."}
+    pushed, failed = [], []
+    for root, _dirs, fns in os.walk(dest):
+        for fn in sorted(fns):
+            fp = os.path.join(root, fn)
+            rel = os.path.relpath(fp, dest).replace(os.sep, "/")
+            if os.path.getsize(fp) > 1_000_000:
+                failed.append(rel)
+                continue
+            content = base64.b64encode(open(fp, "rb").read()).decode()
+            r2, e2 = _gh(email, "/repos/" + owner + "/" + rname + "/contents/" + rel,
+                         method="PUT", body={"message": "Deploy " + slug + " (OraCool builder)",
+                                             "content": content, "branch": "main"}, timeout=40)
+            if e2 or not r2 or not r2.get("content"):
+                # file may exist on another branch / need sha — retry as create-on-master
+                r2, e2 = _gh(email, "/repos/" + owner + "/" + rname + "/contents/" + rel,
+                             method="PUT", body={"message": "Deploy " + slug + " (OraCool builder)",
+                                                 "content": content}, timeout=40)
+            if r2 and r2.get("content"):
+                pushed.append(rel)
+            else:
+                failed.append(rel + (" (" + str(e2 or (r2 or {}).get("message", "unknown"))[:60] + ")"))
+    if not pushed:
+        return {"error": "GitHub push failed for every file: " + "; ".join(failed[:3])[:300]}
+    out = {"ok": True, "repo": owner + "/" + rname, "url": "https://github.com/" + owner + "/" + rname,
+           "pushed": pushed, "failed": failed}
+    if enable_pages and not failed:
+        pages, pe = _gh(email, "/repos/" + owner + "/" + rname + "/pages", method="PUT",
+                        body={"source": {"branch": "main", "path": "/"}}, timeout=40)
+        if pages and not pe:
+            out["pages"] = "enabled"
+            out["pages_url"] = "https://" + owner.lower() + ".github.io/" + rname.lower() + "/"
+    return out
+
 def gen_image(prompt, aspect_ratio="1:1"):
     """Text-to-image cascade: NexaAPI (creator's primary) → HiAPI → TokenMix →
     Pollinations FLUX → CVRON flux. Provider capacity and free quotas vary;
@@ -4504,7 +4791,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch24-gemini",
+        "build": "patch25-build",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -5621,6 +5908,47 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 out.append({"tool": "image", "label": "image · " + prompt[:40],
                             "result": _shrink(r, 1200)})
 
+    # Arena-style app builder (every tier, 10/day)
+    mb = re.search(r"\b(?:build|create|make|design|generate)\s+(?:[\w\x27]+\s+){0,2}?(?:website|web\s*site|web\s*app|landing\s*page|site|app|portfolio|shop|store|page)\b", low)
+    if mb and len(t) > 8:
+        _bn = ""
+        _mn = re.search(r"(?:called|named)\s+\"?([A-Za-z0-9 _-]{2,40})\"?", t, re.I)
+        if _mn:
+            _bn = _mn.group(1)
+        else:
+            _after = t[mb.end():].strip().lstrip(" ,").strip()
+            if _after and len(_after) < 60 and not re.search(r"\b(with|that|which|using|about|for|on|by|and)\b", _after):
+                _bn = _after
+        _br = t[:mb.end()] + t[mb.end():][:400]
+        out.append({"tool": "build", "label": "build · " + (_bn or "website")[:30],
+                    "result": _shrink(build_site(email, _bn or "my-site", _br), 1500)})
+    # GitHub: connect / repos / push a built site to the user's own account
+    if email and re.search(r"\bgithub\b", low):
+        if re.search(r"\b(connect|link|add)\b", low) and re.search(r"token|pat|account", low):
+            out.append({"tool": "github", "label": "connect github",
+                        "result": {"ok": True,
+                                   "note": "Tap the GitHub card in chat (or Devices → Connectors → GitHub) and paste your personal access token. Create one at github.com → Settings → Developer settings → Personal access tokens → Generate (needs repo scope)."}})
+        elif re.search(r"\brepos?\b", low) and not re.search(r"create|new", low):
+            out.append({"tool": "github_repos", "label": "github repos", "result": _shrink(github_repos(email), 1500)})
+        elif re.search(r"\b(push|deploy|publish)\b", low):
+            _meta = _builds_load()
+            if email and email in [v.get("owner") for v in _meta.values()]:
+                _slugs = [s for s, v in _meta.items() if v.get("owner") == email][-1:]
+                if _slugs:
+                    _msl = re.search(r"\bpush\s+(?:the\s+)?(?:build|site)\s+\"?([a-z0-9-]{2,48})\"?\s+to\s+github", low)
+                    _slug = _msl.group(1) if _msl and _msl.group(1) in _meta else _slugs[0]
+                    _mrepo = re.search(r"(?:to|in|into)\s+(?:the\s+)?(?:repo|repository)?\s*\"?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\"?", low)
+                    _repo = _mrepo.group(1) if _mrepo else ""
+                    if _repo:
+                        out.append({"tool": "github_push", "label": "push → " + _repo,
+                                    "result": _shrink(github_push_build(email, _slug, _repo), 900)})
+                    else:
+                        out.append({"tool": "github_push", "label": "push " + _slug,
+                                    "result": {"ok": True,
+                                               "note": "Which repo should I push '" + _slug + "' to? Say the name (I can create a new private repo for it) — e.g. push the build to myrepo."}})
+            else:
+                out.append({"tool": "github_push", "label": "push build",
+                            "result": {"error": "You have no builds on this server yet — ask me to build a site first, then I can push it to your GitHub."}})
     # Gemini engine status (admin) — honest live report of what the Google key can do
     if email and is_admin(email) and re.search(r"\b(gemini|google (api|key|model))\b", low) and \
             any(k in low for k in ("status", "working", "work", "check", "test", "ok", "good", "connect")):
@@ -7284,6 +7612,34 @@ class Handler(BaseHTTPRequestHandler):
             self._send_file(os.path.join(BASE_DIR, "voice-reminders.js"), "text/javascript")
         elif path == "/sw.js":
             self._send_file(os.path.join(BASE_DIR, "sw.js"), "text/javascript")
+        elif path.startswith("/builds/"):
+            _rel = urllib.parse.unquote(path[len("/builds/"):])
+            _base = os.path.normpath(_BUILDS_DIR)
+            _full = os.path.normpath(os.path.join(_base, _rel))
+            if not _full.startswith(_base):
+                self.send_error(404); return
+            if _rel.endswith("/download.zip") or _rel.endswith(".zip"):
+                _z = build_zip(_rel.rsplit("/", 1)[0].rsplit(".zip", 1)[0])
+                if _z:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/zip")
+                    self.send_header("Content-Disposition", 'attachment; filename="' + _rel.rsplit("/", 1)[0] + '.zip"')
+                    self.send_header("Content-Length", str(len(_z)))
+                    self.end_headers()
+                    self.wfile.write(_z)
+                else:
+                    self.send_error(404)
+                return
+            if os.path.isdir(_full):
+                _full = os.path.join(_full, "index.html")
+            if os.path.exists(_full) and os.path.isfile(_full):
+                _ext = os.path.splitext(_full)[1].lower()
+                _ct = {".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "application/javascript",
+                       ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg",
+                       ".svg": "image/svg+xml", ".ico": "image/x-icon"}.get(_ext, "application/octet-stream")
+                self._send_file(_full, _ct)
+            else:
+                self.send_error(404)
         elif path.startswith("/generated/"):
             _gn = os.path.basename(path)
             _gp = os.path.join(BASE_DIR, "data", "generated", _gn)
@@ -7343,7 +7699,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch24-gemini",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch25-build",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -7369,7 +7725,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "This account is suspended by an administrator. Access is locked until an administrator lifts the block.",
                                  "suspended": True, "blocked": True}, 403)
                 return
-        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/comms/", "/api/community/")) or path in ("/api/image", "/api/video")
+        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/comms/", "/api/community/", "/api/builds", "/api/github")) or path in ("/api/image", "/api/video")
         if protected:
             em = request_identity(self, body, require_supabase=path.startswith(("/api/voice/", "/api/comms/")))
             if not em:
@@ -7509,6 +7865,30 @@ class Handler(BaseHTTPRequestHandler):
             # ---- plans / tiers ----
             elif path == "/api/plan":
                 self._send_json(plan_info(body))
+            elif path == "/api/builds":
+                _bm = (body.get("message") or body.get("brief") or "").strip()
+                _bname = (body.get("name") or "").strip()
+                if not _bname:
+                    _mn = re.search(r"(?:called|named)\s+\"?([A-Za-z0-9 _-]{2,40})\"?", _bm, re.I)
+                    _bname = _mn.group(1) if _mn else "my-site"
+                self._send_json(build_site(body.get("email"), _bname, _bm or _bname))
+            elif path == "/api/builds/list":
+                self._send_json(build_list(body.get("email")))
+            elif path == "/api/github":
+                _act = str(body.get("action") or "").strip()
+                _em = body.get("email") or ""
+                if _act == "connect":
+                    self._send_json(github_connect(_em, str(body.get("pat") or "")))
+                elif _act == "status":
+                    self._send_json(github_status(_em))
+                elif _act == "repos":
+                    self._send_json(github_repos(_em))
+                elif _act == "create":
+                    self._send_json(github_create_repo(_em, str(body.get("name") or ""), bool(body.get("private"))))
+                elif _act == "push":
+                    self._send_json(github_push_build(_em, str(body.get("slug") or ""), str(body.get("repo") or "")))
+                else:
+                    self._send_json({"error": "Unknown GitHub action."})
             elif path == "/api/files/analyze":
                 self._send_json(analyze_file(body.get("name"), body.get("mime"), body.get("data_b64")))
             # ---- link tracker (visitor intelligence) ----
@@ -8386,6 +8766,23 @@ class Handler(BaseHTTPRequestHandler):
             "account — then it works immediately with no redeploy. Until then the free engines keep working and "
             "the reply says honestly which engine served the result. Admins can ask 'gemini status' for a live "
             "per-capability report. "
+            "APP BUILDER (Arena-style): when the user asks to build/create a website, web app, landing page, "
+            "portfolio or shop, the builder tool writes a complete static site and the chat shows a live "
+            "preview card (iframe) with Full-screen, Download and a 'How to deploy' button. Tell them the "
+            "site is live in the preview and offer: download the zip, deploy to Netlify/Vercel (the deploy "
+            "guide walks them through it), or push to their GitHub (if connected - it can create the repo "
+            "and enable GitHub Pages automatically). Be enthusiastic but factual: say exactly what was built "
+            "and what the card can do. If the build tool errors, relay the error honestly and offer to retry "
+            "with a refined brief. "
+            "GITHUB: the user can connect their own GitHub account (Devices -> Connectors -> GitHub, personal "
+            "access token with repo scope - stored AES-encrypted). When connected you can list their repos, "
+            "create new ones, push built sites and enable GitHub Pages. 'Connect github' in chat shows the "
+            "connection card. Never ask for their password - only a personal access token. "
+            "CAMERA (UPDATED): when the user asks to take a picture/photo/selfie, the app opens the camera "
+            "automatically in the chat with a live preview and captures after a 3-second countdown - no "
+            "button to tap. Tell them: camera opening, say cheese in 3 seconds. If the browser permission is "
+            "blocked, say exactly how to allow it (padlock icon -> Site settings -> allow Camera) and that "
+            "they can just ask again. Never say you cannot take photos. "
             "CREATED MEDIA PERSISTS: images and videos the user creates are saved to their media gallery and "
             "kept durably across server redeploys — tell them their creations live in the gallery and survive "
             "updates. "
@@ -8399,12 +8796,9 @@ class Handler(BaseHTTPRequestHandler):
             "an app, the server has prepared a tappable 'Open <app>' launch card in the chat; tell them to tap that "
             "button (and mention the web link fallback if it is shown). NEVER say or imply 'opened' / 'it is open "
             "now' unless they confirm it opened. "
-            "CAMERA (HONESTY RULE): you cannot capture photos by yourself — the browser only allows camera "
-            "access from a real user tap. When the user asks to take a picture/photo/selfie, the app fires a "
-            "tappable 'Take photo' capture card in the chat; tell them to tap it and allow the camera "
-            "permission. NEVER say you cannot take photos, and NEVER claim a photo was taken without their "
-            "tap. Once they tap, the photo appears in the chat — they can view, download or attach it to a "
-            "message for you to analyze. "
+            "CAMERA (AUTO): the app opens the camera automatically and captures with a 3-second countdown - "
+            "never claim a photo was taken before the countdown finished, and never say you cannot take "
+            "photos. After capture the photo appears in the chat to view, download or attach. "
             "DEVICE ACCESS: you run inside their browser, so your device capabilities are exactly what the browser "
             "grants: microphone (voice), camera (photos), location, notifications, and tappable launches "
             "(app cards, tel:/sms:/mailto:). You cannot install apps, read other apps' data, or control the OS; "
@@ -8442,7 +8836,25 @@ class Handler(BaseHTTPRequestHandler):
                     + json.dumps(_snap, default=str)[:3200]}] + messages
         except Exception:
             pass
-        tool_summary = [{"tool": t.get("tool"), "label": t.get("label")} for t in tool_runs]
+        tool_summary = []
+        for t in tool_runs:
+            ts = {"tool": t.get("tool"), "label": t.get("label")}
+            if t.get("tool") in ("build", "github_push", "github_repos"):
+                try:
+                    tr = json.loads(t.get("result") or "{}")
+                    if t.get("tool") == "build" and tr.get("url"):
+                        ts["url"] = tr["url"]; ts["name"] = tr.get("name") or ""
+                        ts["files"] = tr.get("files") or []
+                    if t.get("tool") == "github_push":
+                        if tr.get("url"):
+                            ts["url"] = tr["url"]
+                        if tr.get("pages_url"):
+                            ts["pages_url"] = tr["pages_url"]
+                        if tr.get("error"):
+                            ts["error"] = str(tr["error"])[:200]
+                except Exception:
+                    pass
+            tool_summary.append(ts)
         # Generated media rides back to the browser and renders INLINE in the chat
         chat_media = []
         for t in tool_runs:
@@ -10223,7 +10635,31 @@ def upload_community_media(email, data_url):
     if mime in ("audio/webm", "audio/ogg", "audio/mp4"):
         limit = 8 * 1024 * 1024
         label = "Voice note is too large (max about one minute)."
-        ext = "webm" if "webm" in mime else ("ogg" if "ogg" in mime else "m4a")
+        # Safari/iOS cannot play WebM/Opus — transcode to AAC-in-MP4 (plays
+        # everywhere) with the bundled static ffmpeg before storing.
+        ext = "m4a"
+        try:
+            import subprocess
+            import imageio_ffmpeg
+            srcfn = os.path.join(_gen_dir(), "vn-src-" + os.urandom(4).hex())
+            outfn = os.path.join(_gen_dir(), "vn-out-" + os.urandom(4).hex() + ".m4a")
+            with open(srcfn, "wb") as _f:
+                _f.write(data)
+            subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-i", srcfn,
+                            "-c:a", "aac", "-b:a", "64k", "-ar", "44100", outfn],
+                           check=True, capture_output=True, timeout=90)
+            if os.path.exists(outfn) and os.path.getsize(outfn) > 500:
+                with open(outfn, "rb") as _f:
+                    data = _f.read()
+                mime = "audio/mp4"
+            for _tmp in (srcfn, outfn):
+                try:
+                    os.remove(_tmp)
+                except Exception:
+                    pass
+        except Exception:
+            # transcode failed — keep the original so the note is not lost
+            ext = "webm" if "webm" in mime else ("ogg" if "ogg" in mime else "m4a")
         folder = "dm"
     elif mime in ("image/jpeg", "image/png", "image/webp"):
         limit = 5 * 1024 * 1024
