@@ -5728,6 +5728,9 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         return []
     low = t.lower()
     out = []
+    # patch26b: build intent computed FIRST — a "build/create/make a website/app"
+    # message must never also fire image generation (or other colliding tools)
+    _mb = re.search(r"\b(?:build|create|make|design|generate)\s+(?:[\w\x27]+\s+){0,2}?(?:website|web\s*site|web\s*app|landing\s*page|site|app|portfolio|shop|store|page)\b", low)
     # community chat access (every tier — the AI reads THIS user's own community)
     if any(k in low for k in ("community", "my chats", "my chat", "my messages", "my message",
                               "my dms", "my dm", "direct messages", "check my chat", "check my community",
@@ -5901,7 +5904,8 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             out.append({"tool": "space", "label": "NASA library · " + q, "result": _shrink(space_library(q))})
         # image creation straight from chat
         im = re.search(r"(?:generate|create|make|draw|imagine|show me)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
-        if im and any(k in low for k in ("generate", "create", "make", "draw", "imagine")):
+        if im and any(k in low for k in ("generate", "create", "make", "draw", "imagine")) \
+                and not (_mb and len(t) > 8):
             prompt = im.group(1).strip().rstrip("?!., ")
             if prompt:
                 r = gen_image(prompt)
@@ -5909,7 +5913,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                             "result": _shrink(r, 1200)})
 
     # Arena-style app builder (every tier, 10/day)
-    mb = re.search(r"\b(?:build|create|make|design|generate)\s+(?:[\w\x27]+\s+){0,2}?(?:website|web\s*site|web\s*app|landing\s*page|site|app|portfolio|shop|store|page)\b", low)
+    mb = _mb
     if mb and len(t) > 8:
         _bn = ""
         _mn = re.search(r"(?:called|named)\s+\"?([A-Za-z0-9 _-]{2,40})\"?", t, re.I)

@@ -103,3 +103,36 @@ def test_code_workspace_ui():
 
 def test_old_single_line_input_gone():
     assert '<input type="text" class="chatinput" id="input"' not in CLIENT
+
+# ---------------------------------------------------------------- build intent must not also fire image generation
+FAKE_BUILD = {"ok": True, "slug": "p26x", "url": "/builds/p26x/", "name": "p26x",
+              "files": ["index.html"], "provider": "test", "note": "test"}
+
+
+def _run_auto(monkeypatch, text):
+    calls = {"img": 0, "build": 0}
+    monkeypatch.setattr(server, "build_site", lambda *a, **k: calls.__setitem__("build", calls["build"] + 1) or FAKE_BUILD)
+    monkeypatch.setattr(server, "gen_image", lambda *a, **k: calls.__setitem__("img", calls["img"] + 1) or
+                        {"images": ["http://x/img.jpg"], "provider": "test"})
+    runs = server.auto_tools(text, tier="pro", email="t@t.com")
+    tools = [r["tool"] for r in runs]
+    return tools, calls
+
+
+def test_build_request_does_not_generate_images(monkeypatch):
+    tools, calls = _run_auto(monkeypatch, "build me a website called OraCafe with a menu section")
+    assert "build" in tools
+    assert "image" not in tools, "build request must not fire image generation"
+    assert calls["img"] == 0 and calls["build"] == 1
+
+
+def test_create_landing_page_no_images(monkeypatch):
+    tools, calls = _run_auto(monkeypatch, "create a landing page for my bakery in Lagos")
+    assert "build" in tools and "image" not in tools
+    assert calls["img"] == 0
+
+
+def test_plain_image_request_still_works(monkeypatch):
+    tools, calls = _run_auto(monkeypatch, "make a picture of a lighthouse at sunset")
+    assert "image" in tools and "build" not in tools
+    assert calls["img"] == 1
