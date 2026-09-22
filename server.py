@@ -3241,6 +3241,136 @@ def build_list(email):
     out = [dict(meta[s], slug=s) for s in sorted(meta, key=lambda s: (str(meta[s].get("t") or ""), s), reverse=True)]
     return {"ok": True, "builds": out[:50]}
 
+_EDIT_DAILY = {}
+
+
+def build_edit(email, slug, instructions):
+    """patch30: in-place edit of an existing build — the AI builder is now an
+    editor too. Free; the workspace re-mirrors to the vault automatically."""
+    email = (email or "").strip().lower()
+    slug = os.path.basename(str(slug or ""))
+    instructions = str(instructions or "").strip()[:900]
+    if not slug or not instructions:
+        return {"error": "Need a build and what to change."}
+    meta = _builds_load()
+    b = meta.get(slug)
+    if not b:
+        return {"error": "No saved build with that name in this account."}
+    if (b.get("owner") or "").lower() != email and not is_admin(email):
+        return {"error": "That build belongs to a different account."}
+    dest = os.path.normpath(os.path.join(_BUILDS_DIR, slug))
+    idx = os.path.join(dest, "index.html")
+    if not os.path.isfile(idx) and not build_hydrate(slug):
+        return {"error": "The build files are unavailable — ask OraCool to rebuild it once, then edit."}
+    try:
+        old = open(idx, encoding="utf-8").read()
+    except Exception as e:
+        return {"error": "Could not read the current site: " + str(e)[:120]}
+    if len(old) > 180_000:
+        return {"error": "This site is too large for one in-chat edit — rebuild it with the change instead."}
+    now = time.time()
+    recent = [x for x in _EDIT_DAILY.get(email, []) if now - x < 86400]
+    if len(recent) >= 60:
+        return {"error": "60 edits/day is the fair-use cap — edits are free, this just keeps the AI healthy."}
+    c, prov, finish = "", "", ""
+    try:
+        c, prov, finish = _llm_text(_EDIT_SYS, "REQUEST: " + instructions + "\n\nCURRENT index.html:\n\n" + old,
+                                    max_tokens=16000)
+    except Exception:
+        pass
+    if c and "</html>" not in c.lower():
+        try:  # long pages can pass the reply cap — resume mid-document like the builder does
+            cont, prov2, _f = _llm_text(_EDIT_SYS, "REQUEST: " + instructions + "\n\nCURRENT index.html:\n\n" + old,
+                                        max_tokens=16000, extra_msgs=[
+                {"role": "assistant", "content": c},
+                {"role": "user", "content": "Continue the document EXACTLY where you stopped. No repeats, no preamble, finish with </html>."}])
+            if cont:
+                c = c + cont.lstrip("` \r\n")
+                prov = prov2
+        except Exception:
+            pass
+    data = _parse_builder_reply(c)
+    files = (data or {}).get("files") or []
+    new = None
+    for f in files:
+        if f.get("path") == "index.html" and f.get("content"):
+            new = f["content"]
+            break
+    if new is None and files and files[0].get("content"):
+        new = files[0]["content"]
+    if not new or "</html>" not in new.lower():
+        return {"error": "The editor brain returned nothing usable (" + str(prov or "")[:40] +
+                "). Try a shorter, concrete request like 'make the hero background deep navy with gold buttons'."}
+    if len(new) < max(600, int(len(old) * 0.55)):
+        return {"error": "That edit would have cut the page short (reply limit) — split it into two smaller changes."}
+    try:
+        os.makedirs(dest, exist_ok=True)
+        with open(idx, "w", encoding="utf-8") as fh:
+            fh.write(new)
+    except Exception as e:
+        return {"error": "Could not save the edit: " + str(e)[:120]}
+    meta = _builds_load()
+    ent = meta.get(slug) or b
+    ent["t"] = _now()
+    ent["edited"] = instructions[:200]
+    if "index.html" not in (ent.get("files") or []):
+        ent["files"] = ["index.html"] + list(ent.get("files") or [])
+    meta[slug] = ent
+    _builds_save(meta)
+    saved = builds_sup_save(slug, [{"path": "index.html", "content": new}])
+    _EDIT_DAILY[email] = recent + [now]
+    return {"ok": True, "slug": slug, "url": "/builds/" + slug + "/",
+            "name": ent.get("name") or slug, "files": ["index.html"], "provider": prov,
+            "build_saved": bool(saved),
+            "note": "The updated site is in the preview card above and in the Websites panel. Edits are free. "
+                    "Say 'publish' (or tap the publish button) and the SAME live address updates — no new link."}
+
+
+def builds_sup_delete(slug):
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return False
+    u = url.rstrip("/")
+    eq = urllib.parse.quote(slug, safe="")
+    for tbl in ("oracool_builds", "oracool_builds_meta"):
+        try:
+            http_fetch(u + "/rest/v1/" + tbl + "?slug=eq." + eq, method="DELETE",
+                       headers=_site_headers(), timeout=15)
+        except Exception:
+            pass
+    return True
+
+
+def build_delete(email, slug):
+    """Forget a build: files, registry row and vault mirror."""
+    email = (email or "").strip().lower()
+    slug = os.path.basename(str(slug or ""))
+    meta = _builds_load()
+    b = meta.get(slug)
+    if not b:
+        return {"error": "No saved build with that name in this account."}
+    if (b.get("owner") or "").lower() != email and not is_admin(email):
+        return {"error": "That build belongs to a different account."}
+    try:
+        import shutil
+        shutil.rmtree(os.path.normpath(os.path.join(_BUILDS_DIR, slug)), ignore_errors=True)
+        meta = _builds_load()
+        meta.pop(slug, None)
+        _builds_save(meta)
+        builds_sup_delete(slug)
+        return {"ok": True, "slug": slug}
+    except Exception as e:
+        return {"error": str(e)[:160]}
+
+
+_EDIT_SYS = ("You are OraCool's website editor. You are given the user's current website as ONE "
+             "self-contained HTML file and one change request. Apply EXACTLY that change (and only "
+             "what it clearly implies) and keep everything else intact: layout, copy, prices, JS "
+             "behavior. The page must stay fully self-contained (inline CSS/JS/SVG art only, no "
+             "CDNs, no frameworks). Reply with ONLY the complete updated HTML document — no "
+             "explanations, no code fences, and never shorten or truncate the file.")
+
+
 def build_zip(slug):
     slug = os.path.basename(str(slug or ""))
     dest = os.path.normpath(os.path.join(_BUILDS_DIR, slug))
@@ -5557,7 +5687,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch29-antifail",
+        "build": "patch30-studio",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6519,6 +6649,13 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     _ask = bool(re.match(r"^\s*(?:(?:please|pls|hey|hi|hello|yo|ok|okay|so|now|also|and|just)[\s,]+)*"
                           r"(?:how|what|why|when|who|which|can|could|should|would|tell|explain|difference)\b", low))
     _wants = (_mb or _site_ish) and not _ask
+    # patch30: "make my site's footer say 24/7" is an EDIT even though "make…site"
+    # looks like a build verb — part words + "my/the site" reference mean in-place change
+    _eparts = (_wants or _site_ish) and bool(re.search(
+        r"\b(?:hero|footer|headline|heading|button|colou?rs?|background|fonts?|prices?|booking|contact|whatsapp)\b", low)) \
+        and bool(re.search(r"(?:my|the|our|current|existing)\s+(?:\w+\s+){0,3}?(?:site|website|page|landing)", low)) \
+        and not re.search(r"\b(?:new|fresh|another|rebuild|redesign|from scratch)\b", low) \
+        and not re.search(r"\b(?:build|create|generate|code|develop)\b", low)
     # a HOW-TO question with no explicit media noun is conversation, not a render job
     _no_media_ask = _ask and not re.search(r"\b(?:images?|pictures?|photos?|art|artwork|logo|poster|drawing|"
                                            r"wallpaper|render|avatar|mockup|videos?|clips?)\b", low)
@@ -6704,7 +6841,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                             "result": _shrink(r, 1200)})
 
     # Arena-style app builder — coin-metered (patch27), takes over the message
-    if _wants and len(t) > 8:
+    if _wants and len(t) > 8 and not _eparts:
         mb = _mb
         _bn = ""
         _mn = re.search(r"(?:called|named)\s+\"?([A-Za-z0-9 &.\'-]{2,40})\"?", t, re.I)
@@ -6727,8 +6864,41 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         _br = (t[:mb.end()] + t[mb.end():][:400]) if mb else t[:400]
         out.append({"tool": "build", "label": "build · " + (_bn or "website")[:30],
                     "result": _shrink(build_site(email, _bn or "my-site", _br), 1500)})
-    # publish a built site to <sub>.oracoolai.com (free, instant — patch27)
-    if email and not _wants and re.search(r"\b(?:publish|go live|goes live|make it live|put it online|host it)\b", low) \
+    # patch30: in-place EDIT of an existing build ("change the hero colour to gold",
+    # "update my prices section"). Only when no fresh-build verb matched, so an
+    # edit never accidentally builds a whole second site.
+    _edited = False
+    if email and (not _wants or _eparts) \
+            and (re.search(r"\b(?:edit|change|update|modify|tweak|adjust|fix|restyle|improve|revamp|make)\b", low) or _eparts) \
+            and re.search(r"\b(?:site|website|webpage|page|design|hero|colou?rs?|background|text|button|fonts?|prices?|section|header|footer|layout|booking|contact)\b", low) \
+            and "github" not in low:
+        try:
+            _bm2 = _builds_load()
+            _mine2 = [s for s, v in _bm2.items() if (v.get("owner") or "").lower() == (email or "").lower()]
+            if _mine2:
+                _em = re.search(r"(?:edit|update|change|fix|tweak)\s+(?:my\s+)?(?:site\s+|build\s+|page\s+)?([a-z0-9][a-z0-9-]{2,39})", low)
+                if _em and _em.group(1) in _mine2:
+                    _es = _em.group(1)
+                else:
+                    _es = None
+                    _ewords = [w for w in re.findall(r"[a-z]{4,}", low)
+                               if w not in ("edit", "change", "update", "modify", "tweak", "adjust",
+                                            "please", "site", "website", "page", "build", "make",
+                                            "color", "colour", "background", "text", "button", "design")]
+                    for s in sorted(_mine2, key=lambda s: (_bm2[s].get("t") or ""), reverse=True):
+                        _nm2 = (str(_bm2[s].get("name") or "") + " " + s).lower()
+                        if any(w in _nm2 for w in _ewords):
+                            _es = s
+                            break
+                    if not _es:
+                        _es = sorted(_mine2, key=lambda s: (_bm2[s].get("t") or ""), reverse=True)[0]
+                out.append({"tool": "edit", "label": "edit · " + _es[:30],
+                            "result": _shrink(build_edit(email, _es, t), 900)})
+                _edited = True
+        except Exception:
+            pass
+    # publish a built site to oracoolai.com (free, instant — patch27/30)
+    if email and not _wants and not _edited and re.search(r"\b(?:publish|go live|goes live|make it live|put it online|host it)\b", low) \
             and "github" not in low:
         try:
             _bm = _builds_load()
@@ -8622,7 +8792,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch29-antifail",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch30-studio",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -8789,12 +8959,19 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/plan":
                 self._send_json(plan_info(body))
             elif path == "/api/builds":
-                _bm = (body.get("message") or body.get("brief") or "").strip()
-                _bname = (body.get("name") or "").strip()
-                if not _bname:
-                    _mn = re.search(r"(?:called|named)\s+\"?([A-Za-z0-9 &.\'-]{2,40})\"?", _bm, re.I)
-                    _bname = _mn.group(1) if _mn else "my-site"
-                self._send_json(build_site(body.get("email"), _bname, _bm or _bname))
+                _bact = str(body.get("action") or "").strip().lower()
+                if _bact == "edit":
+                    self._send_json(build_edit(body.get("email"), str(body.get("slug") or ""),
+                                               str(body.get("instructions") or "")))
+                elif _bact == "delete":
+                    self._send_json(build_delete(body.get("email"), str(body.get("slug") or "")))
+                else:
+                    _bm = (body.get("message") or body.get("brief") or "").strip()
+                    _bname = (body.get("name") or "").strip()
+                    if not _bname:
+                        _mn = re.search(r"(?:called|named)\s+\"?([A-Za-z0-9 &.\'-]{2,40})\"?", _bm, re.I)
+                        _bname = _mn.group(1) if _mn else "my-site"
+                    self._send_json(build_site(body.get("email"), _bname, _bm or _bname))
             elif path == "/api/builds/list":
                 self._send_json(build_list(body.get("email")))
             elif path == "/api/sites":
@@ -9775,9 +9952,15 @@ class Handler(BaseHTTPRequestHandler):
         tool_summary = []
         for t in tool_runs:
             ts = {"tool": t.get("tool"), "label": t.get("label")}
-            if t.get("tool") in ("build", "github_push", "github_repos"):
+            if t.get("tool") in ("build", "edit", "github_push", "github_repos"):
                 try:
                     tr = json.loads(t.get("result") or "{}")
+                    if t.get("tool") == "edit" and tr.get("url"):
+                        # patch30: the edited site re-renders as a fresh preview card
+                        ts["url"] = tr["url"]; ts["name"] = (tr.get("name") or "") + " (edited)"
+                        ts["files"] = tr.get("files") or []
+                        ts["slug"] = tr.get("slug") or ""
+                        ts["template"] = tr.get("template") or ""
                     if t.get("tool") == "build" and tr.get("url"):
                         ts["url"] = tr["url"]; ts["name"] = tr.get("name") or ""
                         ts["files"] = tr.get("files") or []
