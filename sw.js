@@ -1,11 +1,14 @@
 self.addEventListener('install', e => self.skipWaiting());
-self.addEventListener('activate', e => self.clients.claim());
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('oracool-') && k !== 'oracool-v4').map(k => caches.delete(k)))));
+  return self.clients.claim();
+});
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   if (new URL(e.request.url).pathname.startsWith('/api/')) return;
   e.respondWith(
     fetch(e.request).then(r => {
-      const c = caches.open('oracool-v3').then(c => { c.put(e.request, r.clone()); return r; });
+      const c = caches.open('oracool-v4').then(c => { c.put(e.request, r.clone()); return r; });
       return r;
     }).catch(() => caches.match(e.request))
   );
