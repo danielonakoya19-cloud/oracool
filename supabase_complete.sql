@@ -322,6 +322,8 @@ comment on table public.published_sites is
 -- friends-by-number, groups & channels, DMs with photos/files/voice notes,
 -- profile pictures, the paid verified badge, reported & bannable groups,
 -- the AI moderator, tap reactions, reply quotes, group "only I can post"
--- locking, room deletion, and Tic-Tac-Toe in private chats.
+-- locking, room deletion, Tic-Tac-Toe in private chats, PLUS (patch27):
+-- durable weekly build-coin wallets and one-tap published websites hosted
+-- on OraCool (<name>.oracoolai.com / oracoolai.com/sites/<name>/).
 -- The running server detects the changes automatically within ~1 minute.
 -- No code deploy is needed for the tables themselves.
