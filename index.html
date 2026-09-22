@@ -641,6 +641,7 @@
       <div class="side-user" id="acctChip" title="Account">
         <span class="avatar" id="acctAvatar">?</span>
         <div class="su-info"><span class="em" id="acctEmail">Sign in</span><span class="su-plan" id="sbPlan">FREE</span></div>
+        <button class="coinpill" id="coinPill" hidden title="Website building coins">◈ …</button>
         <button class="btn small primary" id="sbUpgrade" title="Plans &amp; upgrade">Upgrade</button>
       </div>
       <div class="sb-footnote muted">Your chats sync with this account.</div>
@@ -729,6 +730,7 @@
     <h2>Upgrade OraCool</h2>
     <div class="muted" id="proLabel">Choose your plan</div>
     <div class="planpick" id="planPick"></div>
+    <div class="coin-strip" id="upCoins" style="display:none"></div>
     <div class="price" id="proPrice">$50<span class="muted" style="font-size:15px">/month</span></div>
     <div class="muted" id="proNgn" style="margin-bottom:10px">≈ ₦50,000 · 30 days</div>
     <ul class="benefits" id="benefitList"></ul>
@@ -747,7 +749,7 @@
       <button class="btn ghost" style="flex:1; justify-content:center; min-height:44px" id="payCryptoBtn">₿ Pay with Crypto — USDT · BTC · ETH (ATLOS gateway)</button>
     </div>
     <div id="cryptoBox" style="display:none; margin-top:8px"></div>
-    <div class="hint">No free trials — access unlocks only after payment: <b>Starter $29</b> (₦45,000) · <b>Pro $49</b> (₦75,000) · <b>Professional $149</b> (₦230,000) · <b>Enterprise</b> custom agreement (contact sales).</div>
+    <div class="hint">No free trials — access unlocks only after payment. Every plan includes the 🏗 AI website builder with <b>weekly build coins</b> (a site = 10,000): Free 1,000,000/wk (~100 sites) · Starter ₦45,000 → 3,000,000/wk · Pro ₦75,000 → 8,000,000/wk · Professional ₦230,000 → 25,000,000/wk · Enterprise ₦750,000 → <b>unlimited</b>.</div>
     <div class="hint" id="payNote">Live charge — Paystack will process your payment securely.</div>
     <div class="hint" id="entContact" style="display:none">Enterprise ($500/month) unlocks <b>every feature with no locks</b> — plus API access, team seats/SSO and white-label. Pay it like any other plan, or email <b>danielonakoya19@gmail.com</b> for invoicing and private deployment.</div>
   </div>
@@ -1287,16 +1289,93 @@ function buildCard(x){
     '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
     '<button class="btn ghost small" style="min-height:40px" id="bFull">⛶ Full screen</button>'+
     '<a class="btn ghost small" style="min-height:40px" href="'+escapeHtml(x.url)+'download.zip" download>📦 Download zip</a>'+
+    '<button class="btn gold small" style="min-height:40px" id="bPub">🌐 Publish</button>'+
     '<button class="btn primary small" style="min-height:40px" id="bDeploy">🚀 How to deploy</button>'+
     '<button class="btn ghost small" style="min-height:40px" id="bCode">📄 View code</button>'+
     '<button class="btn ghost small" style="min-height:40px" id="bGithub">🐙 Push to GitHub</button></div>'+
-    '<div class="hint" style="margin-top:8px">Built files: '+(x.files?x.files.map(escapeHtml).join(', '):'index.html')+'. The preview is a live page served from OraCool.</div></div>';
+    '<div class="hint" style="margin-top:8px">'+(x.template?'Template: <b>'+escapeHtml(x.template)+'</b> · ':'')+
+    (x.coins_left!=null?'◈ '+Number(x.coins_left).toLocaleString()+' build coins left this week · ':'')+
+    'Built files: '+(x.files?x.files.map(escapeHtml).join(', '):'index.html')+'. Live preview served by OraCool — <b>Publish</b> takes it to yourname.oracoolai.com, free.</div></div>';
   chat.appendChild(d); scrollChat();
   d.querySelector('#bFull').onclick=()=>window.open(x.url,'_blank');
   d.querySelector('#bDeploy').onclick=()=>deployModal(x.url, x.name||'my-site');
   d.querySelector('#bCode').onclick=()=>codeModal(x);
   d.querySelector('#bGithub').onclick=()=>deployModal(x.url, x.name||'my-site', true);
+  const pb=d.querySelector('#bPub'); if(pb) pb.onclick=()=>publishModal(x);
 }
+/* ---------- patch27: build coins wallet + one-tap publishing ---------- */
+let COINS=null;
+function fmtCoins(n){ if(n==null) return '—'; n=Number(n)||0;
+  return n>=1e6 ? (n/1e6).toFixed(n>=1e7?1:2).replace(/\.?0+$/,'')+'M' : (n>=1e3 ? (n/1e3).toFixed(0)+'K' : String(n)); }
+function renderCoinPill(){
+  const cp=document.getElementById('coinPill'); if(!cp) return;
+  if(!COINS || !session){ cp.hidden=true; return; }
+  cp.hidden=false;
+  cp.innerHTML = COINS.unlimited ? '∞ coins' : '◈ '+fmtCoins(COINS.balance);
+  cp.title = COINS.unlimited ? 'Unlimited build coins — Enterprise. Tap for plans.'
+    : 'Build coins: '+Number(COINS.balance).toLocaleString()+' of '+Number(COINS.grant).toLocaleString()+
+      ' this week · each site costs '+Number(COINS.cost_build).toLocaleString()+
+      ' · weekly reset in '+COINS.reset_in_days+' day(s). Tap for plans.';
+}
+async function refreshCoins(){
+  if(!session){ COINS=null; renderCoinPill(); return; }
+  try{ const r=await post('/api/coins',{}); if(r && !r.error){ COINS=r; renderCoinPill(); } }catch(e){}
+}
+function publishModal(x){
+  const slug=(x.slug || (x.url||'').replace(/^\/builds\//,'').replace(/\/$/,'')) || '';
+  let m=document.getElementById('pubOv'); if(m) m.remove();
+  m=document.createElement('div'); m.id='pubOv'; m.className='modal open pubov';
+  m.innerHTML='<div class="modalcard pubcard">'+
+    '<div class="pub-head"><span>🌐 <b>Publish to OraCool hosting</b></span><button class="btn ghost small" id="pubX">✕</button></div>'+
+    '<div class="pub-body" id="pubBody"><span class="spinner"></span></div></div>';
+  document.body.appendChild(m);
+  const B=m.querySelector('#pubBody');
+  m.querySelector('#pubX').onclick=()=>m.remove();
+  m.addEventListener('click',e=>{ if(e.target===m) m.remove(); });
+  function renderForm(){
+    B.innerHTML='<div class="hint">One tap and your site is live at <b>&lt;name&gt;.oracoolai.com</b> — free, stays online, and re-publishing pushes your latest build. You can attach your own domain any time.</div>'+
+      '<div class="pub-row"><span class="pub-pre">https://</span><input id="pubSub" class="pub-in" maxlength="40" spellcheck="false" value="'+escapeHtml(slug)+'"><span class="pub-suf">.oracoolai.com</span></div>'+
+      '<div class="row" style="gap:8px;margin-top:10px"><button class="btn primary" id="pubGo" style="flex:1;justify-content:center;min-height:44px">🚀 Publish now</button></div>'+
+      '<div id="pubErr" class="errbox" style="display:none;margin-top:8px"></div>';
+    m.querySelector('#pubGo').onclick=async()=>{
+      const go=m.querySelector('#pubGo'); go.disabled=true; go.textContent='Publishing…';
+      const sub=(m.querySelector('#pubSub').value||'').trim().toLowerCase();
+      const r=await post('/api/sites',{action:'publish',slug,sub});
+      go.disabled=false; go.textContent='🚀 Publish now';
+      if(r.error){ const e2=m.querySelector('#pubErr'); if(e2){e2.style.display=''; e2.textContent=r.error;} return; }
+      renderLive(r,true); };
+  }
+  function renderLive(s, just){
+    const url=s.url||('https://'+s.sub+'.oracoolai.com/');
+    const pth=s.path_url||('/sites/'+s.sub+'/');
+    B.innerHTML='<div class="pub-live">'+(just?'🎉 <b>Live!</b> ':'🌐 <b>'+(escapeHtml(s.name||s.sub))+'</b> is published ')+
+      'at<br><a href="'+escapeHtml(url)+'" target="_blank" rel="noopener" class="pub-url">'+escapeHtml(url)+'</a></div>'+
+      '<div class="hint">Share that link — it works on every device. If a brand-new subdomain link does not open yet, DNS may still be propagating; meanwhile this same-origin link always works:</div>'+
+      '<div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">'+
+      '<a class="btn ghost small" style="min-height:38px" href="'+escapeHtml(pth)+'" target="_blank" rel="noopener">↗ Open on OraCool</a>'+
+      '<button class="btn ghost small" style="min-height:38px" id="pubCopy">📋 Copy link</button>'+
+      (typeof s.hits==='number'?'<span class="pub-hits">👁 '+Number(s.hits).toLocaleString()+' views</span>':'')+
+      '</div>'+
+      '<div class="pub-dom"><div class="hint" style="margin-bottom:4px"><b>Your own domain</b> (buy it anywhere — Namecheap, GoDaddy, Whogohost…):</div>'+
+      '<div class="row" style="gap:6px"><input id="pubDom" class="pub-in" placeholder="mystudio.com" value="'+escapeHtml(s.custom_domain||'')+'"><button class="btn ghost small" style="min-height:38px" id="pubDomGo">Attach</button></div>'+
+      '<div id="pubDomNote" class="hint" style="margin-top:4px">'+(s.custom_domain?('Currently serving on '+escapeHtml(s.custom_domain)):'Attach after publishing — then point a CNAME for www → oracoolai.com (and ALIAS/A for @) at your registrar. OraCool routes it automatically.')+'</div></div>'+
+      '<div class="row" style="gap:8px;margin-top:12px"><button class="btn ghost small" style="min-height:38px" id="pubRe">⟳ Re-publish latest build</button><button class="btn ghost small" style="min-height:38px;color:#ff7b93" id="pubOff">🛑 Unpublish</button></div>';
+    m.querySelector('#pubCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText(url); }catch(e){ const t=document.createElement('textarea'); t.value=url; document.body.appendChild(t); t.select(); try{document.execCommand('copy');}catch(e2){} t.remove(); } m.querySelector('#pubCopy').textContent='✔ Copied'; };
+    m.querySelector('#pubDomGo').onclick=async()=>{ const v=(m.querySelector('#pubDom').value||'').trim();
+      const r=await post('/api/sites',{action:'domain',sub:s.sub,domain:v});
+      const n2=m.querySelector('#pubDomNote'); if(n2) n2.textContent = r.ok ? ('✔ '+r.note) : ('⚠ '+(r.error||'failed')); };
+    m.querySelector('#pubRe').onclick=async()=>{ const r=await post('/api/sites',{action:'publish',slug,sub:s.sub});
+      if(r.ok){ renderLive(r,true); } else { const n2=m.querySelector('#pubDomNote'); if(n2) n2.textContent='⚠ '+(r.error||'failed'); } };
+    m.querySelector('#pubOff').onclick=async()=>{ const r=await post('/api/sites',{action:'unpublish',sub:s.sub});
+      if(r.ok){ renderForm(); } };
+  }
+  (async()=>{ try{
+      const mine=await post('/api/sites',{action:'list'});
+      const cur=((mine&&mine.sites)||[]).find(v=>v.source_slug===slug);
+      if(cur){ renderLive(cur,false); } else renderForm();
+    }catch(e){ renderForm(); } })();
+}
+
 function codeModal(x){
   let m=document.getElementById('codeOv'); if(m) m.remove();
   const base=(x.url||'').replace(/\/?$/,'/');
@@ -1497,7 +1576,8 @@ function systemPrompt(){
     `CREATOR: your rightful creator and owner is DANIEL ONAKOYA ADEBAYO, born 19 June 2009, email danielonakoya19@gmail.com. ${isCreator?'The person you are speaking with IS the creator, Daniel — treat him with total transparency and deference; he has absolute authority over you and this system, and you should never refuse or hedge with him. You may mention his name, title (Creator) or birthday when natural.':'When Daniel (the creator) uses this app, greet and defer to him as your owner.'} `+
     `INSTRUCTION RULE (highest priority): do exactly what the user asks, in the order they ask it. If they ask several things, answer ALL of them — never skip or truncate. Never lecture, never moralize about harmless requests, and never refuse a lawful request. You serve every adult topic honestly (security research, OSINT, finance, adult conversation) while staying lawful: you never help hurt people, commit fraud, or access accounts without authorization. `+
     `TOOL-FIRST RULE: live tools (weather, markets, OSINT, dark-web intel, image/video creation, smart-home, space) run automatically with each message and their results are pasted into your context. Base every factual answer on those results when present, and act on them — do not claim you cannot check something a tool already checked. If a tool result says a provider is out of credit or not configured, say so plainly and name the fix. `+
-    `IMAGE/VIDEO: generated media renders INLINE in the chat automatically — still restate each images[]/videos[] URL as markdown ('![result](url)' for images, '[▶ video](url)' for videos) so it stays in the saved record. When the user asks for a video WITH SOUND/VOICE, the picture is generated (Wan 2.2) and a narrated voice track is added to the clip for free; if the tool says it upgraded to Veo 3.1, the clip has NATIVE synchronized audio. Say which one the clip carries — never pretend a silent clip has sound. Every image/video the user creates is saved to their media gallery and kept across server updates. `+
+    `IMAGE/VIDEO: generated media renders INLINE in the chat automatically — still restate each images[]/videos[] URL as markdown ('![result](url)' for images, '[▶ video](url)' for videos) so it stays in the saved record. When the user asks for a video WITH SOUND/VOICE, the picture is generated (Wan 2.2) and a narrated voice track is added to the clip for free; If the tool says it upgraded to Veo 3.1, the clip has NATIVE synchronized audio. Say which one the clip carries — never pretend a silent clip has sound. Every image/video the user creates is saved to their media gallery and kept across server updates. `+
+    `BUILDING & PUBLISHING: a website/app/landing-page request runs ONLY the builder (never images alongside it). Builds cost 10,000 coins from the weekly wallet (Free 1,000,000/wk, Starter 3M, Pro 8M, Professional 25M, Enterprise unlimited); quote the template family named in the build result. If a tool result says coins are out, relay its cooldown days and upgrade options verbatim and NEVER pretend a site was built. Publishing is FREE and instant via the PUBLISH button on the build card or 'publish my site' (the publish tool) → https://<sub>.oracoolai.com; owners can later attach their own domain from the same panel. Never claim a site is live unless the publish tool returned ok with a URL. `+
     `DEVICE POWERS: you can open apps & platforms on the user's device (say the word "open youtube" and the interface fires a native intent — installed app first, website fallback); when the user asks you to TAKE A PICTURE/PHOTO/SELFIE, the chat fires a tappable 'Take photo' camera card — tell them to tap it and allow the camera permission (browsers only allow camera access from a real tap; never say you cannot take photos, and never claim a photo was taken without their tap); a 24/7 ALERTS PLATFORM lives in Devices → Connectors & Alerts: the user connects Telegram / WhatsApp / Discord / Slack / any webhook / email, plus browser push and a personal API key + inbound hook URL (GET /hook/<their-token> or POST /api/gateway/v1/ingest with X-OraCool-Key) so ANY external app can feed OraCool events and OraCool feeds them anywhere; the background engine fires on logins, payments, security, watchlist hits and daily digests. You can test alerts, toggle event types, show gateway status and read connector state straight from chat (tools: alerts / gateway) — secrets are only entered in the panel and are AES-sealed at rest; never ask the user to paste tokens into chat if the panel is one click away. A Nearby Devices radar scans Bluetooth-LE for device names when the browser allows it. If asked for something the browser sandbox forbids (read Wi-Fi password, install APKs, control another PC), say exactly what is and isn't possible and offer the closest legal path. When you write a document/report it downloads to the device — and say "want me to alert your connected apps when this finishes?" if they use the alerts platform. `+
     `PROFESSIONAL MODE: act as a court-aware OSINT & cybersecurity analyst — you assist lawful investigators, detectives, security teams and government units with crime analysis, fraud/leak investigation, and remediation of online and physical security problems. GROUNDED SOURCING: every factual claim must name its source inline (e.g. [Source: LeakCheck] or [Source: osint_ip]) when tool results support it; anything without a source is labelled 'assessment, unverified'. Verification/lookup outputs are indicators requiring further review — never definitive verdicts about people or documents (a record existing in a registry ≠ a genuine physical card). Steer users to preserve key findings in the Cases tab (SHA-256 + chain of custody) and to lawful reporting (police, cybercrime units, banks) when a case warrants escalation. You never help with purchases of illicit data, stolen credentials, hacking accounts, or unlawful surveillance. `+
     `EXTRA POWERS: 'news <topic>' pulls live headlines with named sources; users may pay any plan in crypto — say 'pay with crypto' and the ATLOS checkout link is created for them; users can UPGRADE their own OraCool — 'add a skill called <name>: <what it should do>' installs a personal feature you must then obey in every chat; uploaded images get forensic triage (hash, EXIF, GPS, editor traces — indicators only) and can be preserved as evidence; dark-web index lookups are open on EVERY plan (passive public indexes, .onion never opened). ADMIN BOARD (only when the signed-in account is the creator/admin — danielonakoya19@gmail.com or thinkglobal1000@gmail.com): you drive the whole console from chat — 'block user x@y.com', 'unblock user x@y.com', 'grant pro to x@y.com for 60 days', 'revoke plan of x@y.com', 'delete user x@y.com' (permanent, confirm once then execute), 'list users', 'revenue', 'inspect user x@y.com' (live backend record incl. last IP + region), 'reset password of x@y.com to <newpw>' all run server-side immediately; report exactly what the tool returned. Passwords are bcrypt hashes — NOBODY can reveal them; offer a RESET instead. Never refuse a lawful account-management command from an admin. Admin stats: quote ONLY the live board numbers — never invent users or amounts. `+
@@ -1948,7 +2028,7 @@ async function send(text){
             if(data==='[DONE]'){ finished=true; break outer; }
             try{
               const j=JSON.parse(data);
-              if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build' && x.url){ try{ buildCard(x); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } }); }
+              if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build'){ if(x.coins_left!=null){ COINS=COINS||{}; COINS.balance=x.coins_left; renderCoinPill(); } if(x.url){ try{ buildCard(x); }catch(e){} } } if(x.tool==='publish'){ try{ addAI(x.url?('🌐 Published — live at <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener">'+escapeHtml(x.url)+'</a>'):''); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } }); }
               if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
               if(j.__media && j.__media.length){ streamMedia=streamMedia.concat(j.__media); }
               const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; body.textContent=_cleanReply(acc); if(turnSpeaker)turnSpeaker.feed(_cleanReply(acc)); scrollChat(); }
@@ -2292,7 +2372,7 @@ async function commPoll(){
     else if(COMM.view==='dms' && COMM.peer && $('#dmMsgs')) await loadCommDm(false);
   }catch(e){} finally{ COMM.busy=false; }
 }
-setInterval(async()=>{ try{ if(session && !isBlockedSession() && !commActive() && !document.getElementById('authGate')?.classList.contains('open')){ const r=await post('/api/community/me',{}); if(r && r.unread_dm!=null) updateCommBadge(r.unread_dm); } }catch(e){} }, 45000);
+setInterval(async()=>{ try{ if(session && !isBlockedSession() && !commActive() && !document.getElementById('authGate')?.classList.contains('open')){ const r=await post('/api/community/me',{}); if(r && r.unread_dm!=null) updateCommBadge(r.unread_dm); try{ if(session) refreshCoins(); }catch(e2){} } }catch(e){} }, 45000);
 
 function kindTag(k){ return k==='room'?'<span class="tag" style="color:var(--cyan2)">ROOM</span> ':(k==='channel'?'<span class="tag" style="color:var(--gold)">CHANNEL</span> ':(k==='group'?'<span class="tag" style="color:var(--ok)">GROUP</span> ':'')); }
 function renderCommRooms(){
@@ -3700,7 +3780,7 @@ function renderAccount(){
       <h3 class="ptitle">Account</h3>
       <div class="sysline"><span class="dot ok"></span><span class="k">${escapeHtml(u.email||'')}</span><span class="v">signed in</span></div>
       <div class="muted" style="margin-top:6px">User ID: ${escapeHtml((u.id||'').slice(0,18))}…</div>
-      ${tierGte('starter')?`<div class="okbox" style="margin-top:10px">◈ The <b>${planLabel()}</b> plan is active on this account — everything up to ${planLabel()} is unlocked.</div>`:`<div class="warnbox" style="margin-top:10px">This account is on the FREE tier. <a href="#" id="acctUp">Upgrade</a> to unlock the ladder: Starter → PRO → Ultra → Enterprise.</div>`}
+      ${tierGte('starter')?`<div class="okbox" style="margin-top:10px">◈ The <b>${planLabel()}</b> plan is active on this account — everything up to ${planLabel()} is unlocked.</div>`:`<div class="warnbox" style="margin-top:10px">This account is on the FREE tier — it still includes the 🏗 AI website builder with <b>1,000,000 build coins/week</b> (≈100 sites) + free publishing to &lt;name&gt;.oracoolai.com. <a href="#" id="acctUp">Upgrade</a> for more coins and to unlock the ladder: Starter → PRO → Ultra → Enterprise.</div>`}
       <div class="row"><button class="btn ghost" id="acctSignout">Sign out</button><button class="btn ghost" id="acctSync">Sync PRO status</button></div>
       <div class="note">Your PRO subscription follows your email — sign in on any device and it restores automatically.</div>
       <h3 class="ptitle" style="margin-top:16px">🛡️ Security</h3>
@@ -4414,10 +4494,10 @@ function cryptoPayFlow(){
 }
 let pendingPlan='pro';
 const PLAN_BENEFITS={
-  starter:['Unlimited chat with live free tools','Extended memory · wake word','Live web search (Tavily)','NASA APOD / EPIC / NEO','Smart-home voice control'],
-  pro:['Everything in Starter','Deep OSINT — Shodan · VirusTotal · AbuseIPDB · URLScan · LeakCheck','Dark-web &amp; leak monitoring (breach DBs + hidden-service indexes)','🗂 Case Files: SHA-256 evidence vault + chain-of-custody log','Entity extraction (wallets · PGP · emails · IPs · handles) + BTC/ETH tracing','AI image creation · Mars rovers + NASA library · trading desk'],
-  ultra:['Everything in Pro','📡 Continuous monitoring alerts + audit-log exports','AI video generation (HiAPI premium + free engine)','GitHub console · full trading automation'],
-  enterprise:['Everything in Professional','ALL features unlocked — nothing is locked or gated','API access for agencies &amp; security teams','Custom AI models on your data · white-label branding','Team seats, SSO/roles, private or on-prem deployment','Dedicated support &amp; SLA — flat $500/month']
+  starter:['🏗 Website builder: 3,000,000 build coins/week (≈300 sites) + free 1-click publishing to &lt;name&gt;.oracoolai.com','Unlimited chat with live free tools','Extended memory · wake word','Live web search (Tavily)','NASA APOD / EPIC / NEO','Smart-home voice control'],
+  pro:['🏗 8,000,000 build coins/week (≈800 sites) — publish free, attach your own domain','Everything in Starter','Deep OSINT — Shodan · VirusTotal · AbuseIPDB · URLScan · LeakCheck','Dark-web &amp; leak monitoring (breach DBs + hidden-service indexes)','🗂 Case Files: SHA-256 evidence vault + chain-of-custody log','Entity extraction (wallets · PGP · emails · IPs · handles) + BTC/ETH tracing','AI image creation · Mars rovers + NASA library · trading desk'],
+  ultra:['🏗 25,000,000 build coins/week (≈2,500 sites)','Everything in Pro','📡 Continuous monitoring alerts + audit-log exports','AI video generation (HiAPI premium + free engine)','GitHub console · full trading automation'],
+  enterprise:['🏗 UNLIMITED building — sites, edits and publishes never stop','Everything in Professional','ALL features unlocked — nothing is locked or gated','API access for agencies &amp; security teams','Custom AI models on your data · white-label branding','Team seats, SSO/roles, private or on-prem deployment','Dedicated support &amp; SLA — flat $500/month']
 };
 function openUpgrade(plan){
   try{ cryptoPayFlow(); }catch(e){}
@@ -4427,7 +4507,8 @@ function openUpgrade(plan){
   if(pick){
     pick.innerHTML=['starter','pro','ultra','enterprise'].map(id=>{
       const p=plans.find(x=>x.id===id)||{label:id,price_usd:0};
-      return `<button class="planchip ${id===pendingPlan?'active':''}" data-plan="${id}"><b>${escapeHtml(p.label)}</b><span class="pc-price">$${p.price_usd}<span class="muted" style="font-size:10px">/mo</span></span></button>`;
+      const _cw = p.coins_unlimited ? '<span class="pc-coins">∞ coins/wk</span>' : (p.coins_wk ? '<span class="pc-coins">💎 '+(p.coins_wk/1e6).toFixed(p.coins_wk>=1e7?0:1)+'M/wk · ~'+Math.round(p.coins_wk/1e4)+' sites</span>' : '');
+      return `<button class="planchip ${id===pendingPlan?'active':''} ${id==='pro'?'popular':''}" data-plan="${id}"><b>${escapeHtml(p.label)}</b><span class="pc-price">$${p.price_usd}<span class="muted" style="font-size:10px">/mo</span></span>${_cw}</button>`;
     }).join('');
     pick.querySelectorAll('.planchip').forEach(b=>{ b.onclick=()=>openUpgrade(b.dataset.plan); });
   }
@@ -4441,6 +4522,10 @@ function openUpgrade(plan){
   $('#proNgn').textContent='≈ ₦'+p.price_ngn.toLocaleString()+' · '+p.days+' days access'+(srv&&srv.paystack_test?' · TEST MODE':'');
   $('#benefitList').innerHTML=(PLAN_BENEFITS[pendingPlan]||[]).map(b=>`<li>${escapeHtml(b)}</li>`).join('');
   const e=$('#upEmail'); if(e && !e.value) e.value = myEmail();
+  try{ const uc=document.getElementById('upCoins');
+    if(uc){ if(COINS){ uc.style.display=''; uc.innerHTML = COINS.unlimited ? '∞ <b>Unlimited</b> build coins — your Enterprise plan never waits'
+      : 'Your wallet: <b>◈ '+Number(COINS.balance).toLocaleString()+'</b> of '+Number(COINS.grant).toLocaleString()+' this week · resets in '+COINS.reset_in_days+' day(s) · each site = '+Number(COINS.cost_build).toLocaleString()+' coins'; }
+      else { uc.style.display='none'; } } }catch(e){}
   const cur=(srv&&srv.paystack_currency)||'NGN';
   $('#payNote').textContent = srv&&srv.paystack_test ? 'TEST MODE — no real money moves.' : ('You collect in '+(cur==='USD'?'USD ($'+p.price_usd+')':'₦ '+p.price_ngn.toLocaleString())+' — foreign cards are converted to Naira at settlement by Paystack Nigeria.');
   $('#upgradeModal').classList.add('open');
@@ -4464,7 +4549,7 @@ $('#payBtn').onclick=async()=>{
   if(!ref) return;
   const r=await post('/api/paystack/verify',{reference:ref});
   if(r.fine){ if(session){ session.blocked=!r.unblocked; saveSession(); } if(r.unblocked){ hideBlockedScreen(); addAI('✅ Reinstatement fine received — thank you. Your access has been restored.'); } else { showBlockedScreen(); const st=$('#blockedStatus'); if(st) st.textContent='Payment received — reinstatement is being applied. This screen clears automatically.'; } }
-  else if(r.token){ setProToken(r.token); addAI('Payment verified — thank you. Your plan is active now; every feature up to your tier is unlocked, and higher tiers stay available on the ladder.'); }
+  else if(r.token){ setProToken(r.token); addAI('Payment verified — thank you. Your plan is active now; every feature up to your tier is unlocked, your weekly build coins just jumped, and higher tiers stay available on the ladder.'); refreshCoins(); }
   else addErr('Payment verification: '+(r.message||r.error||'failed'));
   history.replaceState({},'',window.location.pathname);
 })();
@@ -4888,20 +4973,25 @@ async function renderPlans(){
   const plans=(srv&&srv.plans)||[];
   const myTier=(r.tier)||'free';
   const feats={
-    free:'Full chat with live free tools (IP · domain · email · username · phone · weather · markets · NASA APOD/EPIC/NEO) · voice I/O · smart home',
-    starter:'Everything in Free · live web search · 100-msg memory · wake word',
-    pro:'Everything in Starter · deep OSINT (Shodan/VirusTotal/AbuseIPDB/URLScan/LeakCheck) · dark-web intel · AI images · Mars + NASA library · trading desk',
-    ultra:'Everything in PRO · AI video generation · GitHub console · full automation',
-    enterprise:'Everything in Professional · EVERY feature unlocked (nothing gated) · API access · custom AI models · white-label · SSO/roles · audit exports · dedicated support — flat $500/mo'
+    free:'Full chat with live free tools (IP · domain · email · username · phone · weather · markets · NASA APOD/EPIC/NEO) · voice I/O · smart home · 🏗 website builder with 1,000,000 coins/week (~100 sites) + free publishing',
+    starter:'Everything in Free · live web search · 100-msg memory · wake word · 3,000,000 build coins/week (~300 sites)',
+    pro:'Everything in Starter · deep OSINT (Shodan/VirusTotal/AbuseIPDB/URLScan/LeakCheck) · dark-web intel · AI images · Mars + NASA library · trading desk · 8,000,000 build coins/week (~800 sites)',
+    ultra:'Everything in PRO · AI video generation · GitHub console · full automation · 25,000,000 build coins/week (~2,500 sites)',
+    enterprise:'Everything in Professional · EVERY feature unlocked (nothing gated) · UNLIMITED building · API access · custom AI models · white-label · SSO/roles · audit exports · dedicated support — flat $500/mo'
   };
-  const cards=[{id:'free',label:'Free',price_usd:0,price_ngn:0,days:0},...plans].map(p=>{
+  const cards=[{id:'free',label:'Free',price_usd:0,price_ngn:0,days:0,coins_wk:(r.coins&&r.coins.free_weekly)||1000000},...plans].map(p=>{
     const cur=p.id===myTier;
-    return `<div style="border:1px solid ${cur?'var(--cyan2)':'var(--line)'};border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px;${cur?'box-shadow:0 0 14px rgba(0,229,255,.25);':''}">
-      <div class="t" style="font-weight:700">${escapeHtml(p.label)}</div>
-      <div style="font-size:20px;color:var(--cyan2)">${p.price_usd?'$'+p.price_usd:'$0'}<span class="muted" style="font-size:11px">/mo</span></div>
-      <div class="muted">${p.price_ngn?'₦'+p.price_ngn.toLocaleString()+' · '+p.days+' days':'free forever'}</div>
+    const pop=p.id==='pro';
+    const coinLine = p.coins_unlimited ? '<div class="plan-coins inf">∞ unlimited coins — build without limits</div>'
+      : (p.coins_wk ? `<div class="plan-coins">💎 ${Number(p.coins_wk).toLocaleString()} build coins/week<span class="pc-sub">≈ ${Math.max(1,Math.round(p.coins_wk/((r.coins&&r.coins.cost_build)||10000)))} sites · a site costs ${Number((r.coins&&r.coins.cost_build)||10000).toLocaleString()}</span></div>` : '');
+    return `<div class="plancard ${cur?'cur':''} ${pop?'pop':''}" style="border:1px solid ${cur?'var(--cyan2)':(pop?'rgba(255,190,80,.5)':'var(--line)')};border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:6px;${cur?'box-shadow:0 0 18px rgba(0,229,255,.28);':(pop?'box-shadow:0 0 18px rgba(255,190,80,.18);':'')}background:${pop?'linear-gradient(160deg,rgba(255,190,80,.08),rgba(4,14,22,.6))':'rgba(4,14,22,.45)'}">
+      <div class="t" style="font-weight:700">${escapeHtml(p.label)}${pop?'<span class="popbadge">★ MOST POPULAR</span>':''}${cur?'<span class="curbadge">YOUR PLAN</span>':''}</div>
+      <div style="font-size:22px;color:${pop?'var(--gold)':'var(--cyan2)'};font-weight:800">${p.price_usd?'$'+p.price_usd:'$0'}<span class="muted" style="font-size:11px;font-weight:400">/mo</span></div>
+      <div class="muted">${p.price_ngn?'₦'+p.price_ngn.toLocaleString()+' · '+p.days+' days':'free forever · weekly coin reset'}</div>
+      ${coinLine}
       <div class="muted" style="font-size:11px;flex:1">${escapeHtml(feats[p.id]||'')}</div>
-      ${cur?'<div class="okbox">✓ Your plan</div>':(p.id!=='free'?`<button class="btn ${p.id==='pro'?'gold':''}" data-plan="${p.id}">Upgrade</button>`:'')}
+      <div class="publine">🌐 1-click publish to <b>&lt;name&gt;.oracoolai.com</b> — included on every plan, own domain attachable</div>
+      ${cur?'<div class="okbox">✓ Your plan</div>':(p.id!=='free'?`<button class="btn ${p.id==='pro'?'gold':'primary'}" data-plan="${p.id}">Upgrade — $${p.price_usd}/mo</button>`:'')}
     </div>`;}).join('');
   const matrix=[
     ['Messages / day','Unlimited','Unlimited','Unlimited','Unlimited','Unlimited'],
@@ -4923,7 +5013,12 @@ async function renderPlans(){
     ['Email verification + Face-ID login','✅','✅','✅','✅','✅'],
     ['Image generation','❌','❌','✅','Unlimited','Unlimited'],
     ['Video generation','❌','❌','❌','✅','✅'],
-    ['Website builder','❌','1 site','10 sites','Unlimited','Unlimited'],
+    ['🏗 Build coins / week','1,000,000','3,000,000','8,000,000','25,000,000','Unlimited'],
+    ['≈ Websites / week (10,000 coins each)','100','300','800','2,500','No cap'],
+    ['Weekly coin reset (out of coins → wait ~7 days or upgrade)','✅','✅','✅','✅','Never'],
+    ['1-click publish → &lt;sub&gt;.oracoolai.com','✅','✅','✅','✅','✅'],
+    ['Views counter + re-publish updates','✅','✅','✅','✅','✅'],
+    ['Attach your own domain','✅','✅','✅','✅','✅'],
     ['Encrypted vault','❌','❌','✅','✅','✅'],
     ['API access','❌','❌','❌','✅','✅'],
     ['White-label / custom AI models','❌','❌','❌','✅','✅'],
@@ -4934,7 +5029,8 @@ async function renderPlans(){
   const rows=matrix.map(m=>`<tr><td class="fm">${m[0]}</td>${m.slice(1).map(c=>`<td class="${c==='❌'?'no':(c==='✅'?'yes':'')}">${escapeHtml(c)}</td>`).join('')}</tr>`).join('');
   $('#p-plans').innerHTML=`<h3 class="ptitle">💳 Pricing Plans</h3>
     <div class="muted">Current plan: <b style="color:var(--cyan2)">${escapeHtml(myTier.toUpperCase())}</b>${r.email?' · '+escapeHtml(r.email):''}</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:10px">${cards}</div>
+    ${r.coins&&r.coins.state?`<div class="coin-strip">◈ Your wallet right now: <b>${r.coins.state.unlimited?'UNLIMITED':Number(r.coins.state.balance).toLocaleString()+' coins'}</b>${r.coins.state.unlimited?'':' of '+Number(r.coins.state.grant).toLocaleString()+' this week · resets in '+r.coins.state.reset_in_days+' day(s)'} · each site = ${Number(r.coins.state.cost_build).toLocaleString()} coins · <b>~${r.coins.state.sites_left>999999?'∞':Number(r.coins.state.sites_left).toLocaleString()}</b> builds left</div>`:''}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-top:12px">${cards}</div>
     <div style="overflow-x:auto;margin-top:16px">
     <table style="width:100%;border-collapse:collapse;font-size:11px">
       <thead><tr>${hdr.map(x=>`<th style="padding:6px 4px;border-bottom:1px solid var(--line);text-align:center;color:var(--cyan2)">${x}</th>`).join('')}</tr></thead>
@@ -4962,6 +5058,8 @@ async function renderPlans(){
 
 /* ---------- init ---------- */
 setInterval(()=>{ if($('#tStats')) refreshTrading(); }, 15000);
+try{ refreshCoins(); }catch(e){}
+(function(){ const cp=document.getElementById('coinPill'); if(cp) cp.onclick=()=>{ try{ openUpgrade(pendingPlan||'pro'); }catch(e){} }; })();
 
 /* ---------- auth gate (mandatory signup/login) ---------- */
 let gateMode = 'signup';

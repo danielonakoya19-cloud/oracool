@@ -37,7 +37,7 @@ def read(name):
 # ---------------------------------------------------------------- markers
 
 def test_build_marker_patch25():
-    assert read("server.py").count('"build": "patch26-ui"') == 2
+    assert read("server.py").count('"build": "patch27-sites"') == 2
 
 
 # ---------------------------------------------------------------- voice notes
@@ -82,11 +82,15 @@ def test_media_html_audio_fallback():
 # ---------------------------------------------------------------- builder
 
 def test_build_site_with_mocked_llm(monkeypatch):
-    monkeypatch.setattr(server, "_llm_json", lambda s, u, max_tokens=8000: (
-        {"files": [
-            {"path": "index.html", "content": "<html><head><title>Demo</title></head>"
-                                              "<body><h1>Demo site</h1><script>console.log('hi')</script></body></html>"},
-            {"path": "style.css", "content": "body{background:#04070c}"}]}, "mock"))
+    # patch27: the builder speaks the raw-HTML marker protocol now (no JSON)
+    html = ("<html><head><title>Demo</title></head>"
+            "<body><h1>Demo site</h1><script>console.log('hi')</script>"
+            + "<!--" + "pad pad pad pad pad pad " * 40 + "-->"
+            + "</body></html>")
+    monkeypatch.setattr(
+        server, "_llm_text",
+        lambda s, u, max_tokens=16000, extra_msgs=None:
+        ("TEMPLATE: Mock Minimal\nTITLE: Demo\nBEGIN index.html\n" + html + "\nEND", "mock", "stop"))
     # clean slate
     meta = server._builds_load()
     meta.pop("demo-site", None)
@@ -94,10 +98,14 @@ def test_build_site_with_mocked_llm(monkeypatch):
     r = server.build_site("builder.test25@example.com", "Demo Site", "a tiny demo site")
     assert r.get("ok"), r
     assert r["url"] == "/builds/demo-site/"
-    assert r["files"] == ["index.html", "style.css"]
+    # real project workspace: the self-contained page + an auto README
+    assert "index.html" in r["files"] and "README.md" in r["files"]
+    assert r.get("template") == "Mock Minimal"
     p = os.path.join(server._BUILDS_DIR, "demo-site", "index.html")
     assert os.path.exists(p)
-    assert "Demo site" in open(p).read()
+    assert "Demo site" in open(p, encoding="utf-8").read()
+    rd = open(os.path.join(server._BUILDS_DIR, "demo-site", "README.md"), encoding="utf-8").read()
+    assert "OraCool AI" in rd
 
 def test_build_slug_and_traversal(monkeypatch):
     monkeypatch.setattr(server, "_llm_json", lambda s, u, max_tokens=8000: (
@@ -117,7 +125,7 @@ def _build_fixture(slug="demo-site", owner="zip.test"):
         f.write("<title>fixture</title>")
     meta = server._builds_load()
     meta[slug] = {"owner": owner, "name": slug, "brief": "", "provider": "mock",
-                  "files": ["index.html"], "t": ""}
+                  "files": ["index.html"], "t": server._now()}
     server._builds_save(meta)
 
 def test_build_zip():
@@ -284,7 +292,8 @@ def test_builds_route_and_zip():
     src = read("server.py")
     assert 'elif path.startswith("/builds/"):' in src
     assert "download.zip" in src
-    assert '"/api/builds", "/api/github"' in src or '"/api/builds","/api/github"' in src
+    assert '"/api/builds"' in src and '"/api/github"' in src
+    assert '"/api/sites"' in src and '"/api/coins"' in src  # patch27: publish + wallet are authed too
 
 def test_protected_routes():
     src = read("server.py")

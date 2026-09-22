@@ -234,3 +234,38 @@ main{display:flex}
   .cws-tree{width:100%;max-height:34%;border-right:0;border-bottom:1px solid rgba(105,155,185,.25)}
   .codeov{padding:6px}
 }
+
+/* ================= patch27 — build coins, publish panel, impressive plans ================= */
+#app .coinpill{border:1px solid rgba(255,200,80,.45);background:linear-gradient(140deg,rgba(255,190,80,.16),rgba(255,120,60,.08));color:#ffd98a;font-size:11px;font-weight:700;border-radius:999px;padding:5px 10px;white-space:nowrap;font-family:inherit;cursor:pointer}
+#app .coinpill:hover{box-shadow:0 0 10px rgba(255,190,80,.35)}
+#app .side-user{gap:6px;flex-wrap:wrap}
+#app .coin-strip{margin-top:10px;border:1px solid rgba(255,190,80,.35);background:linear-gradient(140deg,rgba(255,190,80,.10),rgba(0,229,255,.05));border-radius:12px;padding:9px 12px;font-size:12px;color:var(--tx);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#app .planchip{position:relative}
+#app .planchip .pc-coins{display:inline-block;margin-top:3px;font-size:10px;font-weight:700;color:#ffd98a;background:rgba(255,190,80,.12);border:1px solid rgba(255,190,80,.35);border-radius:999px;padding:2px 8px;width:max-content}
+#app .planchip.popular{border-color:rgba(255,190,80,.55)}
+#app .planchip.popular::after{content:"★ POPULAR";position:absolute;top:-9px;right:-6px;background:linear-gradient(135deg,#ffb347,#ff5f6d);color:#0d1017;font-size:8px;font-weight:900;padding:2px 7px;border-radius:999px;letter-spacing:.5px}
+#app .plancard .popbadge{display:inline-block;margin-left:8px;background:linear-gradient(135deg,#ffb347,#ff5f6d);color:#0d1017;font-size:9px;font-weight:900;padding:2px 8px;border-radius:999px;letter-spacing:.5px;vertical-align:middle}
+#app .plancard .curbadge{display:inline-block;margin-left:6px;background:rgba(0,229,255,.15);border:1px solid rgba(0,229,255,.45);color:var(--cyan2);font-size:9px;font-weight:800;padding:2px 8px;border-radius:999px;vertical-align:middle}
+#app .plancard .plan-coins{border:1px dashed rgba(255,190,80,.4);background:rgba(255,190,80,.07);color:#ffd98a;border-radius:10px;padding:7px 9px;font-size:12px;font-weight:700;display:flex;flex-direction:column;gap:2px}
+#app .plancard .plan-coins .pc-sub{font-size:10px;color:var(--muted,#9fb6cc);font-weight:500}
+#app .plancard .plan-coins.inf{border-color:rgba(0,229,255,.5);color:var(--cyan2);background:rgba(0,229,255,.07)}
+#app .plancard .publine{font-size:10.5px;color:var(--muted,#9fb6cc);line-height:1.5}
+#app .plancard .publine b{color:var(--cyan2)}
+/* publish workspace modal */
+#app .pubov{display:flex;align-items:center;justify-content:center;padding:16px}
+#app .pubcard{width:min(640px,96vw);padding:0;overflow:hidden}
+#app .pub-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line,#1d2c3c);background:linear-gradient(140deg,rgba(0,229,255,.08),rgba(255,190,80,.06));font-size:14px}
+#app .pub-body{padding:16px}
+#app .pub-row{display:flex;align-items:center;gap:6px;margin-top:10px;border:1px solid var(--line,#1d2c3c);border-radius:12px;padding:8px 10px;background:rgba(4,12,20,.65)}
+#app .pub-pre,#app .pub-suf{color:var(--muted,#9fb6cc);font-size:12.5px;white-space:nowrap}
+#app .pub-suf{color:var(--cyan2);font-weight:700}
+#app .pub-in{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--tx,#e8f2fb);font-family:ui-monospace,Menlo,monospace;font-size:13.5px}
+#app .pub-live{border:1px solid rgba(80,255,170,.4);background:rgba(80,255,170,.07);border-radius:12px;padding:11px 12px;font-size:13px;line-height:1.65;margin-bottom:8px}
+#app .pub-url{color:var(--cyan2);font-weight:700;word-break:break-all;text-decoration:none;border-bottom:1px dashed rgba(0,229,255,.5)}
+#app .pub-url:hover{text-shadow:0 0 12px rgba(0,229,255,.6)}
+#app .pub-hits{font-size:11px;color:var(--muted,#9fb6cc);border:1px solid var(--line,#1d2c3c);border-radius:999px;padding:4px 10px}
+#app .pub-dom{margin-top:14px;border-top:1px dashed var(--line,#1d2c3c);padding-top:10px}
+@media (max-width:640px){
+  #app .pubov{padding:8px}
+  #app .planchip.popular::after{right:2px}
+}

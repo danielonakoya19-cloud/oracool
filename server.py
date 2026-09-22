@@ -161,11 +161,14 @@ def verify_jwt(token, secret):
 TIER_RANK = {"free": 0, "starter": 1, "pro": 2, "ultra": 3, "enterprise": 4}
 
 PLANS = {
-    "starter":    {"label": "Starter",     "price_usd": 29,  "price_ngn": 45000,  "days": 30},
-    "pro":        {"label": "Pro",         "price_usd": 49,  "price_ngn": 75000,  "days": 30},
-    "ultra":      {"label": "Professional","price_usd": 149, "price_ngn": 230000, "days": 30},
+    "starter":    {"label": "Starter",     "price_usd": 29,  "price_ngn": 45000,  "days": 30,
+                   "coins_wk": 3_000_000},
+    "pro":        {"label": "Pro",         "price_usd": 49,  "price_ngn": 75000,  "days": 30,
+                   "coins_wk": 8_000_000},
+    "ultra":      {"label": "Professional","price_usd": 149, "price_ngn": 230000, "days": 30,
+                   "coins_wk": 25_000_000},
     "enterprise": {"label": "Enterprise · All Features", "price_usd": 500, "price_ngn": 750000,
-                   "days": 30, "all_features": True},
+                   "days": 30, "all_features": True, "coins_unlimited": True},
 }
 
 # Reinstatement fine: a suspended account is locked out of the AI entirely and
@@ -610,6 +613,10 @@ def supabase_upsert_flag(rec, block_fields=True):
     for field in ("last_ip", "verified", "email_verification_required"):
         if field in rec:
             body[field] = rec[field]
+    if isinstance(rec.get("coins"), (dict, list)):
+        body["coins"] = json.dumps(rec["coins"])
+    elif "coins" in rec:
+        body["coins"] = str(rec.get("coins") or "")
     try:
         http_fetch(url.rstrip("/") + "/rest/v1/user_flags", method="POST",
                    headers=dict(_supabase_headers(), **{"Prefer": "resolution=merge-duplicates"}),
@@ -930,6 +937,99 @@ def check_subscription(email):
     if tier == "free":
         return None
     return make_tier_token(email, tier)
+
+# ------------------------------------------------------- building coins (patch27)
+# Sites are metered in coins: one build = 10,000. Free gets 1,000,000 coins per
+# week; when they run out the user waits for the Monday reset or upgrades. The
+# wallet lives on the user record (users.json) and is mirrored to Supabase so
+# balances survive redeploys. Enterprise pays nothing (unlimited).
+COIN_COST_BUILD = 10000
+COINS_WEEKLY = {"free": 1_000_000, "starter": 3_000_000, "pro": 8_000_000, "ultra": 25_000_000}
+_COINS_LOCK = threading.Lock()
+
+
+def _iso_week():
+    return time.strftime("%G-W%V")
+
+
+def _coins_parse(raw):
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            d = json.loads(raw)
+            return d if isinstance(d, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def coins_state(email):
+    """Weekly build-coin wallet for one account (auto-refills on the ISO week)."""
+    email = (email or "").strip().lower()
+    tier = check_tier(email)
+    unlimited = (tier == "enterprise") or is_admin(email)
+    grant = COINS_WEEKLY.get(tier, COINS_WEEKLY["free"])
+    wk = _iso_week()
+    rec = user_record(email) if email else None
+    if not rec and email:
+        # users.json is empty after a fresh deploy — hydrate from Supabase once
+        _row = supabase_get_flag(email) or {}
+        _c = _coins_parse(_row.get("coins"))
+        if _c:
+            touch_user(email, coins=_c)
+            rec = user_record(email)
+    cs = _coins_parse((rec or {}).get("coins"))
+    if cs.get("week") == wk:
+        try:
+            bal = int(cs.get("balance", grant))
+        except Exception:
+            bal = grant
+    else:
+        bal = grant
+        if email and email != "guest":
+            touch_user(email, coins={"week": wk, "balance": bal})
+    try:
+        reset_in = 8 - int(time.strftime("%u"))
+    except Exception:
+        reset_in = 7
+    return {"balance": bal, "grant": grant, "week": wk, "tier": tier,
+            "unlimited": bool(unlimited), "reset_in_days": reset_in,
+            "cost_build": COIN_COST_BUILD,
+            "sites_left": (10 ** 9 if unlimited else bal // COIN_COST_BUILD)}
+
+
+def coins_gate(email, cost=COIN_COST_BUILD):
+    """None => build allowed. Otherwise an honest error payload (cooldown + upgrade path)."""
+    st = coins_state(email)
+    if st["unlimited"] or st["balance"] >= cost:
+        return None
+    msg = ("You are out of building coins for this week — a site build costs {:,} coins and you have "
+           "{:,} left. ".format(cost, st["balance"]))
+    msg += ("New coins unlock automatically after the weekly reset ({} day(s), on Mondays). "
+            .format(st["reset_in_days"]))
+    msg += ("Published sites stay online and everything else on your plan keeps working. "
+            "Upgrade to keep building right now: Starter ₦45,000/mo = 3,000,000 coins/week (~300 sites), "
+            "Pro ₦75,000/mo = 8,000,000 coins/week (~800 sites), "
+            "Professional ₦230,000/mo = 25,000,000 coins/week (~2,500 sites).")
+    return {"error": msg, "coins": {"balance": st["balance"], "cost": cost,
+                                    "reset_in_days": st["reset_in_days"]},
+            "locked": "coins", "upgrade_plan": "starter"}
+
+
+def coins_charge(email, cost=COIN_COST_BUILD):
+    """Deduct a successful build's cost. Returns the post-charge state (or None)."""
+    if not email:
+        return None
+    with _COINS_LOCK:
+        st = coins_state(email)
+        if st["unlimited"]:
+            return st
+        new = max(0, int(st["balance"]) - int(cost))
+        touch_user(email, coins={"week": st["week"], "balance": new})
+        st["balance"] = new
+        return st
+
 
 # ---------------------------------------------------------------- GitHub
 
@@ -2904,45 +3004,170 @@ def _llm_json(system, user, max_tokens=8000):
             continue
     return None, "all LLM providers failed: " + attempts_err
 
+def _llm_text(system, user, max_tokens=16000, extra_msgs=None):
+    """Non-streaming completion returning RAW text (no JSON contract). Tries
+    groq -> openai -> agnes; reports each provider's finish_reason so the
+    caller can detect truncated output (patch27: JSON-escaped HTML blew the
+    token budget, raw HTML fits)."""
+    attempts = []
+    k = key("GROQ_API_KEY")
+    if k:
+        # gpt-oss on Groq first: fast, follows size budgets, and its rate-limit
+        # bucket is separate from the chat model (which 429s while serving the app)
+        attempts.append((k, "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "groq-oss", {"reasoning_effort": "low"}))
+        attempts.append((k, "https://api.groq.com/openai/v1", KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), "groq", {}))
+    k = key("OPENAI_API_KEY")
+    if k:
+        attempts.append((k, "https://api.openai.com/v1", "gpt-4o-mini", "openai", {}))
+    k = key("AGNES_API_KEY")
+    if k:
+        attempts.append((k, AGNES_BASE, KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), "agnes", {}))
+    if not attempts:
+        return None, "no LLM key configured", "nokey"
+    last_err = "all LLM providers failed"
+    for att in attempts:
+        k, base, model, prov = att[0], att[1], att[2], att[3]
+        req_body_extra = att[4] if len(att) > 4 else {}
+        try:
+            req_body = {"model": model, "max_tokens": max_tokens, "temperature": 0.4,
+                        "messages": ([{"role": "system", "content": system},
+                                       {"role": "user", "content": user}] + (extra_msgs or []))}
+            req_body.update(req_body_extra)
+            _, raw, _ = http_fetch(base.rstrip("/") + "/chat/completions", method="POST", timeout=240,
+                                   headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
+                                   json_body=req_body)
+            d = json.loads(raw)
+            ch = (d.get("choices") or [{}])[0]
+            c = (ch.get("message", {}).get("content") or "").strip()
+            if c:
+                return c, prov, str(ch.get("finish_reason") or "")
+        except Exception as e:
+            last_err = prov + ": " + str(e)[:110]
+            continue
+    return None, last_err, "error"
+
+
+def _parse_builder_reply(c):
+    """Marker format: TEMPLATE line, TITLE line, then the raw HTML file. Accepts
+    a legacy {files:[...]} JSON reply too. Returns dict or None."""
+    if not c:
+        return None
+    c = c.strip()
+    if c.startswith("```"):
+        c = c.split("\n", 1)[1] if "\n" in c else c
+        c = c.rsplit("```", 1)[0].strip()
+    if c.startswith("{"):
+        try:
+            m = re.search(r"\{[\s\S]*\}", c)
+            d = json.loads(m.group(0) if m else c)
+            if isinstance(d, dict) and isinstance(d.get("files"), list):
+                return {"files": d["files"], "template": str(d.get("template") or "")[:40],
+                        "name": str(d.get("name") or "").strip()[:60]}
+        except Exception:
+            return None
+    tm = re.search(r"^\s*TEMPLATE\s*[::]\s*(.+)", c, re.M | re.I)
+    nm = re.search(r"^\s*TITLE\s*[::]\s*(.+)", c, re.M | re.I)
+    m = re.search(r"<!DOCTYPE html[\s\S]*", c, re.I) or re.search(r"<html[\s\S]*", c, re.I)
+    if not m:
+        return None
+    body = m.group(0).strip()
+    body = re.sub(r"\n?END\b[ \t\r]*$", "", body)
+    if len(body) < 500 or "</html>" not in body.lower():
+        if len(body) > 6000:  # truncated mid-file: minimal rescue so the site still opens
+            body = body.rstrip()
+            low = body.lower()
+            if "<style" in low and "</style>" not in low:
+                body += "</style>"
+            if "<script" in low and "</script>" not in low:
+                body += "</script>"
+            body += "\n</body></html>"
+        else:
+            return None
+    return {"files": [{"path": "index.html", "content": body}],
+            "template": (tm.group(1).strip()[:40] if tm else ""),
+            "name": (nm.group(1).strip()[:60] if nm else "")}
+
+
 def build_site(email, name, prompt):
-    """Arena-style builder: the AI writes a complete static site (HTML/CSS/JS),
-    saved to data/builds/<slug>/ and served same-origin at /builds/<slug>/ for a
-    live in-chat preview. Returns an honest report of what was created."""
+    """Arena-style builder (patch27): designs a complete, professional static
+    website matched to the brief — Lovable/Base44-grade template, real copy,
+    motion, forms — saved to data/builds/<slug>/ and served same-origin at
+    /builds/<slug>/ for a live in-chat preview. Builds cost 10,000 coins/week
+    of allowance; publishing a finished build is always free."""
+    import shutil  # noqa: F401  (kept for parity with publish; zip uses its own)
     email = (email or "").strip().lower()
     name = (name or "site").strip()[:40]
     prompt = (prompt or "").strip()[:1200]
     if not prompt:
         return {"error": "Describe the site you want, e.g. 'a landing page for a coffee brand in Lagos'."}
-    # free-tier cap: 10 builds/day
+    tier = check_tier(email)
+    # daily pace cap (abuse guard); coin wallet does the real metering
     now = time.time()
-    lst = [t for t in _BUILD_DAILY.get(email, []) if now - t < 86400]
-    if len(lst) >= 10:
-        return {"error": "Daily build limit reached (10/day on this plan). Try again tomorrow or upgrade."}
+    if not is_admin(email) and tier != "enterprise":
+        lst = [t for t in _BUILD_DAILY.get(email, []) if now - t < 86400]
+        if len(lst) >= 40:
+            return {"error": "Daily build limit reached (40/day). Try again tomorrow or upgrade."}
+    _gate = coins_gate(email, COIN_COST_BUILD)
+    if _gate is not None:
+        return _gate
     slug0 = _build_slug(name)
     slug = slug0
     i = 2
     while slug in _builds_load():
         slug = slug0 + "-" + str(i); i += 1
     system = (
-        "You are a world-class frontend engineer. Build a COMPLETE, POLISHED static website exactly as "
-        "requested. Respond with ONLY a JSON object (no markdown fences) of the form: "
-        '{"files":[{"path":"index.html","content":"..."}]}. '
-        "The whole site MUST fit in ONE self-contained index.html with inline style and script tags "
-        "(no other files, no external CDNs) and MUST be under 25KB total. Make it responsive and beautiful "
-        "(dark, modern, premium feel with smooth micro-interactions); no TODO placeholders; every button "
-        "must do something real (anchor scroll, client-side form handling, etc.). Keep code compact "
-        "(short class names, dense but readable CSS).")
-    user = ("Build this website. Site name: " + name + ". Brief: " + prompt +
-            ". The site title must be exactly: " + name +
-            ". Include a header, hero, at least two content sections, and a footer in the single index.html. "
-            "Remember: reply with ONLY the JSON object, and keep it under 25KB.")
-    data, prov = _llm_json(system, user, max_tokens=16000)
-    if not data:
-        data, prov2 = _llm_json(system + " The previous reply was too long and got cut off. Reply SHORTER "
-                                      "this time: a compact single index.html under 15KB.",
-                                user, max_tokens=16000)
-        if data:
-            prov = prov2
+        "You are a Lovable/Base44-grade senior product designer AND senior frontend engineer. "
+        "OUTPUT FORMAT (strict — a machine reads it): line 1 'TEMPLATE: <family>' (invent a fitting name like "
+        "Aurora SaaS, Noir Dining, Editorial Portfolio, Commerce Grid, Bold Agency, Festival Event, Zen Clinic); "
+        "line 2 'TITLE: <site name>'; line 3 exactly 'BEGIN index.html'; then the COMPLETE raw HTML file — "
+        "no JSON, no markdown fences, no explanations, and nothing after the file except a final 'END' line. "
+        "The file starts with <!DOCTYPE html> and ends with </html>; the WHOLE reply stays between 12KB and 22KB (quality matters — do not go below 12KB) — "
+        "dense, efficient code (short selectors, compact CSS), not sprawling boilerplate. "
+        "First pick the template family, palette and typography that genuinely fit the industry and mood "
+        "(a restaurant is NOT a fintech is NOT a personal portfolio). ONE self-contained index.html with inline "
+        "<style> and <script>; no external JS/CSS frameworks; a Google Fonts <link> is allowed but must fall "
+        "back to system fonts. PROFESSIONAL BAR (non-negotiable): cohesive CSS custom-property palette "
+        "(background, surface, text, accent, muted) with real contrast; display font for headings + readable "
+        "body font; generous spacing and a strong typographic scale; a hero with a clear value-prop H1, "
+        "supporting line, primary + secondary CTA and a hero VISUAL built purely from CSS/SVG (gradient orbs, "
+        "device mock, illustrated shapes — never <img> tags pointing to external URLs); a sticky translucent "
+        "header with a working mobile menu; 5-7 content sections with believable, specific copy for THIS "
+        "business (no lorem, no invented statistics); at least one signature motion moment (IntersectionObserver "
+        "scroll reveals, hover lifts, animated counters, gradient shift); one functional interactive feature "
+        "that fits the template (menu filter, cart drawer demo, tabs, FAQ accordion, gallery lightbox — pick it "
+        "and make it work); a form with client-side validation and an inline success state; a footer with real "
+        "anchor links; a <title>, meta description and an inline SVG data-URI favicon; smooth anchor scrolling; "
+        "visible keyboard focus styles; prefers-reduced-motion respected. Fully responsive, mobile-first. "
+        "No TODOs, no placeholders.")
+    _generic = (not name) or name.strip().lower() in ("my-site", "site", "website", "app", "landing page", "page")
+    user = ("Build this website now. " + ("Site name: " + name + ". " if not _generic else
+            "No brand name was given — invent a short fitting name and put it after 'TITLE: '. ") +
+            "Brief: " + prompt +
+            " Structure: header with nav, impactful hero, at least five distinct content sections a real "
+            "business in this brief would have, and a footer. Match the visual language to the industry. "
+            "Remember the strict output format: TEMPLATE line, TITLE line, BEGIN index.html, the complete "
+            "HTML file (under 18KB), END.")
+    c_raw, prov, finish = _llm_text(system, user, max_tokens=16000)
+    # the model can write past its single-reply token cap — continue the SAME
+    # file where it stopped (how real AI builders stream long artifacts)
+    for _turn in range(2):
+        if not c_raw or "</html>" in c_raw.lower():
+            break
+        cont, prov2, fin2 = _llm_text(system, user, max_tokens=16000, extra_msgs=[
+            {"role": "assistant", "content": c_raw},
+            {"role": "user", "content": "Continue the file EXACTLY from where you stopped — no repeats, no preamble, no fences, resume mid-line if needed. Finish the document and end with the END line."}])
+        if not cont:
+            break
+        c_raw = c_raw + cont.lstrip("` \r\n")
+        prov, finish = prov2, fin2
+    data = _parse_builder_reply(c_raw)
+    if not data or (finish == "length" and not data):
+        c2, prov2, _f2 = _llm_text(system + " The previous reply was too long or malformed and got cut off. "
+                                           "This time keep the HTML file itself under 13KB (still professional: "
+                                           "cut words, not design).", user, max_tokens=16000)
+        d2 = _parse_builder_reply(c2)
+        if d2:
+            data, prov = d2, prov2
     if not data:
         return {"error": "The builder brain is unavailable right now (" + str(prov)[:140] + "). Please try again in a moment."}
     files = data.get("files") if isinstance(data, dict) else None
@@ -2962,6 +3187,22 @@ def build_site(email, name, prompt):
         clean.append({"path": p, "content": c})
     if not any(f["path"] == "index.html" for f in clean):
         return {"error": "The AI did not include an index.html page. Please try again."}
+    # honour the model's title when the user gave no explicit name
+    _gn = str(data.get("name") or "").strip()[:40] if isinstance(data, dict) else ""
+    if _generic and _gn:
+        name = _gn
+    template = str(data.get("template") or "").strip()[:40] if isinstance(data, dict) else ""
+    # workspace polish: every project ships a README (code tree + zip feel like a
+    # real repo, not one loose html file). index.html itself stays self-contained
+    # so the site never breaks when downloaded or published.
+    if not any(f["path"] == "README.md" for f in clean):
+        _rd = ("# " + (name or "Website") + "\n\nBuilt with **OraCool AI** · template: _"
+               + (template or "Custom") + "_\n\nGenerated: " + _now() + "\n\n## Files\n\n"
+               + "".join("- `" + f["path"] + "` — " + "{:,}".format(len(f["content"])) + " bytes\n" for f in clean)
+               + "\n## Brief\n\n" + (prompt[:400] or "custom site") + "\n\n---\n"
+               "index.html is fully self-contained (inline CSS + JS + SVG art), so it runs anywhere: "
+               "open it, publish it on OraCool, or push it to GitHub.\n")
+        clean.append({"path": "README.md", "content": _rd})
     dest = os.path.join(_BUILDS_DIR, slug)
     try:
         for f in clean:
@@ -2975,17 +3216,25 @@ def build_site(email, name, prompt):
         return {"error": "Could not save the site: " + str(e)[:120]}
     meta = _builds_load()
     meta[slug] = {"owner": email, "name": name, "brief": prompt[:300], "provider": prov,
-                  "files": [f["path"] for f in clean], "t": _now()}
+                  "files": [f["path"] for f in clean], "t": _now(), "template": template}
     _builds_save(meta)
     _BUILD_DAILY.setdefault(email, []).append(now)
+    st = coins_charge(email, COIN_COST_BUILD)
+    coins_left = None if (not st or st.get("unlimited")) else st.get("balance")
     return {"ok": True, "slug": slug, "url": "/builds/" + slug + "/", "name": name,
-            "files": [f["path"] for f in clean], "provider": prov,
-            "note": "Live preview is in the card above. Full-screen, download or deploy it — the 'How to deploy' button walks you through Netlify / Vercel / GitHub Pages (and one-click push if you connect your GitHub account in Devices → Connectors)."}
+            "template": template, "files": [f["path"] for f in clean], "provider": prov,
+            "coins_spent": COIN_COST_BUILD, "coins_left": coins_left,
+            "note": "Live preview is in the card above. Tap PUBLISH to put it online at <sub>.oracoolai.com "
+                    "(free, stays live, counts nothing) — or use 'How to deploy' for Netlify / Vercel / GitHub "
+                    "one-click push (Devices → Connectors). Build coins this week show in the header pill."}
+
 
 def build_list(email):
     meta = _builds_load()
-    out = [dict(meta[s], slug=s) for s in sorted(meta, reverse=True)]
-    return {"ok": True, "builds": out[:30]}
+    # newest first by build time (patch27: slug-alphabetical ordering pushed real
+    # builds past the cap once the registry grew)
+    out = [dict(meta[s], slug=s) for s in sorted(meta, key=lambda s: (str(meta[s].get("t") or ""), s), reverse=True)]
+    return {"ok": True, "builds": out[:50]}
 
 def build_zip(slug):
     slug = os.path.basename(str(slug or ""))
@@ -3126,6 +3375,380 @@ def github_push_build(email, slug, repo, enable_pages=True):
             out["pages"] = "enabled"
             out["pages_url"] = "https://" + owner.lower() + ".github.io/" + rname.lower() + "/"
     return out
+
+# ============================================== published sites (patch27 hosting)
+# One tap publishes a build to https://<sub>.oracoolai.com (Base44-style). Files
+# copy to data/sites/<sub>/ and mirror to Supabase (published_sites) so sites
+# survive redeploys; unknown-host 404s fall through. Owners may later attach a
+# custom domain (they point DNS at OraCool; we route by Host header).
+_SITES_DIR = os.path.join(DATA_DIR, "sites")
+_SITES_LOCK = threading.Lock()
+_SITE_HOST_CACHE = {}           # host -> (sub or None, expires_at)
+_SITE_EXIST_CACHE = {}          # sub -> (bool, expires_at)
+_SITE_RESERVED = {"www", "app", "api", "admin", "sites", "builds", "assets", "static",
+                  "mail", "cdn", "help", "support", "blog", "status", "dev", "staging"}
+_SITE_TEXT_EXT = {".html", ".css", ".js", ".mjs", ".json", ".svg", ".txt", ".md", ".xml", ".webmanifest"}
+
+
+def _sites_registry():
+    return os.path.join(_SITES_DIR, "registry.json")
+
+
+def _sites_load():
+    try:
+        with open(_sites_registry(), encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _sites_save(d):
+    with _SITES_LOCK:
+        try:
+            os.makedirs(_SITES_DIR, exist_ok=True)
+            with open(_sites_registry(), "w", encoding="utf-8") as f:
+                json.dump(d, f, indent=1)
+        except Exception:
+            pass
+
+
+def _sub_valid(sub):
+    return (bool(re.fullmatch(r"[a-z0-9]([a-z0-9-]{1,38}[a-z0-9])?", sub or ""))
+            and sub not in _SITE_RESERVED)
+
+
+def _site_headers():
+    return {"apikey": key("SUPABASE_SERVICE_KEY"), "Authorization": "Bearer " + key("SUPABASE_SERVICE_KEY"),
+            "Content-Type": "application/json"}
+
+
+def site_sup_save(sub, meta, files):
+    """Best-effort durable mirror of a published site (text files only)."""
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return False
+    u = url.rstrip("/")
+    try:
+        http_fetch(u + "/rest/v1/published_sites?sub=eq." + urllib.parse.quote(sub, safe=""),
+                   method="DELETE", headers=_site_headers(), timeout=15)
+        rows = [{"sub": sub, "path": f["path"], "content": f["content"][:1_500_000]}
+                for f in files if os.path.splitext(f["path"])[1].lower() in _SITE_TEXT_EXT]
+        if rows:
+            http_fetch(u + "/rest/v1/published_sites", method="POST",
+                       headers=dict(_site_headers(), **{"Prefer": "return=minimal"}),
+                       json_body=rows, timeout=25)
+        mrow = {"sub": sub, "owner": meta.get("owner", ""), "name": meta.get("name", ""),
+                "source_slug": meta.get("source_slug", ""), "published_at": meta.get("published_at", ""),
+                "hits": int(meta.get("hits") or 0), "custom_domain": meta.get("custom_domain", "")}
+        http_fetch(u + "/rest/v1/published_sites_meta", method="POST",
+                   headers=dict(_site_headers(), **{"Prefer": "return=minimal, resolution=merge-duplicates"}),
+                   json_body=mrow, timeout=15)
+        return True
+    except Exception:
+        return False
+
+
+def site_sup_load(sub):
+    """Hydrate a site's text files from Supabase. Returns list of {path, content} or None."""
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return None
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/published_sites?sub=eq." + urllib.parse.quote(sub, safe="")
+                               + "&select=path,content&order=path.asc",
+                               headers=_site_headers(), timeout=15)
+        rows = json.loads(raw) if raw else []
+        return rows or None
+    except Exception:
+        return None
+
+
+def site_sup_meta(field, value):
+    """Look up a published site by custom_domain or sub in the durable meta table."""
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return None
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/published_sites_meta?" + field + "=eq."
+                               + urllib.parse.quote(str(value), safe="") + "&select=*",
+                               headers=_site_headers(), timeout=10)
+        rows = json.loads(raw) if raw else []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def site_hydrate(sub):
+    """If local files vanished (redeploy), restore from Supabase and re-cache on disk."""
+    rows = site_sup_load(sub)
+    if not rows:
+        return False
+    dest = os.path.normpath(os.path.join(_SITES_DIR, sub))
+    try:
+        for r in rows:
+            p = str(r.get("path") or "").strip().lstrip("/").replace("\\", "/")
+            if not p or ".." in p:
+                continue
+            fp = os.path.normpath(os.path.join(dest, p))
+            if not fp.startswith(dest):
+                continue
+            os.makedirs(os.path.dirname(fp), exist_ok=True)
+            with open(fp, "w", encoding="utf-8") as fh:
+                fh.write(str(r.get("content") or ""))
+        reg = _sites_load()
+        if sub not in reg:
+            _m = site_sup_meta("sub", sub) or {}
+            reg[sub] = {"owner": _m.get("owner") or "", "name": _m.get("name") or sub,
+                        "source_slug": _m.get("source_slug") or "", "published_at": _m.get("published_at") or "",
+                        "hits": int(_m.get("hits") or 0), "custom_domain": _m.get("custom_domain") or ""}
+            _sites_save(reg)
+        return True
+    except Exception:
+        return False
+
+
+def site_exists(sub):
+    now = time.time()
+    hit = _SITE_EXIST_CACHE.get(sub)
+    if hit and hit[1] > now:
+        return hit[0]
+    ok = False
+    if _sub_valid(sub):
+        ok = sub in _sites_load()
+        if not ok:
+            ok = bool(site_sup_meta("sub", sub))
+    _SITE_EXIST_CACHE[sub] = (ok, now + 60)
+    return ok
+
+
+def site_tree(base):
+    out = []
+    for root, _dirs, names in os.walk(base):
+        for n in names:
+            fp = os.path.join(root, n)
+            rp = os.path.relpath(fp, base).replace(os.sep, "/")
+            try:
+                sz = os.path.getsize(fp)
+            except OSError:
+                continue
+            if rp.endswith(".zip"):
+                continue
+            out.append((rp, fp, sz))
+    out.sort()
+    return out
+
+
+def site_publish(email, slug, sub=""):
+    """Publish (or re-publish) a build. Re-publish with the same sub updates the live
+    site in place — that is also how edits go live."""
+    import shutil
+    email = (email or "").strip().lower()
+    meta = _builds_load()
+    b = meta.get(slug) or {}
+    if not b:
+        return {"error": "Nothing built yet under that name — ask the AI to build a site first, "
+                         "or use the PUBLISH button on a build card."}
+    if (b.get("owner") or "").lower() != email and not is_admin(email):
+        return {"error": "That build belongs to a different account."}
+    src_dir = os.path.normpath(os.path.join(_BUILDS_DIR, slug))
+    if not os.path.isdir(src_dir):
+        return {"error": "The build files are missing on this server. Rebuild it once, then publish."}
+    sub_raw = str(sub or "").strip()
+    if sub_raw:
+        sub = _build_slug(sub_raw)
+        if not _sub_valid(sub):
+            return {"error": "That subdomain is not allowed (use 3-40 lowercase letters, digits or dashes, and not a reserved word)."}
+    else:
+        sub = _build_slug(str(b.get("name") or slug))
+    reg = _sites_load()
+    cur = reg.get(sub)
+    if cur and (cur.get("owner") or "").lower() != email and not is_admin(email):
+        return {"error": "That subdomain is taken — try another, e.g. '" + sub + "-" + os.urandom(2).hex() + "'."}
+    dest = os.path.normpath(os.path.join(_SITES_DIR, sub))
+    try:
+        shutil.rmtree(dest, ignore_errors=True)
+        os.makedirs(_SITES_DIR, exist_ok=True)
+        shutil.copytree(src_dir, dest)
+    except Exception as e:
+        return {"error": "Could not copy the site files: " + str(e)[:120]}
+    reg = _sites_load()
+    reg[sub] = {"owner": email, "name": b.get("name") or sub, "source_slug": slug,
+                "published_at": _now(), "hits": (reg.get(sub) or {}).get("hits", 0),
+                "custom_domain": (reg.get(sub) or {}).get("custom_domain", ""),
+                "template": b.get("template") or ""}
+    _sites_save(reg)
+    files = []
+    for rp, fp, sz in site_tree(dest):
+        if sz > 1_500_000:
+            continue
+        try:
+            with open(fp, encoding="utf-8") as fh:
+                files.append({"path": rp, "content": fh.read()})
+        except Exception:
+            pass
+    durable = site_sup_save(sub, reg[sub], files)
+    _SITE_EXIST_CACHE[sub] = (True, time.time() + 3600)
+    return {"ok": True, "sub": sub, "slug": slug,
+            "url": "https://" + sub + ".oracoolai.com/", "path_url": "/sites/" + sub + "/",
+            "name": reg[sub]["name"], "durable": bool(durable),
+            "note": ("Live at https://" + sub + ".oracoolai.com/ (share that URL). If it does not open yet, "
+                     "wildcard DNS may still be propagating — the same site is also at " + "/sites/" + sub + "/. "
+                     "Later, users can buy any domain and attach it from the Publish panel (we serve it by host). "
+                     + ("Files are mirrored to Supabase and survive redeploys." if durable else
+                        "Durable mirror unavailable (Supabase not configured) — files live on this server."))}
+
+
+def site_unpublish(email, sub):
+    import shutil
+    sub = (sub or "").strip().lower()
+    reg = _sites_load()
+    cur = reg.get(sub)
+    if not cur:
+        return {"error": "No published site under '" + str(sub)[:40] + "'."}
+    if (cur.get("owner") or "").lower() != (email or "").lower() and not is_admin(email):
+        return {"error": "Only the owner (or an admin) can unpublish that site."}
+    shutil.rmtree(os.path.normpath(os.path.join(_SITES_DIR, sub)), ignore_errors=True)
+    reg = _sites_load()
+    reg.pop(sub, None)
+    _sites_save(reg)
+    _SITE_EXIST_CACHE[sub] = (False, time.time() + 60)
+    url = key("SUPABASE_URL")
+    if url and key("SUPABASE_SERVICE_KEY"):
+        try:
+            http_fetch(url.rstrip("/") + "/rest/v1/published_sites?sub=eq." + urllib.parse.quote(sub, safe=""),
+                       method="DELETE", headers=_site_headers(), timeout=15)
+            http_fetch(url.rstrip("/") + "/rest/v1/published_sites_meta?sub=eq." + urllib.parse.quote(sub, safe=""),
+                       method="DELETE", headers=_site_headers(), timeout=15)
+        except Exception:
+            pass
+    return {"ok": True, "note": "'" + sub + "' is unpublished. Rebuild/publish any time to go live again."}
+
+
+def site_domain_set(email, sub, domain):
+    sub = (sub or "").strip().lower()
+    domain = re.sub(r"^https?://", "", str(domain or "").strip().lower()).split("/")[0].strip(".")
+    reg = _sites_load()
+    cur = reg.get(sub)
+    if not cur:
+        return {"error": "No published site under '" + str(sub)[:40] + "'."}
+    if (cur.get("owner") or "").lower() != (email or "").lower() and not is_admin(email):
+        return {"error": "Only the owner can attach a domain to that site."}
+    if domain and not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+", domain):
+        return {"error": "That does not look like a valid domain (e.g. mystudio.com)."}
+    reg[sub]["custom_domain"] = domain
+    _sites_save(reg)
+    for h in list(_SITE_HOST_CACHE):
+        _SITE_HOST_CACHE.pop(h, None)
+    try:
+        if key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY"):
+            http_fetch(key("SUPABASE_URL").rstrip("/") + "/rest/v1/published_sites_meta", method="POST",
+                       headers=dict(_site_headers(), **{"Prefer": "return=minimal, resolution=merge-duplicates"}),
+                       json_body=dict({"sub": sub, "owner": reg[sub].get("owner", ""),
+                                       "name": reg[sub].get("name", ""),
+                                       "source_slug": reg[sub].get("source_slug", ""),
+                                       "published_at": reg[sub].get("published_at", ""),
+                                       "hits": int(reg[sub].get("hits") or 0),
+                                       "custom_domain": domain}, ), timeout=15)
+    except Exception:
+        pass
+    if not domain:
+        return {"ok": True, "note": "Custom domain removed — the site stays live on its OraCool subdomain."}
+    return {"ok": True, "domain": domain,
+            "note": "Attached. At your domain registrar, add a CNAME for 'www' pointing to oracoolai.com "
+                    "and an A/ALIAS record for '@' pointing to oracoolai.com — once DNS resolves (minutes to "
+                    "hours), https://" + domain + " serves your site automatically. Keep the subdomain live too."}
+
+
+def sites_list(email):
+    reg = _sites_load()
+    out = []
+    for s, v in sorted(reg.items()):
+        if email and (v.get("owner") or "").lower() != email and not is_admin(email):
+            continue
+        out.append({"sub": s, "url": "https://" + s + ".oracoolai.com/", "path_url": "/sites/" + s + "/",
+                    "name": v.get("name") or s, "source_slug": v.get("source_slug") or "",
+                    "published_at": v.get("published_at") or "", "hits": int(v.get("hits") or 0),
+                    "custom_domain": v.get("custom_domain") or "", "template": v.get("template") or ""})
+    return {"ok": True, "sites": out[:50]}
+
+
+def site_host_lookup(host):
+    """Map an incoming Host header to a published sub (subdomain or custom domain)."""
+    host = (host or "").split(":")[0].strip().lower()
+    if not host:
+        return None
+    now = time.time()
+    hit = _SITE_HOST_CACHE.get(host)
+    if hit and hit[1] > now:
+        return hit[0]
+    sub = None
+    if host.endswith(".oracoolai.com"):
+        cand = host[: -len(".oracoolai.com")]
+        if _sub_valid(cand) and cand in _sites_load():
+            sub = cand
+        elif _sub_valid(cand) and site_exists(cand):
+            sub = cand
+    elif host not in ("oracoolai.com", "www.oracoolai.com"):
+        reg = _sites_load()
+        for s, v in reg.items():
+            if (v.get("custom_domain") or "") == host:
+                sub = s
+                break
+        if sub is None and "." in host and key("SUPABASE_URL"):
+            m = site_sup_meta("custom_domain", host)
+            if m and m.get("sub"):
+                sub = str(m["sub"])
+    _SITE_HOST_CACHE[host] = (sub, now + (60 if sub else 300))
+    return sub
+
+
+def site_serve(self, sub, rel):
+    """Stream a published site's file (index.html at '/'), counting page hits."""
+    root = os.path.normpath(os.path.join(_SITES_DIR, sub))
+    if not os.path.isdir(root) and not site_hydrate(sub):
+        self.send_error(404, "not published")
+        return
+    rel = urllib.parse.unquote(rel or "/")
+    full = os.path.normpath(os.path.join(root, rel.lstrip("/")))
+    if not full.startswith(root):
+        self.send_error(404)
+        return
+    if full == root or os.path.isdir(full):
+        full = os.path.join(full, "index.html")
+    elif not os.path.exists(full):
+        alt = full + ".html"
+        full = alt if os.path.exists(alt) else os.path.join(root, "index.html")
+    try:
+        with open(full, "rb") as f:
+            data = f.read()
+    except OSError:
+        self.send_error(404)
+        return
+    ext = os.path.splitext(full)[1].lower()
+    ctype = {".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "application/javascript",
+             ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
+             ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon",
+             ".txt": "text/plain", ".md": "text/plain", ".xml": "application/xml",
+             ".webmanifest": "application/manifest+json", ".woff2": "font/woff2"}.get(ext, "application/octet-stream")
+    if ext in (".html", ""):
+        try:
+            reg = _sites_load()
+            if sub in reg:
+                reg[sub]["hits"] = int(reg[sub].get("hits") or 0) + 1
+                _sites_save(reg)
+        except Exception:
+            pass
+    self.send_response(200)
+    self.send_header("Content-Type", ctype)
+    self.send_header("Content-Length", str(len(data)))
+    self.send_header("Cache-Control", "no-cache, must-revalidate")
+    self.send_header("X-Frame-Options", "ALLOWALL")
+    self.end_headers()
+    try:
+        self.wfile.write(data)
+    except Exception:
+        pass
+
 
 def gen_image(prompt, aspect_ratio="1:1"):
     """Text-to-image cascade: NexaAPI (creator's primary) → HiAPI → TokenMix →
@@ -4770,7 +5393,9 @@ def get_config():
                     "alpaca_ready": bool(key("ALPACA_PAPER_KEY_ID") and key("ALPACA_PAPER_SECRET"))},
         "plans": [{"id": pid, "label": p["label"], "price_usd": p["price_usd"],
                    "price_ngn": p["price_ngn"], "days": p["days"], "rank": TIER_RANK[pid],
-                   "custom": bool(p.get("custom"))}
+                   "custom": bool(p.get("custom")),
+                   "coins_wk": int(p.get("coins_wk") or 0),
+                   "coins_unlimited": bool(p.get("coins_unlimited"))}
                   for pid, p in PLANS.items()],
         "tiers": list(TIER_RANK.keys()),
         "nasa_ready": bool(key("NASA_API_KEY")),
@@ -4791,7 +5416,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch26-ui",
+        "build": "patch27-sites",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -4930,10 +5555,17 @@ def plan_info(body):
     tier = check_tier(email) if email else "free"
     plans = [{"id": pid, "label": p["label"], "price_usd": p["price_usd"],
               "price_ngn": p["price_ngn"], "days": p["days"], "rank": TIER_RANK[pid],
-              "custom": bool(p.get("custom"))}
+              "custom": bool(p.get("custom")),
+              "coins_wk": int(p.get("coins_wk") or 0),
+              "coins_unlimited": bool(p.get("coins_unlimited"))}
              for pid, p in PLANS.items()]
     plans.sort(key=lambda x: x["rank"])
+    for x in plans:
+        x["sites_wk"] = (10 ** 9 if x["coins_unlimited"]
+                         else x["coins_wk"] // COIN_COST_BUILD)
     return {"tier": tier, "email": email, "plans": plans,
+            "coins": {"free_weekly": COINS_WEEKLY["free"], "cost_build": COIN_COST_BUILD,
+                      "state": coins_state(email) if email else None},
             "note": "Admins receive full Enterprise access automatically."}
 
 # ============================================ connectors, alerts & gateway (24/7 platform)
@@ -5728,9 +6360,27 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         return []
     low = t.lower()
     out = []
-    # patch26b: build intent computed FIRST — a "build/create/make a website/app"
-    # message must never also fire image generation (or other colliding tools)
-    _mb = re.search(r"\b(?:build|create|make|design|generate)\s+(?:[\w\x27]+\s+){0,2}?(?:website|web\s*site|web\s*app|landing\s*page|site|app|portfolio|shop|store|page)\b", low)
+    # patch27: site intent computed FIRST and BROAD — any build/create/design +
+    # website-ish phrase must run the builder only (never images). Modifier words
+    # (for/of/with/…) end the object, so "design a logo for my website" stays an
+    # IMAGE request, while "create a stunning modern landing page" is a BUILD.
+    _mb = re.search(r"\b(?:build|create|make|design|generate|code|develop)\s+(?:me\s+)?(?:an?\s+|the\s+|my\s+)?"
+                    r"(?:(?!(?:for|of|with|that|which|about|using|out|into)\b)[\w\x27-]+\s+){0,4}?"
+                    r"(?:website|web\s*site|web\s*app|webapp|web\s*page|webpage|homepage|landing\s*page|"
+                    r"site|app|apps|portfolio|online\s*store|e-?commerce|shop|store|blog|dashboard)\b", low)
+    _site_ish = (bool(re.search(r"\b(?:web ?site|web ?app|webapp|web ?page|webpage|homepage|landing page|"
+                                r"online store|e-?commerce|portfolio|dashboard)\b", low))
+                 and bool(re.search(r"\b(?:build|create|make|design|generate|code|develop|launch|rebuild|redesign)\b", low))
+                 and not re.search(r"\b(?:images?|pictures?|photos?|art|artwork|logos?|posters?|banners?|icons?|"
+                                    r"graphics?|illustrations?|drawings?|renders?|avatars?|wallpapers?|mockups?|"
+                                    r"flyers?|videos?|clips?|animations?)\b", low))
+    # questions about building ("how do I make money with e-commerce") are NOT build commands
+    _ask = bool(re.match(r"^\s*(?:(?:please|pls|hey|hi|hello|yo|ok|okay|so|now|also|and|just)[\s,]+)*"
+                          r"(?:how|what|why|when|who|which|can|could|should|would|tell|explain|difference)\b", low))
+    _wants = (_mb or _site_ish) and not _ask
+    # a HOW-TO question with no explicit media noun is conversation, not a render job
+    _no_media_ask = _ask and not re.search(r"\b(?:images?|pictures?|photos?|art|artwork|logo|poster|drawing|"
+                                           r"wallpaper|render|avatar|mockup|videos?|clips?)\b", low)
     # community chat access (every tier — the AI reads THIS user's own community)
     if any(k in low for k in ("community", "my chats", "my chat", "my messages", "my message",
                               "my dms", "my dm", "direct messages", "check my chat", "check my community",
@@ -5903,29 +6553,45 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             q = " ".join(q.split())[:50] or "earth"
             out.append({"tool": "space", "label": "NASA library · " + q, "result": _shrink(space_library(q))})
         # image creation straight from chat
-        im = re.search(r"(?:generate|create|make|draw|imagine|show me)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
-        if im and any(k in low for k in ("generate", "create", "make", "draw", "imagine")) \
-                and not (_mb and len(t) > 8):
+        im = re.search(r"(?:generate|create|make|draw|imagine|design|show me)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
+        if im and any(k in low for k in ("generate", "create", "make", "draw", "imagine", "design")) \
+                and not (_wants and len(t) > 8) and not _no_media_ask:
             prompt = im.group(1).strip().rstrip("?!., ")
             if prompt:
                 r = gen_image(prompt)
                 out.append({"tool": "image", "label": "image · " + prompt[:40],
                             "result": _shrink(r, 1200)})
 
-    # Arena-style app builder (every tier, 10/day)
-    mb = _mb
-    if mb and len(t) > 8:
+    # Arena-style app builder — coin-metered (patch27), takes over the message
+    if _wants and len(t) > 8:
+        mb = _mb
         _bn = ""
-        _mn = re.search(r"(?:called|named)\s+\"?([A-Za-z0-9 _-]{2,40})\"?", t, re.I)
+        _mn = re.search(r"(?:called|named)\s+\"?([A-Za-z0-9 &.\'-]{2,40})\"?", t, re.I)
         if _mn:
             _bn = _mn.group(1)
-        else:
+        elif mb:
             _after = t[mb.end():].strip().lstrip(" ,").strip()
             if _after and len(_after) < 60 and not re.search(r"\b(with|that|which|using|about|for|on|by|and)\b", _after):
                 _bn = _after
-        _br = t[:mb.end()] + t[mb.end():][:400]
+        _br = (t[:mb.end()] + t[mb.end():][:400]) if mb else t[:400]
         out.append({"tool": "build", "label": "build · " + (_bn or "website")[:30],
                     "result": _shrink(build_site(email, _bn or "my-site", _br), 1500)})
+    # publish a built site to <sub>.oracoolai.com (free, instant — patch27)
+    if email and not _wants and re.search(r"\b(?:publish|go live|goes live|make it live|put it online|host it)\b", low) \
+            and "github" not in low:
+        try:
+            _bm = _builds_load()
+            _mine = [s for s, v in _bm.items() if (v.get("owner") or "").lower() == (email or "").lower()]
+            if _mine:
+                _sm = re.search(r"publish\s+(?:my\s+)?(?:site\s+|build\s+)?([a-z0-9][a-z0-9-]{2,39})", low)
+                _sl = _sm.group(1) if (_sm and _sm.group(1) in _mine) else \
+                    sorted(_mine, key=lambda s: (_bm[s].get("t") or ""), reverse=True)[0]
+                _dm = re.search(r"\b(?:at|as|on)\s+([a-z0-9][a-z0-9-]{2,38})\b", low)
+                _sb = _dm.group(1) if _dm else ""
+                out.append({"tool": "publish", "label": "publish · " + _sl[:30],
+                            "result": _shrink(site_publish(email, _sl, _sb), 900)})
+        except Exception:
+            pass
     # GitHub: connect / repos / push a built site to the user's own account
     if email and re.search(r"\bgithub\b", low):
         if re.search(r"\b(connect|link|add)\b", low) and re.search(r"token|pat|account", low):
@@ -6205,8 +6871,9 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     if not tier_gte(tier, "pro"):
         if any(k in low for k in ("shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck")):
             _locked("deep OSINT (Shodan / VirusTotal / AbuseIPDB / URLScan / LeakCheck)", "pro")
-        im2 = re.search(r"(?:generate|create|make|draw|imagine)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
-        if im2 and any(k in low for k in ("generate", "create", "make", "draw", "imagine", "image", "picture")):
+        im2 = re.search(r"(?:generate|create|make|draw|imagine|design)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
+        if im2 and any(k in low for k in ("generate", "create", "make", "draw", "imagine", "design", "image", "picture")) \
+                and not _wants and not _no_media_ask:
             _locked("image creation", "pro")
     if not tier_gte(tier, "ultra"):
         if any(k in low for k in ("video", "clip", "animation", "film")):
@@ -7599,6 +8266,33 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
+        # ---- patch27: published sites — https://<sub>.oracoolai.com or /sites/<sub>/
+        try:
+            _ph = (self.headers.get("Host") or "").split(":")[0].strip().lower()
+            if _ph.endswith(".oracoolai.com"):
+                _cand = _ph[: -len(".oracoolai.com")]
+                if _sub_valid(_cand):
+                    if site_exists(_cand):
+                        site_serve(self, _cand, path or "/")
+                    else:
+                        self.send_error(404, "no site published at that subdomain")
+                    return
+            elif _ph and _ph not in ("oracoolai.com", "www.oracoolai.com") and "." in _ph \
+                    and not _ph.endswith(("onrender.com", "render.com", "e2b.app", "localhost", "127.0.0.1")):
+                _csub = site_host_lookup(_ph)
+                if _csub:
+                    site_serve(self, _csub, path or "/")
+                    return
+            elif path.startswith("/sites/"):
+                _seg = path[len("/sites/"):].split("/", 1)
+                if _seg and _sub_valid(_seg[0]):
+                    if site_exists(_seg[0]):
+                        site_serve(self, _seg[0], ("/" + _seg[1]) if len(_seg) > 1 else "/")
+                    else:
+                        self.send_error(404, "no site published at that address")
+                    return
+        except Exception:
+            pass
         if path == "/":
             self._send_file(os.path.join(BASE_DIR, "landing.html"), "text/html; charset=utf-8")
         elif path in ("/app", "/app/", "/index.html"):
@@ -7736,7 +8430,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch26-ui",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch27-sites",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -7762,7 +8456,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "This account is suspended by an administrator. Access is locked until an administrator lifts the block.",
                                  "suspended": True, "blocked": True}, 403)
                 return
-        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/comms/", "/api/community/", "/api/builds", "/api/github")) or path in ("/api/image", "/api/video")
+        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/comms/", "/api/community/", "/api/builds", "/api/sites", "/api/coins", "/api/github")) or path in ("/api/image", "/api/video")
         if protected:
             em = request_identity(self, body, require_supabase=path.startswith(("/api/voice/", "/api/comms/")))
             if not em:
@@ -7906,11 +8600,24 @@ class Handler(BaseHTTPRequestHandler):
                 _bm = (body.get("message") or body.get("brief") or "").strip()
                 _bname = (body.get("name") or "").strip()
                 if not _bname:
-                    _mn = re.search(r"(?:called|named)\s+\"?([A-Za-z0-9 _-]{2,40})\"?", _bm, re.I)
+                    _mn = re.search(r"(?:called|named)\s+\"?([A-Za-z0-9 &.\'-]{2,40})\"?", _bm, re.I)
                     _bname = _mn.group(1) if _mn else "my-site"
                 self._send_json(build_site(body.get("email"), _bname, _bm or _bname))
             elif path == "/api/builds/list":
                 self._send_json(build_list(body.get("email")))
+            elif path == "/api/sites":
+                _act = str(body.get("action") or "list").strip().lower()
+                _em = body.get("email") or ""
+                if _act == "publish":
+                    self._send_json(site_publish(_em, str(body.get("slug") or ""), str(body.get("sub") or "")))
+                elif _act == "unpublish":
+                    self._send_json(site_unpublish(_em, str(body.get("sub") or "")))
+                elif _act == "domain":
+                    self._send_json(site_domain_set(_em, str(body.get("sub") or ""), str(body.get("domain") or "")))
+                else:
+                    self._send_json(sites_list(_em))
+            elif path == "/api/coins":
+                self._send_json(coins_state(body.get("email") or ""))
             elif path == "/api/github":
                 _act = str(body.get("action") or "").strip()
                 _em = body.get("email") or ""
@@ -8882,6 +9589,14 @@ class Handler(BaseHTTPRequestHandler):
                     if t.get("tool") == "build" and tr.get("url"):
                         ts["url"] = tr["url"]; ts["name"] = tr.get("name") or ""
                         ts["files"] = tr.get("files") or []
+                        ts["slug"] = tr.get("slug") or ""
+                        ts["template"] = tr.get("template") or ""
+                        ts["coins_left"] = tr.get("coins_left")
+                        ts["coins_spent"] = tr.get("coins_spent")
+                    if t.get("tool") == "publish" and tr.get("ok"):
+                        ts["url"] = tr.get("url")
+                        ts["sub"] = tr.get("sub")
+                        ts["path_url"] = tr.get("path_url")
                     if t.get("tool") == "github_push":
                         if tr.get("url"):
                             ts["url"] = tr["url"]

@@ -275,13 +275,47 @@ declare
 begin
     foreach t in array array['comm_profiles','comm_rooms','comm_members','comm_messages',
                              'comm_reports','comm_cases','comm_contacts','comm_read_state',
-                             'comm_room_reports','comm_games']
+                             'comm_room_reports','comm_games','published_sites','published_sites_meta']
     loop
         execute format('alter table public.%I enable row level security', t);
         execute format('drop policy if exists "public_read" on public.%I', t);
     end loop;
 end;
 $$;
+
+
+-- --------------------------------------- 13. Building coins + published sites (patch27)
+-- Weekly build-coin wallet mirrored onto the user record (1,000,000 coins/week free;
+-- a site build costs 10,000). Stored as JSON text so it survives redeploys.
+do $$ begin
+    execute 'alter table public.user_flags add column if not exists coins text';
+exception when undefined_table then
+    create table public.user_flags (email text primary key, coins text);
+end $$;
+
+-- One row per file of a published site. Serving flow: local disk cache first;
+-- on a fresh deploy (empty disk) the server hydrates these rows back to disk.
+create table if not exists public.published_sites (
+    sub     text not null,
+    path    text not null,
+    content text not null,
+    primary key (sub, path)
+);
+create index if not exists published_sites_sub_idx on public.published_sites (sub);
+
+-- Registry of published sites (who owns what, hit counts, attached custom domain).
+create table if not exists public.published_sites_meta (
+    sub          text primary key,
+    owner        text not null default '',
+    name         text not null default '',
+    source_slug  text not null default '',
+    published_at text not null default '',
+    hits         bigint not null default 0,
+    custom_domain text not null default ''
+);
+
+comment on table public.published_sites is
+    'Files of websites users published to <sub>.oracoolai.com (durable across redeploys).';
 
 -- ============================================================  DONE  ========
 -- After running this, everything is live: usernames, OraCool numbers,
