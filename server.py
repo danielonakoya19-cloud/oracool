@@ -4791,7 +4791,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch25-build",
+        "build": "patch26-ui",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -7635,6 +7635,34 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self.send_error(404)
                 return
+            # patch26: manifest for the in-chat code workspace (file list + sizes)
+            if _rel.endswith("manifest.json") and "/" not in _rel[:-len("manifest.json")].rstrip("/"):
+                _bdir = os.path.dirname(_full)
+                if not os.path.isdir(_bdir):
+                    self.send_error(404)
+                    return
+                _mfiles = []
+                if os.path.isdir(_bdir):
+                    for _mroot, _mdirs, _mnames in os.walk(_bdir):
+                        for _mn in _mnames:
+                            _mf = os.path.join(_mroot, _mn)
+                            _mrp = os.path.relpath(_mf, _bdir).replace(os.sep, "/")
+                            if _mrp == "manifest.json" or _mrp.endswith(".zip"):
+                                continue
+                            try:
+                                _mfiles.append({"path": _mrp, "size": os.path.getsize(_mf)})
+                            except OSError:
+                                pass
+                _mfiles.sort(key=lambda f: f["path"])
+                _mj = json.dumps({"ok": True, "slug": _rel[:-len("manifest.json")].rstrip("/"),
+                                  "files": _mfiles, "total": sum(f["size"] for f in _mfiles)})
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(_mj)))
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(_mj.encode("utf-8"))
+                return
             if os.path.isdir(_full):
                 _full = os.path.join(_full, "index.html")
             if os.path.exists(_full) and os.path.isfile(_full):
@@ -7704,7 +7732,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch25-build",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch26-ui",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())

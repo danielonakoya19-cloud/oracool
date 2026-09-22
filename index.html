@@ -685,12 +685,16 @@
         <div class="chiprow" id="chips"></div>
         <div id="coreChip" style="display:none;margin:4px 10px 0;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--cyan2)"></div>
         <div id="fileChips" style="display:none;flex-wrap:wrap;gap:2px;margin:4px 10px 0"></div>
-        <div class="gpt-input">
-          <button class="iconbtn" id="attachBtn" title="Attach a file (PDF, Word, Excel, text, code…)">📎</button>
-          <input type="text" class="chatinput" id="input" placeholder="Ask OraCool anything…" autocomplete="off">
-          <button class="iconbtn" id="chatEmoji" title="Emoji">😀</button>
-          <button class="iconbtn" id="micBtn" title="Speak to OraCool">🎙️</button>
-          <button class="gpt-send" id="sendBtn" title="Send">↑</button>
+        <div class="gpt-input big">
+          <textarea class="chatinput" id="input" placeholder="What would you like to do?" rows="2" autocomplete="off"></textarea>
+          <div class="gpt-actions">
+            <button class="iconbtn" id="attachBtn" title="Attach a file (PDF, Word, Excel, text, code…)">📎</button>
+            <button class="iconbtn" id="chatEmoji" title="Emoji">😀</button>
+            <button class="iconbtn" id="micBtn" title="Speak to OraCool">🎙️</button>
+            <span class="gpt-spacer"></span>
+            <span class="gpt-hint">Enter ↵ to send · Shift+Enter = new line</span>
+            <button class="gpt-send" id="sendBtn" title="Send">↑</button>
+          </div>
           <input type="file" id="fileInput" style="display:none" multiple>
         </div>
       </div>
@@ -976,7 +980,7 @@ function showBlockedScreen(info){
 function hideBlockedScreen(){
   const el=$('#blockedScreen'); if(el) el.classList.remove('open');
   if(blockedPoll){ clearInterval(blockedPoll); blockedPoll=null; }
-  const inp=$('#input'); if(inp){ inp.disabled=false; inp.placeholder='Ask anything…'; }
+  const inp=$('#input'); if(inp){ inp.disabled=false; inp.placeholder='What would you like to do?'; }
 }
 async function checkBlockedStatus(manual){
   if(!session) return false;
@@ -1284,12 +1288,95 @@ function buildCard(x){
     '<button class="btn ghost small" style="min-height:40px" id="bFull">⛶ Full screen</button>'+
     '<a class="btn ghost small" style="min-height:40px" href="'+escapeHtml(x.url)+'download.zip" download>📦 Download zip</a>'+
     '<button class="btn primary small" style="min-height:40px" id="bDeploy">🚀 How to deploy</button>'+
+    '<button class="btn ghost small" style="min-height:40px" id="bCode">📄 View code</button>'+
     '<button class="btn ghost small" style="min-height:40px" id="bGithub">🐙 Push to GitHub</button></div>'+
     '<div class="hint" style="margin-top:8px">Built files: '+(x.files?x.files.map(escapeHtml).join(', '):'index.html')+'. The preview is a live page served from OraCool.</div></div>';
   chat.appendChild(d); scrollChat();
   d.querySelector('#bFull').onclick=()=>window.open(x.url,'_blank');
   d.querySelector('#bDeploy').onclick=()=>deployModal(x.url, x.name||'my-site');
+  d.querySelector('#bCode').onclick=()=>codeModal(x);
   d.querySelector('#bGithub').onclick=()=>deployModal(x.url, x.name||'my-site', true);
+}
+function codeModal(x){
+  let m=document.getElementById('codeOv'); if(m) m.remove();
+  const base=(x.url||'').replace(/\/?$/,'/');
+  const icons={html:'🌐',htm:'🌐',css:'🎨',js:'⚡',mjs:'⚡',cjs:'⚡',json:'📊',svg:'🖼️',png:'🖼️',jpg:'🖼️',jpeg:'🖼️',gif:'🖼️',webp:'🖼️',ico:'🖼️',md:'📝',txt:'📝'};
+  const ic=f=>{ const e=(f.split('.').pop()||'').toLowerCase(); return icons[e]||'📄'; };
+  m=document.createElement('div'); m.id='codeOv'; m.className='modal open codeov';
+  m.innerHTML='<div class="modalcard codecard">'+
+    '<div class="cws-head">'+
+      '<div class="cws-title">📁 <span class="cws-eyebrow">WORKSPACE</span> <b>'+escapeHtml(x.name||'my-site')+'</b></div>'+
+      '<div class="cws-stats" id="cwsStats">Loading files…</div>'+
+      '<button class="btn ghost small" id="cwsRefresh" title="Refresh">⟳</button>'+
+      '<button class="btn ghost small" id="cwsClose" title="Close">✕</button>'+
+    '</div>'+
+    '<div class="cws-body">'+
+      '<div class="cws-tree" id="cwsTree"></div>'+
+      '<div class="cws-code">'+
+        '<div class="cws-codehead" id="cwsCodeHead" style="display:none"></div>'+
+        '<div class="cws-empty" id="cwsEmpty">Select a file on the left to read its code — every file of the website you asked for.</div>'+
+        '<pre class="cws-pre" id="cwsPre" style="display:none"><code id="cwsCode"></code></pre>'+
+      '</div>'+
+    '</div>'+
+    '<div class="cws-foot muted">This is the real code of your site — inspect it, learn from it, or download any file.</div>'+
+  '</div>';
+  document.body.appendChild(m);
+  const tree=document.getElementById('cwsTree');
+  let FILES=(x.files&&x.files.length)?x.files.slice():['index.html'];
+  function renderTree(){
+    const items=[];
+    const seenDir=new Set();
+    FILES.slice().sort((a,b)=>a.localeCompare(b)).forEach(p=>{
+      const parts=p.split('/');
+      for(let i=1;i<parts.length;i++){
+        const dname=parts.slice(0,i).join('/')+'/';
+        if(!seenDir.has(dname)){ seenDir.add(dname); items.push({dir:true,name:parts[i-1],path:dname,depth:i-1}); }
+      }
+      items.push({file:true,name:parts[parts.length-1],path:p,depth:parts.length-1});
+    });
+    tree.innerHTML=items.map(it=>{
+      if(it.dir) return '<div class="cws-node cws-dir" style="padding-left:'+(10+it.depth*14)+'px">📁 '+escapeHtml(it.name)+'</div>';
+      return '<div class="cws-node cws-file" data-path="'+escapeHtml(it.path)+'" style="padding-left:'+(10+it.depth*14)+'px">'+ic(it.name)+' <span>'+escapeHtml(it.name)+'</span><span class="cws-sz" data-sz="'+escapeHtml(it.path)+'"></span></div>';
+    }).join('');
+    tree.querySelectorAll('.cws-file').forEach(n=>{ n.onclick=()=>showFile(n.getAttribute('data-path')); });
+  }
+  function fmtKB(n){ return n>=1048576?(n/1048576).toFixed(1)+' MB':(n>=1024?(n/1024).toFixed(1)+' KB':n+' B'); }
+  async function loadManifest(){
+    try{
+      const r=await fetch(base+'manifest.json');
+      if(r.ok){
+        const j=await r.json();
+        if(j&&j.files&&j.files.length){
+          FILES=j.files;
+          document.getElementById('cwsStats').textContent=FILES.length+' file'+(FILES.length===1?'':'s')+' · '+fmtKB(j.total||0);
+          const szmap={}; j.files.forEach(f=>{ szmap[f.path]=fmtKB(f.size); });
+          tree.querySelectorAll('[data-sz]').forEach(el=>{ el.textContent=szmap[el.getAttribute('data-sz')]||''; });
+          renderTree();
+          return;
+        }
+      }
+    }catch(e){}
+    document.getElementById('cwsStats').textContent=FILES.length+' file'+(FILES.length===1?'':'s');
+  }
+  async function showFile(p){
+    const head=document.getElementById('cwsCodeHead'), pre=document.getElementById('cwsPre'),
+          code=document.getElementById('cwsCode'), empty=document.getElementById('cwsEmpty');
+    tree.querySelectorAll('.cws-file').forEach(n=>n.classList.toggle('on', n.getAttribute('data-path')===p));
+    empty.style.display='none'; pre.style.display='block'; head.style.display='flex';
+    code.textContent='Loading ' + p + ' …';
+    head.innerHTML='<span class="cws-fname">'+ic(p)+' '+escapeHtml(p)+'</span>'+
+      '<a class="cws-dl" href="'+escapeHtml(base)+encodeURIComponent(p)+'" download target="_blank" rel="noopener">⬇ Download</a>';
+    try{
+      const r=await fetch(base+encodeURIComponent(p));
+      code.textContent=r.ok?await r.text():'— this file could not be loaded —';
+    }catch(e){ code.textContent='— this file could not be loaded —'; }
+    pre.scrollTop=0;
+  }
+  renderTree(); loadManifest();
+  document.getElementById('cwsRefresh').onclick=()=>{ renderTree(); loadManifest(); };
+  const close=()=>m.remove();
+  document.getElementById('cwsClose').onclick=close;
+  m.addEventListener('click', e=>{ if(e.target===m) close(); });
 }
 function githubPushCard(x){
   const d=document.createElement('div'); d.className='msg ai';
@@ -1898,7 +1985,9 @@ async function send(text){
   busy=false; $('#sendBtn').disabled=false; scrollChat(); setOrbStatus('online'); if(window.OraVoice)window.OraVoice.resume();
 }
 $('#sendBtn').onclick=()=>send($('#input').value);
-$('#input').addEventListener('keydown',e=>{ if(e.key==='Enter')send($('#input').value); });
+$('#input').addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send($('#input').value); } });
+// patch26: auto-grow the big typing box
+const _bigInp=$('#input'); if(_bigInp){ _bigInp.addEventListener('input',function(){ try{ this.style.height='auto'; this.style.height=Math.min(this.scrollHeight, Math.floor(window.innerHeight*0.4))+'px'; }catch(e){} }); }
 $('#input').addEventListener('input', predictIntent);
 $('#attachBtn').onclick=()=>$('#fileInput').click();
 $('#fileInput').addEventListener('change',async ()=>{

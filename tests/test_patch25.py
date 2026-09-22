@@ -37,7 +37,7 @@ def read(name):
 # ---------------------------------------------------------------- markers
 
 def test_build_marker_patch25():
-    assert read("server.py").count('"build": "patch25-build"') == 2
+    assert read("server.py").count('"build": "patch26-ui"') == 2
 
 
 # ---------------------------------------------------------------- voice notes
@@ -313,3 +313,26 @@ def test_live_build_site():
     p = os.path.join(server._BUILDS_DIR, r["slug"], "index.html")
     assert os.path.exists(p)
     assert len(open(p).read()) > 500
+
+# ---------------------------------------------------------------- no-stale-app caching
+def test_app_assets_not_stale_cached():
+    import threading, urllib.request
+    srv = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    base = "http://127.0.0.1:%d" % srv.server_address[1]
+    try:
+        def hdrs(path):
+            with urllib.request.urlopen(base + path, timeout=10) as r:
+                return r.headers.get("Cache-Control", "")
+        assert "no-cache" in hdrs("/app"), "app HTML must revalidate"
+        assert "no-cache" in hdrs("/console-layout.css"), "css must revalidate"
+        assert "no-cache" in hdrs("/communications.js"), "js must revalidate"
+        assert "no-cache" in hdrs("/manifest.json"), "manifest must revalidate"
+    finally:
+        srv.shutdown()
+
+def test_sw_cache_bumped_and_purged():
+    sw = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sw.js")).read()
+    assert "oracool-v4" in sw
+    assert "caches.delete" in sw, "activate must purge old cache versions"
