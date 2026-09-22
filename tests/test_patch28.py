@@ -156,3 +156,42 @@ def test_client_links_prefer_the_instant_url():
     assert "vanity link" in html
     # the AI rule must relay the working url, not promise the subdomain
     assert "report exactly that url (oracoolai.com/sites/<sub>/)" in html
+
+
+# ------------------------------------------------------------- patch29 fixes
+
+def test_builder_note_forbids_invented_links():
+    src = open(os.path.join(server.BASE_DIR, "server.py"), encoding="utf-8").read()
+    assert "do NOT invent a " in src and "report the exact url it returns" in src
+    assert "NEVER paste, repeat or wrap up the raw JSON" in src
+
+
+def test_build_name_derived_from_proper_nouns(monkeypatch):
+    """'build a website for Becfom Hotel' (no 'called X') must NOT become my-site."""
+    got = {}
+    def fake_build_site(email, name, brief, **kw):
+        got["name"] = name
+        return {"ok": True, "slug": "becfom-hotel", "url": "/builds/becfom-hotel/",
+                "files": ["index.html"], "note": "x"}
+    monkeypatch.setattr(server, "build_site", fake_build_site)
+    out = server.auto_tools("build a website for Becfom Hotel with rooms and dining",
+                            tier="free", ha_url=None, ha_token=None,
+                            email="p29@example.invalid")
+    assert got.get("name") == "Becfom Hotel", got
+    assert any(t["tool"] == "build" for t in out)
+
+
+def test_publish_picks_the_named_build_not_the_latest(monkeypatch):
+    reg = {"becfom-hotel": {"owner": "p29@example.invalid", "name": "Becfom Hotel",
+                            "t": "2026-09-22T10:00:00"},
+           "my-site": {"owner": "p29@example.invalid", "name": "my-site",
+                       "t": "2026-09-22T11:00:00"}}
+    picked = {}
+    def fake_publish(email, slug, sub=""):
+        picked["slug"] = slug
+        return {"ok": True, "url": "https://oracoolai.com/sites/x/", "sub": "x", "slug": slug}
+    monkeypatch.setattr(server, "_builds_load", lambda: reg)
+    monkeypatch.setattr(server, "site_publish", fake_publish)
+    out = server.auto_tools("publish the becfom site", tier="free", ha_url=None, ha_token=None,
+                            email="p29@example.invalid")
+    assert picked.get("slug") == "becfom-hotel", picked

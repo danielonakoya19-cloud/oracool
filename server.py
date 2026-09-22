@@ -3226,9 +3226,11 @@ def build_site(email, name, prompt):
             "template": template, "files": [f["path"] for f in clean], "provider": prov,
             "coins_spent": COIN_COST_BUILD, "coins_left": coins_left,
             "build_saved": bool(bsaved),
-            "note": "Live preview is in the card above (auto-saved to the account vault — it survives app updates). Tap PUBLISH to put it online at <sub>.oracoolai.com "
-                    "(free, stays live, counts nothing) — or use 'How to deploy' for Netlify / Vercel / GitHub "
-                    "one-click push (Devices → Connectors). Build coins this week show in the header pill."}
+            "note": "Live preview is in the card above (auto-saved to the account vault — it survives app updates). "
+                    "If the user asks to publish, run the publish tool and report the exact url it returns "
+                    "(https://oracoolai.com/sites/<name>/ — opens instantly on every device); do NOT invent a "
+                    "<name>.oracoolai.com link. Publishing is free. 'How to deploy' also offers Netlify / Vercel / "
+                    "GitHub one-click push. Build coins this week show in the header pill."}
 
 
 def build_list(email):
@@ -5555,7 +5557,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch28-vault",
+        "build": "patch29-antifail",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6712,6 +6714,16 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             _after = t[mb.end():].strip().lstrip(" ,").strip()
             if _after and len(_after) < 60 and not re.search(r"\b(with|that|which|using|about|for|on|by|and)\b", _after):
                 _bn = _after
+        if not _bn:
+            # patch29: "build a website for Becfom Hotel" -> use the visible proper-noun run so a
+            # real client site is never buried under the generic "my-site" name
+            _pn = re.search(r"(?:for|of)\s+((?:[A-Z][A-Za-z0-9&'-]+\s?){1,4})(?=[,.\s]|$)", t)
+            if not _pn:
+                _pn = re.search(r"([A-Z][a-z0-9&'-]+(?:\s+[A-Z][a-z0-9&'-]+){1,3})(?=\s*(?:[,.!?]|\s+(?:that|which|is|to|now)\b|$))", t)
+            if _pn:
+                _cand = _pn.group(1).strip().rstrip(".,;:")
+                if _cand not in ("OraCool", "Lagos", "Nigeria") and len(_cand) > 3:
+                    _bn = _cand
         _br = (t[:mb.end()] + t[mb.end():][:400]) if mb else t[:400]
         out.append({"tool": "build", "label": "build · " + (_bn or "website")[:30],
                     "result": _shrink(build_site(email, _bn or "my-site", _br), 1500)})
@@ -6723,8 +6735,22 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             _mine = [s for s, v in _bm.items() if (v.get("owner") or "").lower() == (email or "").lower()]
             if _mine:
                 _sm = re.search(r"publish\s+(?:my\s+)?(?:site\s+|build\s+)?([a-z0-9][a-z0-9-]{2,39})", low)
-                _sl = _sm.group(1) if (_sm and _sm.group(1) in _mine) else \
-                    sorted(_mine, key=lambda s: (_bm[s].get("t") or ""), reverse=True)[0]
+                if _sm and _sm.group(1) in _mine:
+                    _sl = _sm.group(1)
+                else:
+                    # patch29: "publish the becfom site" must find the BECFOM build, not whatever
+                    # was built last (generic builds caused wrong publishes once)
+                    _sl = None
+                    _words = [w for w in re.findall(r"[a-z]{4,}", low)
+                              if w not in ("publish", "website", "online", "make", "site", "build",
+                                            "please", "just", "then", "host", "live", "goes")]
+                    for s in sorted(_mine, key=lambda s: (_bm[s].get("t") or ""), reverse=True):
+                        _nm = (str(_bm[s].get("name") or "") + " " + s).lower()
+                        if any(w in _nm for w in _words):
+                            _sl = s
+                            break
+                    if not _sl:
+                        _sl = sorted(_mine, key=lambda s: (_bm[s].get("t") or ""), reverse=True)[0]
                 _dm = re.search(r"\b(?:at|as|on)\s+([a-z0-9][a-z0-9-]{2,38})\b", low)
                 _sb = _dm.group(1) if _dm else ""
                 out.append({"tool": "publish", "label": "publish · " + _sl[:30],
@@ -7038,7 +7064,10 @@ def tool_context(tools):
     for t in tools:
         parts.append("Tool %s (%s) returned: %s" % (t["tool"], t["label"], t["result"]))
     return ("OraCool just ran these live tools itself. The results below are REAL, current data. "
-            "Answer using them, in your calm JARVIS voice, and mention the key figures.\n\n"
+            "Answer using them, in your calm JARVIS voice, and mention the key figures.\n"
+            "The app ALREADY renders these results to the user as cards (build preview, publish link). "
+            "So NEVER paste, repeat or wrap up the raw JSON in your reply, and NEVER invent a URL: when you "
+            "mention a link, quote the exact url field a tool returned (its 'note' tells you the right one).\n\n"
             + "\n\n".join(parts))
 
 
@@ -8593,7 +8622,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch28-vault",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch29-antifail",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
