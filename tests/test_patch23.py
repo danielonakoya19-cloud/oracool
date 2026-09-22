@@ -31,7 +31,7 @@ def read(name):
 
 def test_build_marker_patch23():
     src = read("server.py")
-    assert src.count('"build": "patch23-device"') == 2
+    assert src.count('"build": "patch24-gemini"') == 2
 
 
 # ---------------------------------------------------------------- media persistence
@@ -288,6 +288,6 @@ def test_local_preview_marker_if_up():
     try:
         with urllib.request.urlopen("http://127.0.0.1:8000/api/health", timeout=3) as r:
             j = json.load(r)
-            assert j.get("build") == "patch23-device"
+            assert j.get("build") == "patch24-gemini"
     except Exception:
         pytest.skip("local preview not running")

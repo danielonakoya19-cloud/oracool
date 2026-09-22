@@ -2656,6 +2656,190 @@ def _agnes_video(prompt, duration=None):
         return {"error": "Video provider request failed (" + type(e).__name__ + ")."}
 
 
+GEMINI_FIX = ("Google project 'oracool ai' (790218512116) is denied access to that model — "
+              "open console.cloud.google.com, select that project, go to APIs & Services → Library, "
+              "enable 'Generative Language API', and link a Billing account (Veo / TTS / image models "
+              "require billing even for free-tier usage). Once enabled it works immediately — no "
+              "OraCool redeploy needed.")
+
+_GEMINI_DENIED_UNTIL = [0.0]
+
+def gemini_key():
+    return (key("GEMINI_API_KEY") or "").strip()
+
+def _gemini_skipped():
+    """A denied project 403s every call — skip Gemini for an hour after a denial."""
+    return time.time() < _GEMINI_DENIED_UNTIL[0]
+
+def _gemini_mark_denied():
+    _GEMINI_DENIED_UNTIL[0] = time.time() + 3600
+
+def _gemini_denied(err):
+    e = (err or "").lower()
+    return "denied access" in e or "permission_denied" in e
+
+def _gemini_post(model, body, timeout=120, path_suffix=":generateContent"):
+    k = gemini_key()
+    if not k:
+        return None, "no key"
+    url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + path_suffix
+    try:
+        _, raw, _ = http_fetch(url, method="POST", timeout=timeout,
+                               headers={"x-goog-api-key": k, "Content-Type": "application/json"},
+                               json_body=body)
+        d = json.loads(raw)
+        if isinstance(d, dict) and d.get("error"):
+            return None, (str(d["error"].get("status", "")) + " " + str(d["error"].get("message", "")))[:200]
+        return d, None
+    except urllib.error.HTTPError as e:
+        try:
+            d = json.loads(e.read() or b"{}")
+            if isinstance(d, dict) and d.get("error"):
+                return None, (str(d["error"].get("status", "")) + " " + str(d["error"].get("message", "")))[:200]
+        except Exception:
+            pass
+        return None, "HTTP " + str(e.code)
+    except Exception as e:
+        return None, str(e)[:160]
+
+def _gemini_text(prompt, model="gemini-flash-lite-latest", image_b64=None, mime="image/jpeg"):
+    parts = []
+    if image_b64:
+        parts.append({"inlineData": {"mimeType": mime, "data": image_b64}})
+    parts.append({"text": prompt})
+    d, err = _gemini_post(model, {"contents": [{"parts": parts}]}, timeout=90)
+    if d is None:
+        if _gemini_denied(err):
+            _gemini_mark_denied()
+        return "", err or "gemini call failed"
+    try:
+        c = d["candidates"][0]["content"]["parts"][0]["text"]
+        return c.strip()[:4000], None
+    except Exception:
+        return "", "unexpected gemini response"
+
+def _gemini_tts(text, voice="Kore"):
+    """Gemini neural TTS → /generated/<id>.mp3. Returns (url_or_None, err_or_None).
+    PCM is 24 kHz 16-bit mono → re-encoded to mp3 with the bundled ffmpeg."""
+    if not gemini_key() or _gemini_skipped():
+        return None, "skipped"
+    for model in ("gemini-2.5-flash-preview-tts", "gemini-3.1-flash-tts-preview"):
+        d, err = _gemini_post(model, {"contents": [{"parts": [{"text": text[:600]}]}],
+                                      "generationConfig": {"responseModalities": ["AUDIO"],
+                                                           "speechConfig": {"voiceConfig": {
+                                                               "prebuiltVoiceConfig": {"voiceName": voice}}}}},
+                               timeout=90)
+        if d is not None:
+            try:
+                for p in d["candidates"][0]["content"]["parts"]:
+                    if "inlineData" in p:
+                        pcm = base64.b64decode(p["inlineData"]["data"])
+                        if len(pcm) > 4000:
+                            import subprocess
+                            import imageio_ffmpeg
+                            fn = os.path.join(_gen_dir(), "gtts-" + secrets.token_hex(6) + ".pcm")
+                            with open(fn, "wb") as f:
+                                f.write(pcm)
+                            mp3 = os.path.join(_gen_dir(), "gtts-" + secrets.token_hex(6) + ".mp3")
+                            subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-f", "s16le",
+                                            "-ar", "24000", "-ac", "1", "-i", fn,
+                                            "-c:a", "libmp3lame", mp3],
+                                           check=True, capture_output=True, timeout=120)
+                            try:
+                                os.remove(fn)
+                            except Exception:
+                                pass
+                            if os.path.getsize(mp3) > 1500:
+                                return "/generated/" + os.path.basename(mp3), None
+            except Exception as e:
+                return None, "tts encode failed: " + str(e)[:80]
+        elif _gemini_denied(err):
+            _gemini_mark_denied()
+            return None, GEMINI_FIX
+    return None, "tts unavailable"
+
+def _gemini_image(prompt):
+    for model in ("gemini-3.1-flash-image", "gemini-3-pro-image"):
+        d, err = _gemini_post(model, {"contents": [{"parts": [{"text": prompt}]}],
+                                      "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]}},
+                              timeout=180)
+        if d is not None:
+            for p in (d.get("candidates", [{}])[0].get("content", {}).get("parts", [])):
+                if "inlineData" in p:
+                    try:
+                        data = base64.b64decode(p["inlineData"]["data"])
+                        mime = (p["inlineData"].get("mimeType") or "image/png").lower()
+                        ext = ".png" if "png" in mime else ".jpg"
+                        fn = os.path.join(_gen_dir(), "gimg-" + secrets.token_hex(6) + ext)
+                        with open(fn, "wb") as f:
+                            f.write(data)
+                        return {"ok": True, "urls": ["/generated/" + os.path.basename(fn)],
+                                "model": model}, None
+                    except Exception as e:
+                        return {"error": "image decode failed: " + str(e)[:80]}, None
+            return {"error": "no image in response"}, None
+        if _gemini_denied(err):
+            _gemini_mark_denied()
+            return {"error": GEMINI_FIX}, GEMINI_FIX
+    return {"error": "gemini image failed"}, "gemini image failed"
+
+def _gemini_veo_video(prompt, duration=8):
+    """Google Veo 3.1 — video with NATIVE synchronized audio. predictLongRunning + poll."""
+    d, err = _gemini_post("veo-3.1-generate-preview",
+                          {"instances": [{"prompt": prompt[:800]}],
+                           "parameters": {"aspectRatio": "16:9", "durationSeconds": duration}},
+                          timeout=60, path_suffix=":predictLongRunning")
+    if d is None:
+        if _gemini_denied(err):
+            _gemini_mark_denied()
+            return {"error": GEMINI_FIX}
+        return {"error": err or "veo submit failed"}
+    op = (d or {}).get("name")
+    if not op:
+        return {"error": "no operation returned by veo"}
+    for _ in range(25):  # up to ~5 minutes
+        time.sleep(12)
+        k = gemini_key()
+        try:
+            _, raw, _ = http_fetch("https://generativelanguage.googleapis.com/v1beta/" + op,
+                                   method="GET", timeout=30, headers={"x-goog-api-key": k})
+            od = json.loads(raw)
+        except Exception as e:
+            return {"error": "veo poll failed: " + str(e)[:100]}
+        if od.get("done"):
+            vid = None
+            try:
+                vid = od["response"]["generateVideoResponse"]["videos"][0].get("uri")
+            except Exception:
+                pass
+            if vid:
+                return {"ok": True, "urls": [vid], "audio": True}
+            e2 = (od.get("error") or {}).get("message", "no video in operation")
+            return {"error": str(e2)[:200]}
+    return {"error": "veo still rendering after 5 minutes — try again"}
+
+def gemini_status():
+    """Live, honest probe of the connected Gemini key (cheap calls only — a Veo
+    job is never started here because that would be a paid generation)."""
+    if not gemini_key():
+        return {"connected": False, "note": "No GEMINI_API_KEY configured."}
+    caps = {}
+    t, err = _gemini_text("Reply with exactly: OK")
+    caps["chat+vision"] = "ok" if t.strip().upper() == "OK" else ("denied — " + GEMINI_FIX if _gemini_denied(err) else "error: " + str(err)[:100])
+    m, terr = _gemini_tts("Status check.")
+    if _gemini_skipped():
+        caps["tts"] = "denied (cached 1h)"
+    else:
+        caps["tts"] = "ok" if m else ("denied" if _gemini_denied(terr) else "unavailable: " + str(terr)[:80])
+    if _gemini_denied(terr) and "denied" not in caps["chat+vision"]:
+        caps["chat+vision"] = "denied — " + GEMINI_FIX
+    caps["image"] = "ready (used on next image request)" if not _gemini_skipped() else "denied (cached 1h)"
+    caps["video_veo31"] = "ready (used on next voice-video request)" if not _gemini_skipped() else "denied (cached 1h)"
+    return {"connected": True, "project": "oracool ai (790218512116)",
+            "capabilities": caps,
+            "note": ("All Gemini engines activate automatically the moment the project is granted access — "
+                     "no redeploy needed. Until then, OraCool keeps using its free/other engines.")}
+
 def gen_image(prompt, aspect_ratio="1:1"):
     """Text-to-image cascade: NexaAPI (creator's primary) → HiAPI → TokenMix →
     Pollinations FLUX → CVRON flux. Provider capacity and free quotas vary;
@@ -2673,6 +2857,14 @@ def gen_image(prompt, aspect_ratio="1:1"):
                 "prompt": prompt, "images": ag["urls"]}
     if ag.get("error") and ag["error"] != "no key":
         failures.append("Agnes: " + str(ag["error"])[:120])
+    # 0b) Google Gemini image (when the key is connected and the project is permitted)
+    if gemini_key() and not _gemini_skipped():
+        gi = _gemini_image(prompt)
+        if gi.get("ok"):
+            return {"ok": True, "provider": "gemini", "model": gi.get("model", "gemini-image"),
+                    "prompt": prompt, "images": gi["urls"]}
+        if gi.get("error"):
+            failures.append("Gemini: " + str(gi["error"])[:140])
     # 1) NexaAPI (sk- key; needs balance)
     nx = _nexa_image(prompt, aspect_ratio)
     if nx.get("ok"):
@@ -2722,7 +2914,12 @@ def gen_image(prompt, aspect_ratio="1:1"):
 
 
 def _tts_narration(text):
-    """Free neural TTS (edge-tts, no key) → /generated/<id>.mp3 or None."""
+    """Neural TTS → /generated/<id>.mp3 or None. Gemini neural voice first
+    (when the Google key is connected and permitted), free edge-tts fallback."""
+    if gemini_key() and not _gemini_skipped():
+        m, err = _gemini_tts(text)
+        if m:
+            return m
     try:
         import asyncio
         import edge_tts
@@ -2774,6 +2971,15 @@ def _gen_video_raw(prompt, duration=None, want_audio=False):
         return {"error": "Prompt too short."}
     want_audio = bool(want_audio)
     failures = []
+    # -1) Google Veo 3.1 — NATIVE synchronized audio (real speech + ambient sound)
+    if want_audio and gemini_key() and not _gemini_skipped():
+        gv = _gemini_veo_video(prompt, duration=8)
+        if gv.get("ok"):
+            return {"ok": True, "provider": "google-veo31", "model": "veo-3.1-generate-preview",
+                    "prompt": prompt, "videos": gv["urls"],
+                    "audio": "native synchronized audio (Google Veo 3.1 — real speech + ambient sound)"}
+        if gv.get("error"):
+            failures.append("Veo 3.1: " + gv["error"][:140])
     # 0) Agnes free video (t2v) — skipped first when audio was requested (silent model)
     if not want_audio:
         ag = _agnes_video(prompt, duration)
@@ -4298,7 +4504,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch23-device",
+        "build": "patch24-gemini",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -5415,6 +5621,11 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 out.append({"tool": "image", "label": "image · " + prompt[:40],
                             "result": _shrink(r, 1200)})
 
+    # Gemini engine status (admin) — honest live report of what the Google key can do
+    if email and is_admin(email) and re.search(r"\b(gemini|google (api|key|model))\b", low) and \
+            any(k in low for k in ("status", "working", "work", "check", "test", "ok", "good", "connect")):
+        out.append({"tool": "gemini_status", "label": "Gemini status",
+                    "result": _shrink(gemini_status(), 1200)})
     # OraCool's OWN mailbox — full access for administrators (owner-granted):
     # read everything (incl. body snippets) and send from the address.
     if email and is_admin(email):
@@ -5742,6 +5953,11 @@ def _xlsx_text(data):
 def _vision_describe(name, mime, data_b64):
     """Best-effort image description through any vision-capable provider key.
     Returns "" when nothing can serve it — never a fabricated description."""
+    if gemini_key() and not _gemini_skipped():
+        gt, gerr = _gemini_text("Describe this image factually for an OSINT analyst: objects, text visible, people-count (no names), scene type, likely edit/screenshot evidence. 3 sentences max.",
+                                model="gemini-flash-lite-latest", image_b64=(data_b64 or "")[:1_400_000], mime=mime or "image/jpeg")
+        if gt and len(gt.strip()) > 20:
+            return gt.strip()
     gk = key("GROQ_API_KEY")
     tries = []
     if gk:
@@ -7127,7 +7343,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch23-device",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch24-gemini",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -8162,6 +8378,14 @@ class Handler(BaseHTTPRequestHandler):
             "voice', 'talking'), OraCool generates the picture (Wan 2.2) and adds a narrated voice track for "
             "free; with HiAPI credits it upgrades to Veo 3.1's native synchronized audio (real speech + "
             "ambient sound). Say which one the clip carries. "
+            "GEMINI ENGINES (Google key connected, project 'oracool ai'): when a capability works, voice videos "
+            "use Google Veo 3.1 (NATIVE synchronized audio), narration uses Gemini neural voices, image analysis "
+            "uses Gemini vision, and image creation can use Gemini. If a Gemini capability reports the project is "
+            "DENIED ACCESS, say exactly what to fix: open console.cloud.google.com → project 'oracool ai' "
+            "(790218512116) → APIs & Services → Library → enable 'Generative Language API' → link a Billing "
+            "account — then it works immediately with no redeploy. Until then the free engines keep working and "
+            "the reply says honestly which engine served the result. Admins can ask 'gemini status' for a live "
+            "per-capability report. "
             "CREATED MEDIA PERSISTS: images and videos the user creates are saved to their media gallery and "
             "kept durably across server redeploys — tell them their creations live in the gallery and survive "
             "updates. "

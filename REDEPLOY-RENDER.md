@@ -471,3 +471,19 @@ Current build: `patch10-admin-only-phone-alarms`. Twilio phone verification, cal
 - **Tests**: `tests/test_patch23.py` (20 tests: durable media upload w/ real bytes, `/generated` route, TTS live, ffmpeg mux live + audio stream check, narration wrapper, mailbox full-read/send guards + admin-only tools + send parsing, camera intent incl. "take my picture", camera honesty prompt, client capture card, build marker) — canonical **13-module suite 189 tests, all green**.
 - Verified live locally: "take my picture" → capture card → real capture (fake camera in CI); "generate a video of a lighthouse in a storm with voice" → single 3.3 s .mp4 with h264 + AAC audio, stored at a permanent Supabase URL.
 - Deploy: Render auto-deploys `main`; confirm the `patch23-device` marker, then connect the OraCool Gmail once (Admin → OraCool-owned accounts) to switch the mailbox from "not connected" to full access.
+
+---
+
+## Patch 24 — Google Gemini key wired in (Veo 3.1 voice video, Gemini TTS, vision, image gen)
+
+- **Build marker** `/api/health` → `patch24-gemini`.
+- **New env var:** `GEMINI_API_KEY` (your Google AI Studio key for project "oracool ai", 790218512116). Set it in **Render → Settings → Environment** (value is in your local `RENDER_ENV.txt` — it is never committed to GitHub). Locally it lives in `keys.json` (also never committed).
+- **What the key unlocks the moment Google grants the project access** (no redeploy needed — the engines probe live on every request and a denial is cached for 1 hour to avoid spamming 403s):
+  - **Voice video:** "generate a video … with voice" first tries **Google Veo 3.1** — video with NATIVE synchronized audio (real speech + ambient sound). If Veo is unavailable, the Wan 2.2 + free-narration path from Patch 23 still delivers a voiced clip.
+  - **Narration quality:** Gemini neural voices are preferred for the narrated voice track, with the free edge-tts voice as automatic fallback.
+  - **Image analysis:** Gemini vision describes uploaded photos first (falling back to the existing vision providers).
+  - **Image creation:** Gemini image engine joins the cascade (after the free Agnes engine).
+  - **Chat check:** admins can ask **"gemini status"** in chat — a live, honest per-capability report (chat+vision / tts / image / video), including the exact fix steps when a capability is denied.
+- **IMPORTANT — current state (2026-09-21):** the key is valid, but Google is currently answering **"Your project has been denied access"** for every model on project 790218512116. To fix it (you, ~2 minutes): open **console.cloud.google.com** → project **"oracool ai"** → **APIs & Services → Library** → enable **Generative Language API** → **Billing** → link a billing account (Veo / TTS / image models require a linked billing account even for free-tier usage). If it still says denied after that, the project's default location may be the cause — set it to a supported region (e.g. "Global" / US) or open a support ticket in AI Studio. Until then, everything keeps running on the existing free/other engines, and chat says honestly which engine served your request.
+- **Tests**: `tests/test_patch24.py` (16 tests: marker, key hygiene (never committed), denial detection + 1h skip cache, status shape, Veo-first cascade, denial fall-through through the real cascade, TTS preference/fallback, image+vision wiring, admin-only status tool, prompt fix text, live honest probe) — canonical **14-module suite all green** (count in the deploy log).
+- Deploy: Render auto-deploys `main`; confirm the `patch24-gemini` marker, then add `GEMINI_API_KEY` to the Render environment (no restart needed — env vars are picked up on the next Render restart, which happens on the deploy itself).
