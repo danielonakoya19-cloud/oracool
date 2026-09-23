@@ -2875,7 +2875,7 @@ function waAttachPop(anchorEl, target){
   if(pop && pop.classList.contains('open')){ closeWaPops(); return; }
   if(!pop){
     pop=document.createElement('div'); pop.id='waAttachPop'; pop.className='wa-pop wa-attach';
-    pop.innerHTML=`<button type="button" data-a="photo">🖼️ <span>Photo</span></button><button type="button" data-a="video">🎬 <span>Video</span></button><button type="button" data-a="voice">🎵 <span>Voice note</span></button><button type="button" data-a="file">📄 <span>Document / file</span></button>`<button type="button" data-a="sticker">🧩 <span>Sticker</span></button>;
+    pop.innerHTML=`<button type="button" data-a="photo">🖼️ <span>Photo</span></button><button type="button" data-a="video">🎬 <span>Video</span></button><button type="button" data-a="voice">🎵 <span>Voice note</span></button><button type="button" data-a="file">📄 <span>Document / file</span></button><button type="button" data-a="sticker">🧩 <span>Sticker</span></button>`;
     document.body.appendChild(pop);
     pop.querySelectorAll('button').forEach(b=>{ b.onclick=()=>commAttachPick(b.dataset.a, target||'dm'); });
   }
