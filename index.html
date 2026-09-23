@@ -2064,6 +2064,7 @@ function predictIntent(){
 }
 
 let busy=false;
+let CHAT_TURN=0;
 async function send(text){
   unlockAudio();
   text=(text||'').trim();
@@ -2071,16 +2072,22 @@ async function send(text){
   if(isBlockedSession()){ showBlockedScreen(); return; }
   const files=pendingFiles.slice(); pendingFiles=[]; renderFileChips();
   if(!text && !files.length) return;
-  if(busy) return;
+  const myTurn=++CHAT_TURN;
+  if(busy){ // patch32: human barge-in — whatever you send interrupts the reply in progress
+    try{ if(window.OraVoice)window.OraVoice.interrupt(); }catch(e){}
+    try{ if(window.__chatAbort)window.__chatAbort(); }catch(e){}
+    try{ speechSynthesis.cancel(); stopWave(); resumeWake(); }catch(e){}
+  }
   if(!files.length && window.OraComms && await window.OraComms.handle(text)){if(window.OraVoice)window.OraVoice.resume();return;}
   if(!files.length){
     const dc=runDeviceCommand(text);
     if(dc.handled){ addUser(text); const m=dc.reply; if(m){ addAI(m); speak(m); } return; }
     if(await trySaveDoc(text)){ addUser(text); return; }
   }
-  busy=true; $('#sendBtn').disabled=true;
+  busy=true; { const _sb=$('#sendBtn'); if(_sb){_sb.disabled=false;_sb.title='Send — interrupts the current reply';} }
   const turnSpeaker=window.OraVoice?window.OraVoice.newTurn():null;
   const chatAbort=new AbortController();
+  window.__chatAbort=()=>{try{chatAbort.abort();}catch(err){}};
   if(window.OraVoice)window.OraVoice.setAbort(()=>chatAbort.abort());
   setOrbStatus('thinking');
   $('#input').value=''; if(!window.OraVoice?.enabled)$('#input').focus();
@@ -2153,7 +2160,7 @@ async function send(text){
     if(turnSpeaker)turnSpeaker.finish(_cleanReply(acc));else speak(acc);
   }catch(e){
     if(turnSpeaker)turnSpeaker.cancel();
-    if(e.name==='AbortError'){body.textContent+=(body.textContent?'\n':'')+'Reply interrupted.';}else{
+    if(e.name==='AbortError'){body.textContent+=(body.textContent?'\n':'')+'Reply interrupted.';}else if(myTurn===CHAT_TURN){
     body.textContent='';
     const m=e.message||String(e);
     if(/api key|AI provider error 400|no credits|insufficient|429/i.test(m))
@@ -2161,8 +2168,7 @@ async function send(text){
     else addErr('⚠️ '+m);
     }
   }
-  if(window.OraVoice)window.OraVoice.setAbort(null);
-  busy=false; $('#sendBtn').disabled=false; scrollChat(); setOrbStatus('online'); if(window.OraVoice)window.OraVoice.resume();
+  if(myTurn===CHAT_TURN){ window.__chatAbort=null; if(window.OraVoice)window.OraVoice.setAbort(null); busy=false; $('#sendBtn').disabled=false; scrollChat(); setOrbStatus('online'); if(window.OraVoice)window.OraVoice.resume(); }
 }
 $('#sendBtn').onclick=()=>send($('#input').value);
 $('#input').addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send($('#input').value); } });
@@ -5477,7 +5483,7 @@ window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); _def
 window.addEventListener('appinstalled', () => { _deferredInstall = null; _pwaHideInstall(); });
 _pwaRefreshInstall();
 </script>
-<script src="/voice-reminders.js"></script>
+<script src="/voice-reminders.js?v=32"></script>
 <script src="/communications.js"></script>
 </body>
 </html>

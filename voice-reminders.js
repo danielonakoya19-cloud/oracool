@@ -23,7 +23,10 @@
   let audioContext=null, analyser=null, vadInterval=null, vadStarted=0, vadLastSound=0;
   let speechQueue=[], activeSpeech=false, speechEpoch=0, streaming=false, oneShot=false;
   let submitted='', submittedAt=0, transcriptTimer=null, lastSuggestion=0;
-  let voiceLocked=false,abortReply=null;
+  let voiceLocked=false,abortReply=null,lastSpoken='';
+  const normTxt=t=>String(t||'').toLowerCase().replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+  function isEcho(t){const n=normTxt(t);if(!n)return true;const s=normTxt(lastSpoken);if(!s)return false;const sw=new Set(s.split(' '));const tw=n.split(' ');let hit=0;for(const w of tw)if(sw.has(w))hit++;return tw.length>1&&hit/tw.length>=0.85;}
+  function interruptTurn(){if(abortReply)abortReply();streaming=false;}
   const toolbar=document.createElement('div');
   toolbar.className='voicebar';
   toolbar.innerHTML=`<div class="row" style="flex-wrap:wrap;gap:7px">
@@ -33,7 +36,7 @@
     <button class="btn ghost" id="alarmToggle">Voice settings</button>
     <span id="hfState" role="status" aria-live="polite">Microphone off</span>
     </div>
-    <div class="hint">Start once, then speak after each reply—no repeated microphone taps. Listening pauses during replies to prevent echoes. Keep this page visible. Browser/device support varies.</div>
+    <div class="hint">Start once, then speak after each reply—no repeated microphone taps. Listening pauses during replies to prevent echoes. Talk over the AI any time — like a real conversation, it stops, listens and answers what you just said. Browser/device support varies.</div>
     <details id="voiceAlarmPanel"><summary>Voice settings & privacy</summary>
       <div style="padding:10px;max-height:380px;overflow:auto">
         <p class="hint">Voice mode sends speech to your browser's recognition service, or short recordings to OraCool's configured transcription provider. OraCool does not save the audio clips. Provider retention terms apply. Stop / mute releases the microphone. A locked phone or hidden browser pauses voice mode.</p>
@@ -95,17 +98,24 @@
     try{await send(text);}finally{resume();}
   }
   async function listen(){
-    if(!enabled||busy||activeSpeech||streaming||document.hidden||voiceLocked)return;
+    if(!enabled||document.hidden||voiceLocked)return;
+    if(capture)return; // a recognizer is already listening — barge-in is handled in its events
     if(!signedIn()){stop('Sign in to resume conversation');return;}
     state('Listening — speak naturally');listening=true;q('#micBtn').classList.add('listening');
     if(SR){
       const r=new SR();capture=r;r.lang=settings.voiceLanguage||'en-NG';r.continuous=true;r.interimResults=true;
       let finals='';
       r.onresult=e=>{
-        if(capture!==r||!enabled||activeSpeech)return;
+        if(capture!==r||!enabled)return;
         let interim='';
         for(let i=e.resultIndex;i<e.results.length;i++){
           if(e.results[i].isFinal)finals+=' '+e.results[i][0].transcript;else interim+=' '+e.results[i][0].transcript;
+        }
+        if(activeSpeech){ // user talking over the AI: stop speaking, take the floor
+          const f=finals.trim();
+          if(f&&!isEcho(f)&&(f.split(/\s+/).length>=2||f.length>6)){cancelSpeech();interruptTurn();accept(f);return;}
+          if(normTxt(interim).split(' ').length>=4&&!isEcho(interim)){cancelSpeech();interruptTurn();}
+          return;
         }
         q('#input').value=(finals+' '+interim).trim();
         clearTimeout(transcriptTimer);
@@ -138,7 +148,7 @@
         state('Transcribing…');
         const blob=new Blob(pieces,{type});
         const data=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.readAsDataURL(blob);});
-        try{const r=await post('/api/voice/transcribe',{audio:data,mime:type});if(!enabled)return;if(r.error){stop(r.error);return;}if(r.text)await accept(r.text);else resume();}
+        try{const r=await post('/api/voice/transcribe',{audio:data,mime:type});if(!enabled)return;if(r.error){stop(r.error);return;}if(r.text&&!isEcho(r.text))await accept(r.text);else resume();}
         catch(e){stop('Transcription unavailable — use text or retry');}
       };
       current.start();vadStarted=Date.now();vadLastSound=vadStarted;
@@ -146,7 +156,7 @@
       vadInterval=setInterval(()=>{
         if(!analyser||current.state!=='recording')return;
         analyser.getByteTimeDomainData(samples);const rms=Math.sqrt(samples.reduce((n,v)=>n+((v-128)/128)**2,0)/samples.length);
-        if(rms>0.018){heard=true;vadLastSound=Date.now();lastUserAt=Date.now();}
+        if(rms>0.018){heard=true;vadLastSound=Date.now();lastUserAt=Date.now();if(activeSpeech&&rms>0.045){cancelSpeech();interruptTurn();}}
         if((heard&&Date.now()-vadLastSound>1000)||Date.now()-vadStarted>12000){clearInterval(vadInterval);vadInterval=null;current.stop();}
       },100);
     }catch(e){releaseMedia();stop('Microphone permission or browser recording unavailable. Use text or retry.');}
@@ -154,14 +164,14 @@
   function resume(delay=350){
     q('#hfInterrupt').disabled=!activeSpeech&&!streaming&&!busy;
     clearTimeout(restart);
-    if(enabled&&!busy&&!activeSpeech&&!speechQueue.length&&!streaming&&!document.hidden&&!voiceLocked)restart=setTimeout(listen,delay);
-    else if(enabled)state(activeSpeech?'Speaking — Interrupt to respond':busy||streaming?'Thinking…':'Conversation paused');
+    if(enabled&&!busy&&!speechQueue.length&&!streaming&&!document.hidden&&!voiceLocked)restart=setTimeout(listen,busy||activeSpeech?900:delay);
+    else if(enabled)state(activeSpeech?'Speaking — just talk over me':busy||streaming?'Thinking…':'Conversation ready');
   }
   function pump(){
     if(activeSpeech||!speechQueue.length)return;
     if(!settings.ttsOn||!('speechSynthesis' in window)){speechQueue=[];resume();return;}
-    pauseCapture();activeSpeech=true;state('Speaking — Interrupt to respond');
-    const epoch=speechEpoch, text=speechQueue.shift();
+    activeSpeech=true;state('Speaking — just talk over me');
+    const epoch=speechEpoch, text=speechQueue.shift();lastSpoken=text;
     const u=new SpeechSynthesisUtterance(text);u.lang=settings.voiceLanguage||'en-NG';u.rate=1.08;
     const chosen=voices.find(v=>v.name===settings.voiceName)||voices.find(v=>(v.lang||'').startsWith(u.lang.slice(0,2)));
     if(chosen)u.voice=chosen;
@@ -174,6 +184,7 @@
   window.OraVoice={
     get enabled(){return enabled;},
     pause:pauseCapture,resume,stop,setAbort(fn){abortReply=fn;},
+    interrupt(){cancelSpeech();interruptTurn();resume();},
     say(text){cancelSpeech();enqueue(text);},
     newTurn(){
       pauseCapture();cancelSpeech();streaming=true;state('Thinking…');
@@ -185,7 +196,7 @@
     }
   };
   q('#hfStart').onclick=()=>start();q('#hfStop').onclick=()=>stop();
-  q('#hfInterrupt').onclick=()=>{if(abortReply)abortReply();cancelSpeech();streaming=false;state('Reply interrupted');resume();};
+  q('#hfInterrupt').onclick=()=>{interruptTurn();cancelSpeech();state('Reply interrupted');resume();};
   q('#micBtn').onclick=()=>enabled?stop():start(true);
   document.addEventListener('visibilitychange',()=>{if(document.hidden&&enabled)stop('Paused when app was hidden. Tap Start to resume.');});
   // Lock/logout must release the microphone; merely hiding the panel is not consent.
