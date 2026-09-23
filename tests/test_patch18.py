@@ -157,6 +157,7 @@ class RoomPermissionsTest(Patch18Base):
     def test_group_owner_only_posting(self):
         r = self.svc.create_room(USER, 'Inner circle', 'group', description='tight')
         slug = r['room']['id']
+        self.svc.room_add_member(USER, slug, self.svc.handle_of('r1@example.test') or 'r1')  # patch31: invited member
         first = self.svc.room_send('r1@example.test', slug, 'hi before lock')
         self.assertFalse(first.get('error'), first)
         toggle = self.svc.room_set_owner_only(USER, slug, True)

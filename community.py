@@ -408,37 +408,44 @@ class Service:
         return self.store.one("comm_rooms", "slug=eq." + slug)
 
     def rooms(self, viewer=None):
+        # patch31: the community is private-by-default. There is no public room
+        # browsing any more — you only ever see groups/channels you own or that
+        # someone added you to. Chats start by sharing OraCool numbers.
         self._need()
         viewer = (viewer or "").lower()
-        pubs = self.store.get("comm_rooms", "kind=in.(room,group,channel)&is_public=eq.true&order=created_at.asc&limit=200")
-        mine = []
+        out = []
         if viewer and viewer != MODERATOR:
+            ids = []
             try:
-                mem = self.store.get("comm_members", "email=eq." + viewer + "&limit=200")
-                if mem:
-                    ids = [m.get("room_id") for m in mem if m.get("room_id")]
-                    if ids:
-                        for i in range(0, len(ids), 40):
-                            chunk = ids[i:i + 40]
-                            q = "id=in.(" + ",".join(chunk) + ")&kind=in.(group,channel)&is_public=eq.false"
-                            mine += self.store.get("comm_rooms", q + "&limit=100")
+                mem = self.store.get("comm_members", "email=eq." + viewer + "&limit=300") or []
+                ids = [m.get("room_id") for m in mem if m.get("room_id")]
             except _StoreError:
-                pass
-        seen, out = set(), []
-        for r in pubs + mine:
-            if not r or r.get("id") in seen:
-                continue
-            seen.add(r.get("id"))
-            owner = self.handle_of(r.get("owner_email") or "") if r.get("owner_email") else None
-            out.append({"id": r.get("slug"), "name": r.get("name"), "about": r.get("description", ""),
-                        "kind": r.get("kind"), "owner": owner,
-                        "banned": bool(r.get("banned")),
-                        "owner_only": bool(r.get("owner_only_post")),
-                        "yours": bool(viewer and (r.get("owner_email") == viewer))})
-        out.sort(key=lambda x: (x["kind"] != "room", x["kind"] != "group", x["name"]))
+                ids = []
+            rows = []
+            for i in range(0, len(ids), 40):
+                chunk = ids[i:i + 40]
+                try:
+                    rows += self.store.get("comm_rooms",
+                                           "id=in.(" + ",".join(chunk) + ")&kind=in.(room,group,channel)&limit=300") or []
+                except _StoreError:
+                    pass
+            seen = set()
+            for r in rows:
+                if not r or r.get("id") in seen:
+                    continue
+                seen.add(r.get("id"))
+                owner = self.handle_of(r.get("owner_email") or "") if r.get("owner_email") else None
+                out.append({"id": r.get("slug"), "name": r.get("name"), "about": r.get("description", ""),
+                            "kind": r.get("kind"), "owner": owner,
+                            "banned": bool(r.get("banned")),
+                            "owner_only": bool(r.get("owner_only_post")),
+                            "yours": bool(r.get("owner_email") == viewer)})
+        out.sort(key=lambda x: (x["kind"] != "group", x["kind"] != "channel", str(x["name"]).lower()))
         return out
 
-    def create_room(self, email, name, kind, description="", is_public=True):
+    def create_room(self, email, name, kind, description="", is_public=False):
+        # patch31: every group/channel is private to its creator; members are
+        # added one by one by OraCool number. (is_public is accepted but ignored.)
         self._need()
         email = email.lower()
         if kind not in ("group", "channel"):
@@ -460,7 +467,7 @@ class Service:
             row = self.store.insert("comm_rooms",
                                     {"slug": slug, "name": name, "kind": kind,
                                      "description": _clean(description, 160),
-                                     "is_public": bool(is_public), "owner_email": email},
+                                     "is_public": False, "owner_email": email},
                                     returning=True)
         except _StoreError:
             row = self._room(slug)
@@ -475,6 +482,8 @@ class Service:
                                      "about": _clean(description, 160), "owner": self.handle_of(email), "yours": True}}
 
     def join_room(self, email, slug):
+        # patch31: self-join is gone. The creator invites by number — this
+        # keeps groups exactly as private as a phone contact list.
         self._need()
         email = email.lower()
         r = self._room(slug)
@@ -482,14 +491,115 @@ class Service:
             return {"error": "Unknown room."}
         if r.get("kind") == "dm":
             return {"error": "Use the message box to chat with that member."}
-        if not r.get("is_public"):
-            if r.get("owner_email") != email and not self.store.one(
-                    "comm_members", "room_id=eq." + r["id"] + "&email=eq." + email):
-                return {"error": "This room is private."}
-        self.store.insert("comm_members", {"room_id": r["id"], "email": email, "role": "member"},
-                          returning=False, on_conflict="room_id,email")
-        return {"ok": True, "room": {"id": slug, "name": r.get("name"), "kind": r.get("kind"),
-                                     "about": r.get("description", "")}}
+        if r.get("owner_email") == email or self.d["is_admin"](email) or \
+                self.store.one("comm_members", "room_id=eq." + r["id"] + "&email=eq." + email):
+            return {"ok": True, "already": True,
+                    "room": {"id": slug, "name": r.get("name"), "kind": r.get("kind"),
+                             "about": r.get("description", "")}}
+        return {"error": "OraCool groups and channels are private — only the creator can add members. "
+                "Share your 10-digit OraCool number with them and ask to be added."}
+
+    # ------------------------------------------------------------ membership (patch31)
+    def _room_member_ok(self, r, email):
+        if r.get("owner_email") == email or self.d["is_admin"](email):
+            return True
+        try:
+            return bool(self.store.one("comm_members", "room_id=eq." + r["id"] + "&email=eq." + email))
+        except _StoreError:
+            return False
+
+    def _resolve_number_or_handle(self, who):
+        who = str(who or "").strip().lstrip("@")
+        if re.fullmatch(r"\d{10}", who):
+            try:
+                p = self.store.one("comm_profiles", "oracool_number=eq." + who + "&select=email,username")
+            except _StoreError:
+                p = None
+            if p and p.get("email"):
+                return str(p["email"]).lower()
+        return self.email_of(who) or None
+
+    def room_members(self, email, slug):
+        self._need()
+        email = email.lower()
+        r = self._room(slug)
+        if not r:
+            return {"error": "Unknown room."}
+        if not self._room_member_ok(r, email):
+            return {"error": "Only members can see who is in this group."}
+        try:
+            rows = self.store.get("comm_members", "room_id=eq." + r["id"] + "&limit=200") or []
+        except _StoreError:
+            rows = []
+        profs = self._profiles_for([m.get("email") for m in rows if m.get("email")])
+        owner = (r.get("owner_email") or "").lower()
+        out = []
+        for m in rows:
+            e = (m.get("email") or "").lower()
+            p = profs.get(e) or {}
+            item = {"handle": p.get("username") or self.handle_of(e) or e.split("@")[0],
+                    "role": "owner" if e == owner else (m.get("role") or "member"),
+                    "online": bool(self.presence.get(e) and time.time() - self.presence[e] < 120),
+                    "me": e == email}
+            if e == email or email == owner or self.d["is_admin"](email):
+                item["number"] = p.get("oracool_number") or None
+            out.append(item)
+        out.sort(key=lambda x: (x["role"] != "owner", str(x["handle"]).lower()))
+        return {"ok": True, "members": out, "can_manage": bool(email == owner or self.d["is_admin"](email)),
+                "kind": r.get("kind"), "name": r.get("name")}
+
+    def room_add_member(self, email, slug, who):
+        self._need()
+        email = email.lower()
+        r = self._room(slug)
+        if not r:
+            return {"error": "Unknown room."}
+        if r.get("owner_email") != email and not self.d["is_admin"](email):
+            return {"error": "Only the creator can add members to their group."}
+        peer = self._resolve_number_or_handle(who)
+        if not peer:
+            return {"error": "No member found for that number/@handle. They must have an OraCool account and have set up their community profile (Community → profile)."}
+        if peer == r.get("owner_email"):
+            return {"ok": True, "added": "owner already here"}
+        try:
+            self.store.insert("comm_members", {"room_id": r["id"], "email": peer, "role": "member"},
+                              returning=False, on_conflict="room_id,email")
+        except _StoreError:
+            pass
+        return {"ok": True, "added": self.handle_of(peer)}
+
+    def room_remove_member(self, email, slug, who):
+        self._need()
+        email = email.lower()
+        r = self._room(slug)
+        if not r:
+            return {"error": "Unknown room."}
+        if r.get("owner_email") != email and not self.d["is_admin"](email):
+            return {"error": "Only the creator can remove members."}
+        peer = self._resolve_number_or_handle(who)
+        if not peer:
+            return {"error": "No member found for that number/@handle."}
+        if peer == r.get("owner_email"):
+            return {"error": "The owner cannot be removed — delete the group instead."}
+        try:
+            self.store.delete("comm_members", "room_id=eq." + r["id"] + "&email=eq." + peer)
+        except _StoreError:
+            return {"error": "Could not remove that member."}
+        return {"ok": True, "removed": self.handle_of(peer)}
+
+    def room_leave(self, email, slug):
+        self._need()
+        email = email.lower()
+        r = self._room(slug)
+        if not r:
+            return {"error": "Unknown room."}
+        if r.get("owner_email") == email:
+            return {"error": "Owners can't leave their own group — delete it instead (🗑 in the Members panel)."}
+        try:
+            self.store.delete("comm_members", "room_id=eq." + r["id"] + "&email=eq." + email)
+        except _StoreError:
+            return {"error": "Could not leave."}
+        return {"ok": True}
 
     def _ensure_dm_room(self, a, b):
         pair = "_".join(sorted([a, b]))
@@ -532,16 +642,15 @@ class Service:
         self._need()
         email = email.lower()
         self.presence[email] = time.time()
-        r = self._room(str(room or "lounge"))
+        r = self._room(str(room or ""))
         if not r:
             return {"error": "Unknown room."}
         if r.get("banned"):
             return {"error": "This " + str(r.get("kind") or "room") + " has been banned by an administrator.", "banned": True}
         if r.get("kind") == "dm":
             return {"error": "Use the DM thread for that."}
-        if not r.get("is_public") and r.get("owner_email") != email:
-            if not self.store.one("comm_members", "room_id=eq." + r["id"] + "&email=eq." + email):
-                return {"error": "This room is private."}
+        if not self._room_member_ok(r, email):
+            return {"error": "This " + str(r.get("kind") or "group") + " is private — the creator adds members with their OraCool number."}
         limit = max(5, min(int(limit or 60), 100))
         rows = self.store.get("comm_messages",
                               "room_id=eq." + r["id"] + "&order=id.desc&limit=" + str(limit + 5))
@@ -572,7 +681,7 @@ class Service:
     def room_send(self, email, room, body, media_url=""):
         self._need()
         email = email.lower()
-        r = self._room(str(room or "lounge"))
+        r = self._room(str(room or ""))
         if not r:
             return {"error": "Unknown room."}
         if r.get("banned"):
@@ -605,15 +714,8 @@ class Service:
         if err:
             return {"error": err}
         self.ensure_profile(email)
-        if not r.get("is_public"):
-            if r.get("owner_email") != email:
-                return {"error": "This room is private."}
-        else:
-            try:
-                self.store.insert("comm_members", {"room_id": r["id"], "email": email, "role": "member"},
-                                  returning=False, on_conflict="room_id,email")
-            except _StoreError:
-                pass
+        if not self._room_member_ok(r, email):
+            return {"error": "This " + str(r.get("kind") or "group") + " is private — the creator adds members with their OraCool number."}
         _kind = "voice" if media_url else "chat"
         try:
             m = self.store.insert("comm_messages",
@@ -1488,7 +1590,7 @@ class Service:
                "rooms": [], "dm_threads": [], "unread_dm": 0, "games": []}
         # rooms this user is in (or public) with their 3 latest messages
         try:
-            rooms = self.store.get("comm_rooms", "kind=in.(room,group,channel)&is_public=eq.true&order=created_at.asc&limit=100")
+            rooms = self.store.get("comm_rooms", "kind=in.(room,group,channel)&order=created_at.asc&limit=100")
             mem = self.store.get("comm_members", "email=eq." + email + "&limit=200")
             mine_ids = {m.get("room_id") for m in mem if m.get("room_id")}
         except _StoreError:

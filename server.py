@@ -5687,7 +5687,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch30-studio",
+        "build": "patch31-private",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -8792,7 +8792,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch30-studio",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch31-private",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -11832,6 +11832,55 @@ def community_service():
         return _COMMUNITY_SERVICE
 
 
+_STICKERS_MAX = 30
+
+
+def _stickers_key(email):
+    return "stickers:" + (email or "").strip().lower()
+
+
+def _stickers_load(email):
+    try:
+        d = supabase_kv_get(_stickers_key(email))
+        lst = d.get("items") if isinstance(d, dict) else None
+        return [s for s in (lst or []) if isinstance(s, dict) and s.get("url")][:_STICKERS_MAX]
+    except Exception:
+        return []
+
+
+def _stickers_put(email, items):
+    try:
+        return bool(supabase_kv_put(_stickers_key(email), {"items": items[:_STICKERS_MAX]}))
+    except Exception:
+        return False
+
+
+def stickers_save(email, data_url, label=""):
+    """patch31: user-made stickers (image + top/bottom text drawn on the client).
+    The PNG rides the normal community media upload; only its URL is listed here."""
+    email = (email or "").strip().lower()
+    if not email:
+        return {"error": "Sign in first."}
+    r = upload_community_media(email, data_url)
+    if not r or r.get("error") or not r.get("media_url"):
+        return r if r and r.get("error") else {"error": "Sticker image could not be saved."}
+    items = _stickers_load(email)
+    items.insert(0, {"url": r["media_url"], "label": str(label or "")[:40], "t": _now()})
+    _stickers_put(email, items)
+    return {"ok": True, "url": r["media_url"], "stickers": items[:_STICKERS_MAX]}
+
+
+def stickers_list(email):
+    return {"ok": True, "stickers": _stickers_load((email or "").strip().lower())}
+
+
+def stickers_delete(email, url):
+    email = (email or "").strip().lower()
+    items = [s for s in _stickers_load(email) if s.get("url") != url]
+    _stickers_put(email, items)
+    return {"ok": True, "stickers": items}
+
+
 def community_route(action, body, self_host=""):
     try:
         svc = community_service()
@@ -11845,15 +11894,31 @@ def community_route(action, body, self_host=""):
         if action == "rooms":
             return {"rooms": svc.rooms(me)}
         if action == "rooms/create":
-            pub = body.get("public")
+            # patch31: groups/channels are always private — the creator adds members by number
             return svc.create_room(me, body.get("name"), str(body.get("kind") or "group"),
-                                   body.get("description") or "", True if pub is None else bool(pub))
+                                   body.get("description") or "")
         if action == "rooms/join":
             return svc.join_room(me, str(body.get("slug") or body.get("room") or ""))
+        if action == "rooms/members":
+            return svc.room_members(me, str(body.get("slug") or body.get("room") or ""))
+        if action == "rooms/add-member":
+            return svc.room_add_member(me, str(body.get("slug") or body.get("room") or ""),
+                                       str(body.get("who") or body.get("number") or ""))
+        if action == "rooms/remove-member":
+            return svc.room_remove_member(me, str(body.get("slug") or body.get("room") or ""),
+                                          str(body.get("who") or body.get("number") or ""))
+        if action == "rooms/leave":
+            return svc.room_leave(me, str(body.get("slug") or body.get("room") or ""))
+        if action == "stickers/save":
+            return stickers_save(me, body.get("data_url"), body.get("label"))
+        if action == "stickers/list":
+            return stickers_list(me)
+        if action == "stickers/delete":
+            return stickers_delete(me, str(body.get("url") or ""))
         if action == "room/messages":
-            return svc.room_messages(me, str(body.get("room") or "lounge"), body.get("after"))
+            return svc.room_messages(me, str(body.get("room") or ""), body.get("after"))
         if action == "room/send":
-            return svc.room_send(me, str(body.get("room") or "lounge"), body.get("body"),
+            return svc.room_send(me, str(body.get("room") or ""), body.get("body"),
                                  media_url=str(body.get("media_url") or ""))
         if action == "people":
             return svc.people(me, body.get("q"))

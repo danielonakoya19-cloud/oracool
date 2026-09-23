@@ -99,8 +99,14 @@ class RoomMediaTest(Patch19Base):
         self.assertTrue(m['message']['media_url'])
 
     def test_room_media_still_respects_channel_lock(self):
-        r = self.svc.create_room(USER, 'Locked News', 'channel', description='x', is_public=True)
+        r = self.svc.create_room(USER, 'Locked News', 'channel', description='x')
         slug = r['room']['id']
+        # patch31: outsiders are refused outright (not even a member to be locked out)
+        outsider = self.svc.room_send('r1@example.test', slug, '', 'https://example.invalid/storage/v1/object/public/media/dm/a.jpg')
+        self.assertIn('error', outsider)
+        self.assertFalse(outsider.get('ok'))
+        # ...and even added members cannot post in a channel — only its creator
+        self.svc.room_add_member(USER, slug, self.svc.handle_of('r1@example.test') or 'r1')
         blocked = self.svc.room_send('r1@example.test', slug, '', 'https://example.invalid/storage/v1/object/public/media/dm/a.jpg')
         self.assertIn('error', blocked)
         self.assertTrue(blocked.get('locked'))
@@ -117,6 +123,7 @@ class ChatBriefTest(Patch19Base):
         r = self.svc.create_room(USER, 'Brief Group', 'group', description='x', is_public=True)
         slug = r['room']['id']
         self.svc.last_post = {}  # test-only: bypass the 1.5s human pace
+        self.svc.room_add_member(USER, slug, self.svc.handle_of('r1@example.test') or 'r1')  # patch31
         self.svc.room_send(USER, slug, 'hello group', '')
         self.svc.room_send('r1@example.test', slug, 'hi from member', '')
         self.svc.last_post = {}

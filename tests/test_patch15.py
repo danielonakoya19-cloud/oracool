@@ -195,6 +195,13 @@ class FakeRest:
                         return 201, [dict(hit)] if (prefer and 'return=representation' in (prefer or '')) else []
                 rows.append(nr)
                 out.append(nr)
+                if table == 'comm_profiles':
+                    # patch31: the public rooms are retired — these seeded rows emulate
+                    # the migration that grandfathered existing members into the legacy rooms.
+                    mem = self.tables.setdefault('comm_members', {'rows': []})
+                    for rid in ('rm-lounge', 'rm-markets', 'rm-help'):
+                        mem['rows'].append({'room_id': rid, 'email': nr.get('email'), 'role': 'member',
+                                            'joined_at': '2026-01-01T00:00:00+00:00'})
             return 201, [dict(r) for r in out]
 
         if method == 'PATCH':
@@ -382,13 +389,15 @@ class Patch15Tests(unittest.TestCase):
 
     # ---- rooms / DMs -----------------------------------------------------------
     def test_rooms_and_dms_with_rate_limit_and_unread(self):
+        # patch31: room reads need membership — set r2's profile up first (the
+        # harness migration grants legacy rooms to every new profile).
+        h2 = self.svc.ensure_profile('r2@example.test', username='r2')['username']
         mid = self._talk('r1@example.test', 'markets', 'BTC looks strong today')
         self.assertIn('too quickly', self.svc.room_send('r1@example.test', 'markets', 'again')['error'])
         self.assertIn('error', self.svc.room_send('r1@example.test', 'nope', 'x'))
         page = self.svc.room_messages('r2@example.test', 'markets')
         self.assertEqual([m['id'] for m in page['messages']], [mid]); self.assertFalse(page['messages'][0]['mine'])
         self.assertEqual(self.svc.room_messages('r2@example.test', 'markets', after_id=mid)['messages'], [])
-        h2 = self.svc.ensure_profile('r2@example.test', username='r2')['username']
         self.svc.last_post.clear()
         self.assertTrue(self.svc.dm_send('r1@example.test', h2, 'hi there')['ok'])
         th = self.svc.dm_threads('r2@example.test')['threads']
@@ -405,8 +414,11 @@ class Patch15Tests(unittest.TestCase):
         self.assertTrue(r['ok'], r); self.assertEqual(r['room']['id'], 'crypto-watchers')
         self.svc.ensure_profile('r2@example.test', username='rr2')
         rooms2 = self.svc.rooms('r2@example.test')
-        self.assertIn('crypto-watchers', [x['id'] for x in rooms2])
-        # anyone can join a public group and chat in it
+        # patch31: nobody sees a group until its creator adds them by number/handle
+        self.assertNotIn('crypto-watchers', [x['id'] for x in rooms2])
+        self.assertTrue(self.svc.room_send('r2@example.test', 'crypto-watchers', 'sneak in').get('error'))
+        self.svc.room_add_member('r1@example.test', 'crypto-watchers', 'rr2')
+        # members chat both ways
         self.svc.last_post.clear()
         self.assertTrue(self.svc.room_send('r2@example.test', 'crypto-watchers', 'gm all')['ok'])
         self.assertTrue(self.svc.room_send('r1@example.test', 'crypto-watchers', 'gm back')['ok'])

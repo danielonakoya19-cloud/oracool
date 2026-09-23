@@ -2476,18 +2476,26 @@ setInterval(async()=>{ try{ if(session && !isBlockedSession() && !commActive() &
 
 function kindTag(k){ return k==='room'?'<span class="tag" style="color:var(--cyan2)">ROOM</span> ':(k==='channel'?'<span class="tag" style="color:var(--gold)">CHANNEL</span> ':(k==='group'?'<span class="tag" style="color:var(--ok)">GROUP</span> ':'')); }
 function renderCommRooms(){
-  const rooms=(COMM.me&&COMM.me.rooms)||[]; const cur=rooms.find(r=>r.id===COMM.room)||rooms[0]||{id:'lounge',name:'Lounge'}; COMM.room=cur.id;
+  const rooms=(COMM.me&&COMM.me.rooms)||[]; const cur=rooms.find(r=>r.id===COMM.room)||rooms[0]||null;
+  if(!cur){ $('#commBody').innerHTML=`<div class="muted" style="text-align:center;padding:36px 12px;line-height:1.7">🔒 <b>Your groups and channels live here.</b><br>
+    The community is private now — public rooms are retired; groups are visible only to their creator, and people join only when <b>you</b> add them with their 10-digit OraCool number.<br>Want to talk one-on-one? <b>Messages → chat by number</b>.</div>
+    <div class="row" style="justify-content:center;gap:8px"><button class="btn primary" id="commNewRoom2">➕ Create a private group</button><button class="btn ghost" id="commDmNum2">💬 Chat by number</button></div>`;
+    const _c2=$('#commNewRoom2'); if(_c2) _c2.onclick=openNewRoomModal;
+    const _d2=$('#commDmNum2'); if(_d2) _d2.onclick=()=>{ COMM.view='dms'; COMM.peer=null; renderCommunity(); setTimeout(()=>{ const i=$('#dmNumIn'); if(i)i.focus(); },120); };
+    return; }
+  COMM.room=cur.id;
   const _isAdmin=(session&&session.admin);
   const postingLocked = cur.banned || ((cur.kind==='channel' && !cur.yours && !_isAdmin) || ((cur.kind==='group' && cur.owner_only) && !cur.yours && !_isAdmin));
-  $('#commBody').innerHTML=`<div class="chiprow" style="padding:0 0 8px; align-items:center">${rooms.map(r=>`<span class="chip ${r.id===COMM.room?'on':''}" data-r="${escapeHtml(r.id)}" title="${escapeHtml(r.about||'')}">${r.banned?'🚫 ':''}${r.owner_only?'🔒 ':''}${kindTag(r.kind)}#${escapeHtml(r.name)}</span>`).join('')}<button class="btn small ghost" id="commNewRoom" title="Create a group or channel">+ New group/channel</button></div>
+  $('#commBody').innerHTML=`<div class="chiprow" style="padding:0 0 8px; align-items:center">${rooms.map(r=>`<span class="chip ${r.id===COMM.room?'on':''}" data-r="${escapeHtml(r.id)}" title="${escapeHtml(r.about||'')}">${r.banned?'🚫 ':''}${r.owner_only?'🔒 ':''}${kindTag(r.kind)}#${escapeHtml(r.name)}</span>`).join('')}<button class="btn small ghost" id="commNewRoom" title="Create a group or channel">+ New group/channel</button><button class="btn small ghost" id="roomMembers" title="Members, invites & leave">👥 Members</button></div>
     <div class="muted" style="font-size:11px;margin-bottom:6px;display:flex;align-items:center;gap:8px"><span style="flex:1">${escapeHtml(cur.about||'')}${cur.owner?(' · by @'+escapeHtml(cur.owner)):''}</span>${(cur.yours||(session&&session.admin))&&cur.kind!=='room'?`<button class="btn small ghost" id="commRoomDel" style="color:var(--danger)" title="Delete this ${escapeHtml(cur.kind)}">🗑</button>`:''}${cur.yours&&cur.kind==='group'?`<button class="btn small ghost" id="commRoomLock" title="Toggle who can post">${cur.owner_only?'🔓 anyone can post':'🔒 only I can post'}</button>`:''}${cur.kind!=='room'&&!cur.banned?`<button class="btn small ghost" id="commRoomRep" style="color:var(--danger)" title="Report this group/channel to the administrators">⚑</button>`:''}</div>
     ${cur.banned?`<div class="warnbox" style="margin-bottom:8px">🚫 This ${escapeHtml(cur.kind||'room')} has been <b>banned by an administrator</b>${cur.ban_reason?' — reason: '+escapeHtml(cur.ban_reason):''}. Posting is disabled.</div>`:''}
-    ${(!cur.banned&&((cur.kind==='channel'&&!cur.yours&&!(session&&session.admin))||((cur.kind==='group'&&cur.owner_only)&&!cur.yours&&!(session&&session.admin))))?`<div class="warnbox" style="margin-bottom:8px">🔒 ${cur.kind==='channel'?'Only the channel admin (the creator) can post in this channel.':'This group is locked — only the group admin can post.'} Reading is open to everyone.</div>`:''}
+    ${(!cur.banned&&((cur.kind==='channel'&&!cur.yours&&!(session&&session.admin))||((cur.kind==='group'&&cur.owner_only)&&!cur.yours&&!(session&&session.admin))))?`<div class="warnbox" style="margin-bottom:8px">🔒 ${cur.kind==='channel'?'Only its creator posts in this channel — you can read and react.':'This group is read-only — the creator locked posting.'} Only members you were added to can see it.</div>`:''}
     <div class="commmsgs" id="commMsgs" style="border-color:#182229"><div class="muted">${cur.banned?'This room is locked.':'Loading…'}</div></div>
-    ${postingLocked?`<div class="muted" style="font-size:12px;text-align:center;padding:8px">${cur.banned?'Posting is disabled in banned rooms.':'🔒 Posting is closed here — reading is open, but only the '+(cur.kind==='channel'?'channel admin':'group admin')+' can send messages.'}</div>`:`<div class="wa-compose"><button class="wa-ico" id="roomAttach" title="Send a photo, video, voice note or file">➕</button><button class="wa-ico" id="roomEmoji" title="Emoji">😀</button><div class="pill"><input type="text" id="commInput" maxlength="800" autocomplete="off" placeholder="Message #${escapeHtml(cur.name)}"></div><button class="wa-send" id="commSend" title="Send">➤</button></div>`}
+    ${postingLocked?`<div class="muted" style="font-size:12px;text-align:center;padding:8px">${cur.banned?'Posting is disabled in banned rooms.':'🔒 Posting is closed here — as a member you can read; only the creator sends messages in this channel.'}</div>`:`<div class="wa-compose"><button class="wa-ico" id="roomAttach" title="Send a photo, video, voice note or file">➕</button><button class="wa-ico" id="roomEmoji" title="Emoji">😀</button><div class="pill"><input type="text" id="commInput" maxlength="800" autocomplete="off" placeholder="Message #${escapeHtml(cur.name)}"></div><button class="wa-send" id="commSend" title="Send">➤</button></div>`}
   `;
   $('#commBody').querySelectorAll('.chip[data-r]').forEach(c=>{ c.onclick=()=>{ COMM.room=c.dataset.r; COMM.lastRoomId=null; renderCommRooms(); }; });
   $('#commNewRoom').onclick=openNewRoomModal;
+  const _rmBtn=$('#roomMembers'); if(_rmBtn) _rmBtn.onclick=()=>membersModal(cur);
   const rem=$('#roomEmoji'); if(rem) rem.onclick=e=>{ e.stopPropagation(); waEmojiPop(rem, $('#commInput')); };
   const ra=$('#roomAttach'); if(ra) ra.onclick=e=>{ e.stopPropagation(); if(window.REC2 && REC2.mr){ roomVoiceToggle(ra); return; } waAttachPop(ra, 'room'); };
   const rd=$('#commRoomDel'); if(rd) rd.onclick=async()=>{ if(!confirm('Delete this '+cur.kind+'? Its messages and members will be permanently removed.')) return; const r=await post('/api/community/rooms/delete',{slug:COMM.room}); if(r.error) addErr('Room: '+r.error); else { COMM.room='lounge'; addSystemNote('🗑 The '+cur.kind+' was deleted.'); renderCommunity(); } };
@@ -2506,10 +2514,10 @@ function openNewRoomModal(){
   let m=document.getElementById('newRoomModal'); if(m) m.remove();
   m=document.createElement('div'); m.id='newRoomModal'; m.className='modal open';
   m.innerHTML=`<div class="modalcard"><div class="ptitle" style="font-size:14px">➕ Create a group or channel</div>
-    <div class="muted" style="font-size:12px;margin:6px 0 10px;line-height:1.5">A <b>group</b> is for your people; a <b>channel</b> is a topic anyone can join. You own it and it appears in every member's Rooms list${''} when public.</div>
+    <div class="muted" style="font-size:12px;margin:6px 0 10px;line-height:1.5">🔒 <b>Private by default</b> — only you see it until you add members by their OraCool number. You own it and it appears in every member's Rooms list${''} when public.</div>
     <label class="lbl">Name</label><input type="text" id="nrName" maxlength="40" placeholder="e.g. Crypto watchers">
     <label class="lbl" style="margin-top:8px">Type</label>
-    <div class="row" style="gap:8px; align-items:center"><select id="nrKind" style="flex:1"><option value="group">Group</option><option value="channel">Channel</option></select><label style="display:flex;align-items:center;gap:6px;font-size:12px;flex:none"><input type="checkbox" id="nrPublic" checked> public</label></div>
+    <div class="row" style="gap:8px; align-items:center"><select id="nrKind" style="flex:1"><option value="group">Group</option><option value="channel">Channel</option></select></div>
     <label class="lbl" style="margin-top:8px">Description</label><input type="text" id="nrDesc" maxlength="160" placeholder="What is this for? (optional)">
     <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end"><button class="btn ghost" id="nrCancel">Cancel</button><button class="btn primary" id="nrGo">Create</button></div>
     <div class="result" id="nrOut"></div></div>`;
@@ -2519,12 +2527,91 @@ function openNewRoomModal(){
     const name=$('#nrName').value.trim(); const out=$('#nrOut');
     if(name.length<2){ out.innerHTML='<div class="errbox">Give it a name (2+ characters).</div>'; return; }
     out.innerHTML=SPIN;
-    const r=await post('/api/community/rooms/create',{name, kind:$('#nrKind').value, description:$('#nrDesc').value.trim(), public:$('#nrPublic').checked});
+    const r=await post('/api/community/rooms/create',{name, kind:$('#nrKind').value, description:$('#nrDesc').value.trim()});
     if(r.error){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
     m.remove(); COMM.room=r.room.id; renderCommunity();
-    addSystemNote('🏠 Your '+(r.room.kind||'room')+' <b>#'+escapeHtml(r.room.name)+'</b> is live.');
+    addSystemNote('🏠 Your '+(r.room.kind||'room')+' <b>#'+escapeHtml(r.room.name)+'</b> is live — private to you. Tap <b>👥 Members</b> to add people by their OraCool number.');
   };
   setTimeout(()=>{ const i=$('#nrName'); if(i) i.focus(); }, 50);
+}
+async function membersModal(cur){
+  let m=document.getElementById('memOv'); if(m) m.remove();
+  m=document.createElement('div'); m.id='memOv'; m.className='modal open';
+  m.innerHTML=`<div class="modalcard" style="max-width:440px"><div class="ptitle" style="font-size:14px">👥 #${escapeHtml(cur.name||'')} — members</div><div id="memBody"><div class="muted">Loading…</div></div></div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click',e=>{ if(e.target===m) m.remove(); });
+  const render=async()=>{
+    const r=await post('/api/community/rooms/members',{room:cur.id});
+    const b=m.querySelector('#memBody'); if(!b) return;
+    if(r.error){ b.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+    let h='<div style="max-height:190px;overflow:auto;margin-top:8px">'+(((r.members||[]).map(x=>`<div class="row" style="align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line)"><span style="flex:1;overflow-wrap:anywhere">${x.role==='owner'?'👑 ':''}${escapeHtml(x.handle||'')}${x.me?' <span class="muted">(you)</span>':''}${x.online?' <span style="color:#4ade80">•</span>':''}</span>${x.number?`<span class="muted" style="font-size:11px">${escapeHtml(String(x.number))}</span>`:''}${(r.can_manage&&!x.me&&x.role!=='owner')?`<button class="btn ghost small" data-rm="${escapeHtml(x.handle)}" style="color:#ff7b93">Remove</button>`:''}</div>`).join(''))||'<div class="muted">Just you so far.</div>')+'</div>';
+    if(r.can_manage) h+='<label class="lbl" style="margin-top:10px">Add a member — their 10-digit OraCool number or @handle</label><div class="row" style="gap:6px"><input id="memAdd" class="pub-in" maxlength="40" placeholder="0701234567 or @ada" style="flex:1"><button class="btn primary small" id="memAddGo">➕ Add</button></div>';
+    else h+='<div class="hint" style="margin-top:10px">Only the creator manages members.</div><div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn ghost small" id="memLeave" style="color:#ff7b93">🚪 Leave group</button></div>';
+    b.innerHTML=h;
+    const ag=b.querySelector('#memAddGo');
+    if(ag) ag.onclick=async()=>{ const v=(b.querySelector('#memAdd').value||'').trim(); if(!v) return;
+      const rr=await post('/api/community/rooms/add-member',{room:cur.id,who:v});
+      if(rr.error){ const n=document.createElement('div'); n.className='errbox'; n.style.marginTop='8px'; n.textContent=rr.error; b.appendChild(n); setTimeout(()=>n.remove(),4000); } else render(); };
+    (b.querySelectorAll('[data-rm]')||[]).forEach(btn=>{ btn.onclick=async()=>{ if(!confirm('Remove '+btn.dataset.rm+' from this group?'))return; await post('/api/community/rooms/remove-member',{room:cur.id,who:btn.dataset.rm}); render(); }; });
+    const lv=b.querySelector('#memLeave'); if(lv) lv.onclick=async()=>{ if(!confirm('Leave this group?'))return; await post('/api/community/rooms/leave',{room:cur.id}); m.remove(); renderCommunity(); };
+  };
+  render();
+}
+let STK={img:null};
+function stickerMaker(target){
+  closeWaPops();
+  let m=document.getElementById('stkOv'); if(m) m.remove();
+  m=document.createElement('div'); m.id='stkOv'; m.className='modal open';
+  m.innerHTML=`<div class="modalcard" style="max-width:430px"><div class="ptitle" style="font-size:14px">🧩 Sticker maker</div>
+    <div class="hint">Pick any image, add top/bottom text — it is stamped into a sticker. Saved stickers form your pack; tap one any time to send it instantly.</div>
+    <div class="row" style="gap:8px;margin-top:8px;align-items:center"><input type="file" id="stkFile" accept="image/*" style="flex:1;font-size:12px"></div>
+    <div class="row" style="gap:6px;margin-top:6px"><input id="stkTop" class="pub-in" maxlength="24" placeholder="TOP TEXT" style="flex:1"><input id="stkBot" class="pub-in" maxlength="24" placeholder="BOTTOM TEXT" style="flex:1"></div>
+    <div style="display:flex;justify-content:center;margin:10px 0"><canvas id="stkCv" width="320" height="320" style="border-radius:16px;background:rgba(255,255,255,.04);max-width:260px"></canvas></div>
+    <div class="row" style="gap:8px;justify-content:flex-end"><button class="btn ghost small" id="stkX">Close</button><button class="btn primary small" id="stkSave">💾 Save to pack</button><button class="btn gold small" id="stkGo">➤ Send now</button></div>
+    <div id="stkPack" class="row" style="flex-wrap:wrap;gap:6px;margin-top:10px"></div></div>`;
+  document.body.appendChild(m);
+  m.querySelector('#stkX').onclick=()=>m.remove();
+  m.addEventListener('click',e=>{ if(e.target===m) m.remove(); });
+  const cv=m.querySelector('#stkCv'), cx=cv.getContext('2d');
+  const draw=()=>{ cx.clearRect(0,0,320,320);
+    if(STK.img){ const s=Math.min(320/STK.img.width,320/STK.img.height); cx.save(); cx.translate((320-STK.img.width*s)/2,(320-STK.img.height*s)/2); cx.drawImage(STK.img,0,0,STK.img.width*s,STK.img.height*s); cx.restore(); }
+    else { cx.fillStyle='rgba(120,150,255,.10)'; cx.fillRect(0,0,320,320); cx.fillStyle='rgba(255,255,255,.35)'; cx.font='15px system-ui'; cx.textAlign='center'; cx.fillText('choose an image above',160,164); }
+    const txt=(t,y)=>{ t=(t||'').toUpperCase(); if(!t) return; cx.font='900 28px system-ui'; cx.textAlign='center';
+      const w=Math.max(70,cx.measureText(t).width+20), x=160-w/2, h=40, rr=12;
+      cx.fillStyle='rgba(4,7,12,.78)'; cx.beginPath();
+      cx.moveTo(x+rr,y-h/2); cx.arcTo(x+w,y-h/2,x+w,y+h/2,rr); cx.arcTo(x+w,y+h/2,x,y+h/2,rr); cx.arcTo(x,y+h/2,x,y-h/2,rr); cx.arcTo(x,y-h/2,x+w,y-h/2,rr); cx.fill();
+      cx.fillStyle='#fff'; cx.fillText(t,160,y+10); };
+    txt(m.querySelector('#stkTop').value,40); txt(m.querySelector('#stkBot').value,290); };
+  m.querySelector('#stkFile').onchange=e=>{ const f=e.target.files[0]; if(!f) return; const rd=new FileReader();
+    rd.onload=()=>{ const im=new Image(); im.onload=()=>{ STK.img=im; draw(); }; im.src=rd.result; }; rd.readAsDataURL(f); };
+  ['stkTop','stkBot'].forEach(id=>m.querySelector('#'+id).addEventListener('input',draw)); draw();
+  const pack=async()=>{ const r=await post('/api/community/stickers/list',{});
+    const el=m.querySelector('#stkPack');
+    el.innerHTML=(((r&&r.stickers)||[]).map(s=>`<img src="${escapeHtml(s.url)}" title="tap = send · right-click = delete" style="width:46px;height:46px;object-fit:cover;border-radius:10px;cursor:pointer;border:1px solid var(--line)" data-su="${escapeHtml(s.url)}">`).join(''))||'<span class="muted" style="font-size:11px">Pack empty — save your first sticker (right-click deletes).</span>';
+    (el.querySelectorAll('[data-su]')||[]).forEach(ic=>{ ic.onclick=()=>sendSticker(ic.dataset.su,target);
+      ic.oncontextmenu=async(ev)=>{ ev.preventDefault(); await post('/api/community/stickers/delete',{url:ic.dataset.su}); pack(); }; }); };
+  pack();
+  m.querySelector('#stkSave').onclick=async()=>{ if(!STK.img){ addErr('Sticker: pick an image first.'); return; }
+    const b=m.querySelector('#stkSave'); b.disabled=true; b.textContent='Saving…';
+    const r=await post('/api/community/stickers/save',{data_url:cv.toDataURL('image/png'), label:m.querySelector('#stkBot').value||m.querySelector('#stkTop').value});
+    b.disabled=false; b.textContent='💾 Save to pack';
+    if(r&&r.error) addErr('Sticker: '+r.error); else pack(); };
+  m.querySelector('#stkGo').onclick=async()=>{ let url=cv.toDataURL('image/png');
+    if(STK.img){ const r=await post('/api/community/stickers/save',{data_url:url,label:m.querySelector('#stkBot').value||''}); if(r&&r.url) url=r.url; }
+    await sendSticker(url,target); };
+}
+async function sendSticker(url,target){
+  const mm=document.getElementById('stkOv'); if(mm) mm.remove();
+  if((COMM.view==='rooms'||target==='room') && COMM.room){
+    const r=await post('/api/community/room/send',{room:COMM.room, body:'', media_url:url});
+    if(r.error){ addErr('Sticker: '+r.error); return; }
+    const el=$('#commMsgs'); if(el&&r.message){ if(el.firstElementChild&&el.firstElementChild.classList.contains('muted')) el.innerHTML=''; appendCommMsg(el,r.message); COMM.lastRoomId=r.message.id; el.scrollTop=el.scrollHeight; }
+  } else {
+    if(!COMM.peer){ addErr('Sticker: open a conversation first.'); return; }
+    const r=await post('/api/community/dm/send',{handle:COMM.peer, body:'', media_url:url});
+    if(r.error){ addErr('Sticker: '+r.error); return; }
+    try{ await loadCommDm(true); }catch(e){}
+  }
 }
 async function loadCommRoom(initial){
   const r=await post('/api/community/room/messages',{room:COMM.room, after: initial?null:COMM.lastRoomId});
@@ -2629,6 +2716,14 @@ async function renderCommDms(){
       }).join('') : '')+'</div>'+
       (th.length?'':'<div class="muted">No conversations yet.</div>');
     body.querySelectorAll('.wa-trow').forEach(el=>{ el.onclick=()=>{ COMM.peer=el.dataset.h; COMM.lastDmId=null; waResetGroup(); COMM.peerSeen=0; renderCommDms(); }; });
+    body.insertAdjacentHTML('afterbegin','<div class="row" style="gap:6px;margin:6px 0 2px"><input id="dmNumIn" class="pub-in" maxlength="12" inputmode="numeric" placeholder="💬 Chat by OraCool number — 10 digits" style="flex:1;min-width:150px"><button class="btn small primary" id="dmNumGo" style="min-height:38px">Start</button></div><div id="dmNumNote" class="hint" style="margin:0 0 8px"></div>');
+    { const i=body.querySelector('#dmNumIn'), g=body.querySelector('#dmNumGo'), n=body.querySelector('#dmNumNote');
+      const go=async()=>{ const v=(i.value||'').replace(/\D/g,''); if(v.length!==10){ n.textContent='OraCool numbers are exactly 10 digits.'; return; }
+        n.innerHTML='<span class="spinner"></span> finding member…';
+        const r=await post('/api/community/people',{q:v}); const p=((r&&r.people)||[])[0];
+        if(!p||!p.username){ n.textContent='No member with that number.'; return; }
+        n.textContent=''; COMM.peer=p.username; COMM.lastDmId=null; waResetGroup(); renderCommunity(); };
+      g.onclick=go; i.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } }); }
     return;
   }
   body.innerHTML=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;border:1px solid var(--line);border-radius:12px;padding:7px 10px;background:#111b21">
@@ -2751,7 +2846,7 @@ function openCommReport(handle, messageId){
 }
 
 /* ---------- WhatsApp-style compose extras: emoji, attach, photo/voice ---------- */
-const WA_EMOJIS=['😀','😂','🙂','😊','😍','😘','😎','🤩','😉','😅','😴','','🤔','🫡','','','','👏','','💪','️','🤞','❤️','💔','🔥','✨','🎉','','','💀','😭','😤','🥺','','😱','','💡','','✅','❌','☕','🍜','','🏆','','','🎤','','🎧','','🚀','🌍'];
+const WA_EMOJIS=['😀','😃','😄','😁','','😅','🤣','😂','🙂','🙃','','😉','😊','😇','🥰','😍','🤩','😘','','☺️','😙','😚','😋','😛','😜','🤪','😝','🤗','🤭','','🤫','','🫡','🤐','😐','😑','','🫥','😏','😒','🙄','😬','','😴','🤤','😪','😮','😯','🤐','😳','🥵','🥶','😱','😨','😰','😥','😢','😭','😡','🤬','😈','💀','👻','🤖','😺','😸','😹','😻','😼','🙀','👋','🤚','🖐️','✋','🖖','👌','🤌','✌️','🫰','🤞','','👍','👎','','👊','🤛','🤜','👏','','🤝','🙏','💪','🫶','❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💯','🔥','✨','🌟','⭐','☄️','🌈','☀️','','⚡','❄️','🌊','🎉','','🎈','🎁','🏆','','🥈','','🎯','🎲','🎮','🕹️','','🎧','🎤','','🎨','🚀','','⚽','','🏈','','🎾','','🏉','','🏸','🥅','⛳','','🎣','','🏋️','','⛸️','','🏃','','🍏','🍎','','🍋','🍌','🍉','🍇','','🫐','🥝','🍑','🥭','🍍','','🥑','🍅','🥕','🌽','🥦','🧄','','🍟','','🌭','🥪','🌮','🌯','🥙','🍝','🍜','🍲','','🍣','🍱','🥘','🍦','🍰','🎂','','🍫','','🍵','🥤','','🍺','🍻','🥂','🍷','🥃','🍿','💸','💳','🧾','📈','📉','📱','💻','⌨️','️','🖨️','','📹','🎥','','☎️','','📻','','⏳','','📖','️','📌','📎','🗂️','🗑️','','🚕','','🏍️','🚲','✈️','','⛵','','🏢','','🕌','️','🏔️','','🗿','🎪','🎢','','✅','❌','⚠️','❓','❗','💡','','🔒','🔓','🪄','🔮','🪙','️','️'];
 function insertAtCaret(inp, text){
   if(!inp) return;
   const st=inp.selectionStart||inp.value.length, en=inp.selectionEnd||inp.value.length;
@@ -2780,7 +2875,7 @@ function waAttachPop(anchorEl, target){
   if(pop && pop.classList.contains('open')){ closeWaPops(); return; }
   if(!pop){
     pop=document.createElement('div'); pop.id='waAttachPop'; pop.className='wa-pop wa-attach';
-    pop.innerHTML=`<button type="button" data-a="photo">🖼️ <span>Photo</span></button><button type="button" data-a="video">🎬 <span>Video</span></button><button type="button" data-a="voice">🎵 <span>Voice note</span></button><button type="button" data-a="file">📄 <span>Document / file</span></button>`;
+    pop.innerHTML=`<button type="button" data-a="photo">🖼️ <span>Photo</span></button><button type="button" data-a="video">🎬 <span>Video</span></button><button type="button" data-a="voice">🎵 <span>Voice note</span></button><button type="button" data-a="file">📄 <span>Document / file</span></button>`<button type="button" data-a="sticker">🧩 <span>Sticker</span></button>;
     document.body.appendChild(pop);
     pop.querySelectorAll('button').forEach(b=>{ b.onclick=()=>commAttachPick(b.dataset.a, target||'dm'); });
   }
@@ -2798,6 +2893,7 @@ async function commAttachPick(kind, target){
   // In rooms the voice note is recorded live with the mic (WhatsApp-style);
   // in DMs the menu item stays an audio-file picker (the mic button sits in the bar).
   if(target==='room' && kind==='voice'){ roomVoiceToggle(document.getElementById('roomAttach')); return; }
+  if(kind==='sticker'){ stickerMaker(target); return; }
   const inp=document.createElement('input'); inp.type='file';
   if(kind==='file') inp.accept='.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.json,application/pdf';
   else if(kind==='video') inp.accept='video/mp4,video/webm,.mp4,.webm';

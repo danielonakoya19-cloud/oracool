@@ -227,7 +227,7 @@ def test_publish_requires_existing_build(monkeypatch):
 # --------------------------------------------------------------------- markers
 def test_marker_and_endpoints_present():
     src = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
-    assert src.count('"build": "patch30-studio"') == 2
+    assert src.count('"build": "patch31-private"') == 2
     assert '"/api/sites"' in src and '"/api/coins"' in src
     html = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
     assert "publishModal" in html and "refreshCoins" in html and "coinPill" in html

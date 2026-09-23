@@ -273,6 +273,8 @@ class Patch16Tests(unittest.TestCase):
         r = self.svc.create_room('r1@example.test', 'Dark Corner', 'group', 'suspicious', True)
         slug = r['room']['id']
         self.svc.last_post.clear()
+        self.svc.room_add_member('r1@example.test', slug, self.svc.handle_of('r2@example.test') or 'r2')  # patch31 invite
+        self.svc.room_add_member('r1@example.test', slug, self.svc.handle_of('r3@example.test') or 'r3')  # patch31 invite
         self.assertTrue(self.svc.room_send('r2@example.test', slug, 'hello')[ 'ok'])
         rr = self.svc.report_room('r2@example.test', slug, 'People are selling stolen data in here.')
         self.assertTrue(rr['ok']); self.assertEqual(rr['reports'], 1)
