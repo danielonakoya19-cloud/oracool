@@ -18,7 +18,7 @@ self.addEventListener('push', e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (err) { d = {title: 'OraCool alert', body: (e.data && e.data.text()) || ''}; }
   e.waitUntil(self.registration.showNotification(d.title || 'OraCool alert', {
-    body: d.body || '', icon: '/icon.png', badge: '/icon.png', tag: 'oracool'
+    body: d.body || '', icon: '/icon-192.png?v=2', badge: '/icon-192.png?v=2', tag: 'oracool'
   }));
 });
 self.addEventListener('notificationclick', e => {

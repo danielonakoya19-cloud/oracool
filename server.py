@@ -5687,7 +5687,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch36-visuals",
+        "build": "patch37-brand",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -8643,10 +8643,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_file(os.path.join(BASE_DIR, "oauth.html"), "text/html; charset=utf-8")
         elif path == "/manifest.json":
             self._send_file(os.path.join(BASE_DIR, "manifest.json"), "application/json")
-        elif path == "/icon.png":
-            icon = os.path.join(BASE_DIR, "icon.png")
-            if os.path.exists(icon):
-                self._send_file(icon, "image/png")
+        elif path in _BRAND_ASSETS:
+            _asset = os.path.join(BASE_DIR, path[1:])
+            if os.path.exists(_asset):
+                self._send_file(_asset, _BRAND_ASSETS[path])
             else:
                 self.send_error(404)
         elif path == "/voice-reminders.js":
@@ -8794,7 +8794,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch36-visuals",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch37-brand",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -10327,6 +10327,12 @@ def _decode_agent_angles(text):
     pattern = r"&(?:amp;)*(lt|gt|\#0*60|\#0*62|\#x0*3c|\#x0*3e);"
     return re.sub(pattern, lambda m: "<" if m.group(1).lower() in ("lt", "#60", "#x3c")
                   or re.fullmatch(r"\#(?:0*60|x0*3c)", m.group(1), re.I) else ">", t, flags=re.I)
+
+
+# patch37 — brand assets (new orb icon set + wordmark logo); each is a real file next to server.py
+_BRAND_ASSETS = {"/icon.png": "image/png", "/icon-192.png": "image/png", "/icon-512.png": "image/png",
+                 "/icon-maskable-192.png": "image/png", "/icon-maskable-512.png": "image/png",
+                 "/apple-touch-icon.png": "image/png", "/favicon.ico": "image/x-icon", "/logo.png": "image/png"}
 
 
 def _strip_agent_markup(text):
