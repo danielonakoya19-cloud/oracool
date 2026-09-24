@@ -70,7 +70,7 @@ def test_manifest_traversal_blocked():
 
 
 def test_health_marker_patch26():
-    assert '"build": "patch32-talk"' in open(os.path.join(ROOT, "server.py")).read()
+    assert '"build": "patch33-alumni"' in open(os.path.join(ROOT, "server.py")).read()
 
 
 # ---------------------------------------------------------------- client
