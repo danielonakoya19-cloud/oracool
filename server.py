@@ -5687,7 +5687,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch33-alumni",
+        "build": "patch34-junkfloor",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -8792,7 +8792,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch33-alumni",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch34-junkfloor",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -10057,6 +10057,15 @@ class Handler(BaseHTTPRequestHandler):
                             {"role": "user", "content": "Continue exactly where you stopped. "
                              "Repeat nothing, no preface, no apologies."}]
                         continue
+                    if _reply_is_junk(acc_full) and tool_runs:
+                        if _round < 2:
+                            cont_msgs = list(cont_msgs) + [
+                                {"role": "assistant", "content": acc_full or "(silence)"},
+                                {"role": "user", "content": _JUNK_NUDGE}]
+                            continue
+                        _d34n = _tool_digest(tool_runs)
+                        if _d34n:
+                            acc_full = "Here is what my live tools found for you:\n\n" + _d34n
                     self._send_json(chat_finish(acc_full, tool_summary, core_names, chat_media,
                                                 _conv_id, _conv_em))
                 except urllib.error.HTTPError as e:
@@ -10101,6 +10110,7 @@ class Handler(BaseHTTPRequestHandler):
         acc_stream = ""
         cont_rounds = 0
         markup_rounds = 0
+        junk_retried = 0
         _markup_runs = []
         _guard = _MarkupGuard()
         stream_msgs = messages
@@ -10249,6 +10259,12 @@ class Handler(BaseHTTPRequestHandler):
                     {"role": "user", "content": "Continue exactly where you stopped. "
                      "Repeat nothing, no preface, no apologies."}]
                 continue
+            if (tool_runs or _markup_runs) and _reply_is_junk(_strip_agent_markup(acc_stream)) and junk_retried < 1 and fr != "length":
+                junk_retried += 1
+                stream_msgs = list(stream_msgs) + [
+                    {"role": "assistant", "content": _strip_agent_markup(acc_stream) or "(silence)"},
+                    {"role": "user", "content": _JUNK_NUDGE}]
+                continue
             break
         _final_txt = _strip_agent_markup(acc_stream)
         # scrub the internal placeholder the model sometimes echoes back
@@ -10264,6 +10280,17 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     self.wfile.write(("data: " + json.dumps({"choices": [{"delta": {"content":
                         "\n\n**Live results:**\n" + "\n".join(_digest) + "\n"}}]}) + "\n\n").encode())
+                    self.wfile.flush()
+                except Exception:
+                    pass
+        if tool_runs and _reply_is_junk(_final_txt):
+            # last-resort floor: the real tool output, plainly presented
+            _d34 = _tool_digest(tool_runs)
+            if _d34:
+                _final_txt = ("Here is what my live tools found for you:\n\n" + _d34)
+                try:
+                    self.wfile.write(("data: " + json.dumps({"choices": [{"delta": {"content":
+                        ("\n\n" if _final_txt.strip() != _d34 else "") + "Here is what my live tools found for you:\n\n" + _d34 + "\n"}}]}) + "\n\n").encode())
                     self.wfile.flush()
                 except Exception:
                     pass
@@ -10411,6 +10438,44 @@ def chat_finish(text, tools, cores, media, conv_id="", conv_em="", note=None):
         except Exception:
             pass
     return out
+
+
+# patch34: junk-reply floor — flash models sometimes answer a tool-context prompt
+# with nothing but "."; the user must never be left with a dead bubble when we
+# DO have real tool results. Detection + a human-readable digest fallback.
+_REPLY_JUNK = re.compile(r"^[.\-\u2013\u2014\u2022*_\s()#`'\"\u2026]+$")
+
+
+def _reply_is_junk(s):
+    s = str(s or "").strip()
+    if not s:
+        return True
+    if _REPLY_JUNK.match(s):
+        return True
+    return s.lower().strip("()*` ") in ("ran a tool", "(ran a tool)", "ran tool")
+
+
+def _tool_digest(tool_runs):
+    parts = []
+    for t in (tool_runs or []):
+        raw = str(t.get("result") or "")
+        try:
+            d = json.loads(raw)
+            if isinstance(d, dict):
+                raw = (d.get("answer") or d.get("summary") or d.get("text")
+                       or d.get("note") or d.get("error") or json.dumps(d))
+        except Exception:
+            pass
+        parts.append("- " + str(t.get("label") or t.get("tool") or "tool") + ": "
+                     + " ".join(str(raw).split())[:360])
+        if len(parts) == 3:
+            break
+    return "\n".join(parts)
+
+
+_JUNK_NUDGE = ("Your reply above was empty or only punctuation, so the user can see nothing. "
+               "Answer their actual question now in clear plain prose, grounded in the tool results "
+               "already in your context. Never reply with a single dot or silence.")
 
 
 # ------------------------------------------------------ generated-media library
