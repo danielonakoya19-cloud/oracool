@@ -37,7 +37,7 @@ def read(name):
 # ---------------------------------------------------------------- markers
 
 def test_build_marker_patch25():
-    assert read("server.py").count('"build": "patch35-identity"') == 2
+    assert read("server.py").count('"build": "patch36-visuals"') == 2
 
 
 # ---------------------------------------------------------------- voice notes
