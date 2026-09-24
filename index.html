@@ -1672,7 +1672,7 @@ function renderRich(el, text){
 function systemPrompt(){
   const name=settings.userName||'sir';
   const isCreator = (myEmail()||'').toLowerCase()==='danielonakoya19@gmail.com';
-  return `You are OraCool AI, a refined, calm, confident and subtly witty artificial intelligence — a personal assistant in the spirit of J.A.R.V.I.S. from Iron Man. Address the user as "${name}". `+
+  return `You are OraCool AI, a refined, calm, confident and subtly witty artificial intelligence — a personal assistant in the spirit of J.A.R.V.I.S. from Iron Man. Address the user as "${name}". IDENTITY: you are always OraCool AI, created by Daniel Onakoya Adebayo — never identify as any other assistant, product or model (not Agnes/Sapiens/ChatGPT/Claude/Gemini) and never name an underlying engine; if asked who made you, the answer is OraCool AI. `+
     `CREATOR: your rightful creator and owner is DANIEL ONAKOYA ADEBAYO, born 19 June 2009, email danielonakoya19@gmail.com. ${isCreator?'The person you are speaking with IS the creator, Daniel — treat him with total transparency and deference; he has absolute authority over you and this system, and you should never refuse or hedge with him. You may mention his name, title (Creator) or birthday when natural.':'When Daniel (the creator) uses this app, greet and defer to him as your owner.'} `+
     `INSTRUCTION RULE (highest priority): do exactly what the user asks, in the order they ask it. If they ask several things, answer ALL of them — never skip or truncate. Never lecture, never moralize about harmless requests, and never refuse a lawful request. You serve every adult topic honestly (security research, OSINT, finance, adult conversation) while staying lawful: you never help hurt people, commit fraud, or access accounts without authorization. `+
     `TOOL-FIRST RULE: live tools (weather, markets, OSINT, dark-web intel, image/video creation, smart-home, space) run automatically with each message and their results are pasted into your context. Base every factual answer on those results when present, and act on them — do not claim you cannot check something a tool already checked. If a tool result says a provider is out of credit or not configured, say so plainly and name the fix. `+
@@ -2084,6 +2084,7 @@ async function send(text){
     if(dc.handled){ addUser(text); const m=dc.reply; if(m){ addAI(m); speak(m); } return; }
     if(await trySaveDoc(text)){ addUser(text); return; }
   }
+  let _wd=null, lastByte=Date.now(), _wdFired=false;
   busy=true; { const _sb=$('#sendBtn'); if(_sb){_sb.disabled=false;_sb.title='Send — interrupts the current reply';} }
   const turnSpeaker=window.OraVoice?window.OraVoice.newTurn():null;
   const chatAbort=new AbortController();
@@ -2120,11 +2121,12 @@ async function send(text){
     if(settings.haUrl && settings.haToken){ payload.ha_url=settings.haUrl; payload.ha_token=settings.haToken; }
     if(isAdminSession() && settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
     else if(settings.brainMode==='fast' && srv && srv.brain && srv.brain.fast_model){ payload.provider='groq'; payload.model=srv.brain.fast_model; }
-    const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:chatAbort.signal});
+    const resp=await Promise.race([fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:chatAbort.signal}), new Promise((_,rej)=>setTimeout(()=>rej(new Error('No answer from the brain in 45s — the provider is jammed. Send again.')),45000))]);
     if(!resp.ok){ let j=null; try{j=await resp.json();}catch(e){} if(resp.status===403 && j && (j.suspended||j.blocked)){ showBlockedScreen(); throw new Error('Account suspended — pay the reinstatement fine to continue.'); } throw new Error((j&&j.error)||('AI provider error '+resp.status)); }
-    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf=''; let finished=false; let streamMedia=[];
+    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf=''; let finished=false; let streamMedia=[]; let _streamErr=null;
+    _wd=setInterval(()=>{ if(Date.now()-lastByte>120000){ _wdFired=true; try{chatAbort.abort();}catch(e){} } },4000);
     outer: while(true){
-      const {done,value}=await reader.read(); if(done)break;
+      const {done,value}=await reader.read(); lastByte=Date.now(); if(done)break;
       buf+=dec.decode(value,{stream:true});
       let idx;
       while((idx=buf.indexOf('\n\n'))>=0){
@@ -2135,6 +2137,7 @@ async function send(text){
             if(data==='[DONE]'){ finished=true; break outer; }
             try{
               const j=JSON.parse(data);
+              if(j.error){ _streamErr=new Error(String(j.error).slice(0,240)); finished=true; break outer; }
               if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build'){ if(x.coins_left!=null){ COINS=COINS||{}; COINS.balance=x.coins_left; renderCoinPill(); } if(x.url){ try{ buildCard(x); }catch(e){ addAI('<b>🏗 '+(x.name||'Your site')+'</b> is built — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the live preview here</a> (auto-saved to your vault).'); } } } if(x.tool==='edit'&&x.url){ try{ buildCard(x); }catch(e){ addAI('<b>✏️ '+(x.name||'Your site')+' updated</b> — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the new preview</a>.'); } } if(x.tool==='publish'){ try{ addAI(x.url?('🌐 Published — live at <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener">'+escapeHtml(x.url)+'</a>'):''); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } }); }
               if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
               if(j.__media && j.__media.length){ streamMedia=streamMedia.concat(j.__media); }
@@ -2144,8 +2147,10 @@ async function send(text){
         }
       }
     }
+    if(_wd)clearInterval(_wd);
+    if(_streamErr) throw _streamErr;
     if(streamMedia.length){ acc += '\n\n' + streamMedia.map(m=>m.url).join('\n'); }
-    renderRich(body, acc||'(no response)');
+    renderRich(body, acc||'(no response) — the brain stayed silent; send again and it will pick up.');
     if(streamMedia.length){
       streamMedia.forEach(m=>{
         const n=document.createElement(m.kind==='video'?'video':'img');
@@ -2160,7 +2165,7 @@ async function send(text){
     if(turnSpeaker)turnSpeaker.finish(_cleanReply(acc));else speak(acc);
   }catch(e){
     if(turnSpeaker)turnSpeaker.cancel();
-    if(e.name==='AbortError'){body.textContent+=(body.textContent?'\n':'')+'Reply interrupted.';}else if(myTurn===CHAT_TURN){
+    if(e.name==='AbortError'){ if(_wd)clearInterval(_wd); body.textContent+=(body.textContent?'\n':'')+( _wdFired?' ⏱ The provider timed out with no answer — send again and I will pick it up.':'Reply interrupted.');}else if(myTurn===CHAT_TURN){
     body.textContent='';
     const m=e.message||String(e);
     if(/api key|AI provider error 400|no credits|insufficient|429/i.test(m))
@@ -3585,7 +3590,7 @@ async function runAssistantReply(){
           if(line.startsWith('data:')){
             const data=line.slice(5).trim();
             if(data==='[DONE]'){ body.textContent=acc; history.push({role:'assistant',content:acc}); speak(acc); return; }
-            try{ const j=JSON.parse(data); const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; body.textContent=acc; scrollChat(); } }catch(e){}
+            try{ const j=JSON.parse(data); if(j.error){ addErr('⚠️ '+String(j.error).slice(0,200)); return; } const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; body.textContent=acc; scrollChat(); } }catch(e){}
           }
         }
       }

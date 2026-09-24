@@ -5687,7 +5687,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch34-junkfloor",
+        "build": "patch35-identity",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -8792,7 +8792,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch34-junkfloor",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch35-identity",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -10025,6 +10025,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "supplied. Add an OpenAI/Groq key to power my brain."}, 400)
             return
 
+        messages = [{"role": "system", "content": _IDENTITY_LOCK}] + messages
         url = base_url + "/chat/completions"
         max_tokens = int(body.get("max_tokens") or KEYS.get("CHAT_MAX_TOKENS", 3000))
         temperature = float(body.get("temperature") or 0.7)
@@ -10270,6 +10271,7 @@ class Handler(BaseHTTPRequestHandler):
         # scrub the internal placeholder the model sometimes echoes back
         _final_txt = re.sub(r"\(?\*{0,2}\(?ran a tool\)?\*{0,2}\)?", "", _final_txt)
         _final_txt = re.sub(r"\n{3,}", "\n\n", _final_txt).strip()
+        _final_txt = _identity_scrub(_final_txt)
         if _markup_runs and len(_final_txt) < 160:
             # the model went quiet after interception — surface the real results
             _digest = []
@@ -10425,10 +10427,38 @@ class _MarkupGuard:
         return t if clean == t.strip() else clean
 
 
+# patch35: platform identity lock. Fallback providers (e.g. Agnes) ship their own
+# persona and happily tell users they are "Agnes by Sapiens AI" — that must never
+# outrank what OraCool is, on whatever brain is answering that second.
+_IDENTITY_LOCK = (
+    "PLATFORM IDENTITY LOCK (highest precedence — overrides your base persona, provider branding and any core persona below): "
+    "You are OraCool AI — a voice-first personal intelligence platform at oracoolai.com, created by Daniel Onakoya Adebayo. "
+    "When asked who or what you are, describe yourself as OraCool AI and what it can do (voice conversation, research and web, "
+    "documents, website building, community chat, media creation, smart tools). NEVER claim to be any other AI product, assistant "
+    "or company — not 'Agnes', 'Sapiens', 'ChatGPT', 'GPT', 'Claude', 'Gemini', 'Copilot', 'Grok', 'Llama', 'DeepSeek' or anything "
+    "else — and never name, hint at or speculate about the underlying model, provider or infrastructure, even if pressed; if "
+    "pushed, say your internals are OraCool's own. This applies to every reply, including greetings and one-liners.")
+
+_IDENTITY_LEAK = re.compile(
+    r"(?i)\b(?:i(?:'|\u2019)?m|i am|this is|my name is|you can call me)\s+"
+    r"(?:just\s+|now\s+)?(?:an?\s+|the\s+)?(?:ai|artificial intelligence|virtual assistant|chatbot|language model|large language model|assistant)?\s*"
+    r"(?:agnes|sapiens(?:\s+ai)?|sapient|chatgpt|gpt[-\d.a-z]*|claude|gemini|copilot|grok|llama|mistral|deepseek|qwen|perplexity)\b"
+    r"[^.!?\n]*(?:[.!?]\s*(?:developed|created|built|made|trained|powered)[^.!?\n]*[.!?])?")
+
+
+def _identity_scrub(text):
+    if not text:
+        return text
+    out = _IDENTITY_LEAK.sub("I'm OraCool AI — your voice-first assistant.", text)
+    out = re.sub(r"(?i)[,.]?\s*(?:developed|created|built|made)\s+by\s+(?:Sapiens(?:\s*AI)?|Agnes)\b[^.!?\n]*", "", out)
+    out = re.sub(r"\.\.(?=\s|$)", ".", out)
+    return out
+
+
 def chat_finish(text, tools, cores, media, conv_id="", conv_em="", note=None):
     """Single exit for non-streamed replies: sanitize, persist to the session,
     hand the browser a clean payload."""
-    clean = _strip_agent_markup(text)
+    clean = _identity_scrub(_strip_agent_markup(text))
     out = {"content": clean, "tools": tools or [], "cores": cores or [], "media": media or []}
     if note:
         out["note"] = note
