@@ -965,12 +965,15 @@ def _coins_parse(raw):
 
 
 def coins_state(email):
-    """Weekly build-coin wallet for one account (auto-refills on the ISO week)."""
+    """Build-coin wallet for one account. Paid tiers auto-refill on the ISO week;
+    the FREE tier gets its 1,000,000 coins exactly once (patch38) — no refill
+    until the account pays for a plan."""
     email = (email or "").strip().lower()
     tier = check_tier(email)
     unlimited = (tier == "enterprise") or is_admin(email)
     grant = COINS_WEEKLY.get(tier, COINS_WEEKLY["free"])
-    wk = _iso_week()
+    one_time = (tier == "free") and not unlimited
+    wk = "lifetime" if one_time else _iso_week()
     rec = user_record(email) if email else None
     if not rec and email:
         # users.json is empty after a fresh deploy — hydrate from Supabase once
@@ -980,20 +983,27 @@ def coins_state(email):
             touch_user(email, coins=_c)
             rec = user_record(email)
     cs = _coins_parse((rec or {}).get("coins"))
-    if cs.get("week") == wk:
+    if cs.get("week") == wk or (one_time and cs.get("balance") is not None):
+        # free accounts keep whatever is left of their one-time grant — a stale
+        # weekly record from before patch38 (or a lapsed paid plan) is NOT refilled
         try:
-            bal = int(cs.get("balance", grant))
+            bal = max(0, int(cs.get("balance", grant)))
         except Exception:
             bal = grant
+        if one_time and cs.get("week") != wk and email and email != "guest":
+            touch_user(email, coins={"week": wk, "balance": bal})
     else:
         bal = grant
         if email and email != "guest":
             touch_user(email, coins={"week": wk, "balance": bal})
-    try:
-        reset_in = 8 - int(time.strftime("%u"))
-    except Exception:
-        reset_in = 7
-    return {"balance": bal, "grant": grant, "week": wk, "tier": tier,
+    if one_time:
+        reset_in = None
+    else:
+        try:
+            reset_in = 8 - int(time.strftime("%u"))
+        except Exception:
+            reset_in = 7
+    return {"balance": bal, "grant": grant, "week": wk, "tier": tier, "one_time": one_time,
             "unlimited": bool(unlimited), "reset_in_days": reset_in,
             "cost_build": COIN_COST_BUILD,
             "sites_left": (10 ** 9 if unlimited else bal // COIN_COST_BUILD)}
@@ -1004,10 +1014,15 @@ def coins_gate(email, cost=COIN_COST_BUILD):
     st = coins_state(email)
     if st["unlimited"] or st["balance"] >= cost:
         return None
-    msg = ("You are out of building coins for this week — a site build costs {:,} coins and you have "
-           "{:,} left. ".format(cost, st["balance"]))
-    msg += ("New coins unlock automatically after the weekly reset ({} day(s), on Mondays). "
-            .format(st["reset_in_days"]))
+    if st.get("one_time"):
+        msg = ("Your one-time Free allowance of {:,} build coins is used up — a site build costs {:,} coins and you have "
+               "{:,} left. Free accounts do not refill: new coins arrive only when you pay for a plan. "
+               .format(st["grant"], cost, st["balance"]))
+    else:
+        msg = ("You are out of building coins for this week — a site build costs {:,} coins and you have "
+               "{:,} left. ".format(cost, st["balance"]))
+        msg += ("New coins unlock automatically after the weekly reset ({} day(s), on Mondays). "
+                .format(st["reset_in_days"]))
     msg += ("Published sites stay online and everything else on your plan keeps working. "
             "Upgrade to keep building right now: Starter ₦45,000/mo = 3,000,000 coins/week (~300 sites), "
             "Pro ₦75,000/mo = 8,000,000 coins/week (~800 sites), "
@@ -3004,7 +3019,7 @@ def _llm_json(system, user, max_tokens=8000):
             continue
     return None, "all LLM providers failed: " + attempts_err
 
-def _llm_text(system, user, max_tokens=16000, extra_msgs=None):
+def _llm_text(system, user, max_tokens=16000, extra_msgs=None, effort="low"):
     """Non-streaming completion returning RAW text (no JSON contract). Tries
     groq -> openai -> agnes; reports each provider's finish_reason so the
     caller can detect truncated output (patch27: JSON-escaped HTML blew the
@@ -3014,7 +3029,7 @@ def _llm_text(system, user, max_tokens=16000, extra_msgs=None):
     if k:
         # gpt-oss on Groq first: fast, follows size budgets, and its rate-limit
         # bucket is separate from the chat model (which 429s while serving the app)
-        attempts.append((k, "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "groq-oss", {"reasoning_effort": "low"}))
+        attempts.append((k, "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "groq-oss", {"reasoning_effort": effort}))
         attempts.append((k, "https://api.groq.com/openai/v1", KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), "groq", {}))
     k = key("OPENAI_API_KEY")
     if k:
@@ -3088,6 +3103,198 @@ def _parse_builder_reply(c):
             "name": (nm.group(1).strip()[:60] if nm else "")}
 
 
+# ---- patch38: builder quality — industry blueprint, injected design kit, QA pass ----
+_BLUEPRINTS = [
+    (("restaurant", "cafe", "café", "coffee", "bakery", "kitchen", "food", "chef", "bar", "grill", "pizza", "suya", "eatery", "bistro", "lounge"),
+     dict(industry="restaurant / food & drink", palette="bg #14100d · surface #1f1813 · text #f6efe6 · accent #e0a458 (warm amber) · accent2 #b23a3a",
+          fonts="Playfair Display (display) + Inter (body)", hero="full-bleed dark gradient with a CSS-drawn plate/steam illustration and a floating 'Open today' pill",
+          sections="hero · signature dishes grid with prices · menu with category filter tabs · chef story split section · gallery mosaic (CSS art) · testimonials slider · reservation form · location & hours · footer",
+          feature="menu category filter (tabs) with animated card switch")),
+    (("hotel", "resort", "suite", "lodge", "guesthouse", "airbnb", "shortlet", "hospitality", "villa"),
+     dict(industry="hotel / hospitality", palette="bg #0f1720 · surface #172230 · text #eef4fb · accent #c9a96e (champagne gold) · accent2 #2fa4a9",
+          fonts="Cormorant Garamond (display) + Manrope (body)", hero="split hero: elegant serif headline left, CSS 'window view' card with sunset gradient right, availability bar below",
+          sections="hero with date/guests availability bar · rooms & suites cards with price/night · amenities icon grid · experiences/dining · gallery · guest reviews · location map placeholder (CSS) · booking enquiry form · footer",
+          feature="room booking modal with night-count price calculator")),
+    (("fintech", "bank", "payment", "wallet", "crypto", "loan", "savings", "invest", "trading", "remittance", "insurance", "finance"),
+     dict(industry="fintech / finance", palette="bg #070b14 · surface #0f1626 · text #e9eefb · accent #4f7cff (electric blue) · accent2 #22d3a5 (mint)",
+          fonts="Space Grotesk (display) + Inter (body)", hero="dark navy with animated gradient mesh and a CSS phone mock showing a live balance card + transaction list",
+          sections="hero · trust bar (regulated, encrypted, uptime) · features grid · how-it-works 3 steps · animated stats counters · security section · pricing/fees table · FAQ accordion · CTA + waitlist form · footer",
+          feature="fees/savings calculator with live output")),
+    (("saas", "software", "startup", "platform", "dashboard", "ai ", "app ", "tool", "automation", "analytics", "crm", "api"),
+     dict(industry="SaaS / software product", palette="bg #0b0f1a · surface #121829 · text #eaf0ff · accent #7c5cff (violet) · accent2 #22d3ee (cyan)",
+          fonts="Sora (display) + Inter (body)", hero="centered headline with gradient text, glowing orbs, and a CSS dashboard mock (sidebar + chart bars animated on load)",
+          sections="hero · logo/trust strip · feature cards with icons · product tour tabs · integrations grid · pricing toggle (monthly/yearly) · testimonials · FAQ accordion · final CTA · footer",
+          feature="pricing toggle monthly/yearly with animated price change")),
+    (("shop", "store", "ecommerce", "e-commerce", "fashion", "clothing", "sneaker", "jewel", "cosmetic", "skincare", "perfume", "market", "products"),
+     dict(industry="e-commerce / retail", palette="bg #fbf8f4 · surface #ffffff · text #1a1614 · accent #111111 · accent2 #d4573b (terracotta)",
+          fonts="DM Serif Display (display) + DM Sans (body)", hero="editorial light hero with oversized serif headline and CSS product 'cards' fanned at an angle",
+          sections="announcement bar · hero · category tiles · featured products grid with prices · collection story · benefits strip (delivery, returns) · reviews · newsletter form · footer with policies",
+          feature="cart drawer demo: add to cart updates count + total")),
+    (("portfolio", "personal", "photograph", "designer", "developer", "freelance", "resume", "cv", "artist", "writer", "creator"),
+     dict(industry="personal portfolio", palette="bg #0d0d0f · surface #17171b · text #f2f2f4 · accent #ffd166 (sunflower) · accent2 #ef476f",
+          fonts="Syne (display) + Inter (body)", hero="huge name in display type with animated marquee of skills and a CSS abstract portrait shape",
+          sections="hero · about with facts strip · selected work grid (hover reveal) · services · process timeline · testimonials · contact form · footer with social links",
+          feature="filterable work grid by category")),
+    (("agency", "studio", "marketing", "branding", "advertis", "creative", "media", "production"),
+     dict(industry="creative agency", palette="bg #f5f3ee · surface #ffffff · text #111111 · accent #ff4d1f (signal orange) · accent2 #1f1fff",
+          fonts="Bebas Neue (display) + Manrope (body)", hero="bold oversized headline, marquee client strip, animated gradient blob",
+          sections="hero · services list with hover expand · case studies grid · results counters · process steps · team · testimonials · contact form · footer",
+          feature="case study cards with hover details + counters animation")),
+    (("clinic", "hospital", "health", "dental", "doctor", "pharmacy", "medical", "wellness", "therapy", "lab"),
+     dict(industry="healthcare / clinic", palette="bg #f4f9fb · surface #ffffff · text #0f2a3a · accent #0e9f9a (teal) · accent2 #2563eb",
+          fonts="Plus Jakarta Sans (display + body)", hero="clean light hero with soft blob shapes and an appointment card",
+          sections="hero with appointment CTA · services grid · doctors/team · why-us stats · patient journey steps · insurance/pricing · testimonials · FAQ · appointment form · footer with emergency contact",
+          feature="appointment form with department select + date validation")),
+    (("school", "academy", "course", "education", "tutor", "university", "college", "training", "bootcamp", "learning"),
+     dict(industry="education", palette="bg #0f1b2d · surface #16253d · text #eef3ff · accent #f7b731 (gold) · accent2 #36c2cf",
+          fonts="Fraunces (display) + Inter (body)", hero="split hero: headline + enrol CTA, CSS 'course card stack' illustration",
+          sections="hero · programmes/courses grid · outcomes counters · curriculum accordion · instructors · schedule/tuition table · student stories · admissions steps · enquiry form · footer",
+          feature="curriculum accordion + tuition tab switch")),
+    (("real estate", "property", "estate", "realtor", "apartment", "housing", "land", "rent"),
+     dict(industry="real estate", palette="bg #101418 · surface #181f26 · text #f1f4f7 · accent #c8a15a (brass) · accent2 #3b82f6",
+          fonts="Libre Baskerville (display) + Inter (body)", hero="cinematic dark hero with search bar (location, type, budget) and CSS skyline silhouette",
+          sections="hero with property search bar · featured listings grid (price, beds, baths) · neighbourhoods · why-us · buying process steps · agents · testimonials · mortgage calculator · enquiry form · footer",
+          feature="listings filter by type/budget + mortgage calculator")),
+    (("gym", "fitness", "yoga", "trainer", "sport", "workout", "athlet", "boxing", "pilates"),
+     dict(industry="fitness", palette="bg #0a0a0a · surface #151515 · text #f5f5f5 · accent #c6ff00 (volt) · accent2 #ff3b3b",
+          fonts="Anton (display) + Inter (body)", hero="high-contrast hero with diagonal split, animated volt accent line and a class countdown pill",
+          sections="hero · programs grid · class timetable tabs · coaches · transformation counters · membership pricing · testimonials · trial signup form · location & hours · footer",
+          feature="weekday timetable tabs + BMI/goal calculator")),
+    (("event", "wedding", "conference", "festival", "concert", "summit", "party", "meetup", "expo"),
+     dict(industry="event", palette="bg #12051f · surface #1c0b2e · text #f7ecff · accent #ff6bd6 (magenta) · accent2 #ffd166",
+          fonts="Unbounded (display) + Inter (body)", hero="poster-style hero with date/venue badges, animated countdown and gradient rays",
+          sections="hero with live countdown · about · speakers/lineup grid · schedule tabs by day · venue & travel · tickets pricing · sponsors strip · FAQ · register form · footer",
+          feature="live countdown timer + day schedule tabs")),
+    (("church", "ministry", "mosque", "ngo", "charity", "foundation", "nonprofit", "non-profit", "community", "donate", "volunteer"),
+     dict(industry="community / nonprofit", palette="bg #fffdf8 · surface #ffffff · text #1f2933 · accent #d97706 (amber) · accent2 #0f766e",
+          fonts="Lora (display) + Source Sans 3 (body)", hero="warm light hero with hand-drawn style SVG sun/shape and a donation progress bar",
+          sections="hero · mission · programmes/ministries grid · impact counters · upcoming events list · stories/testimonials · get involved (volunteer/donate) tabs · donation form · footer",
+          feature="donation amount presets with progress bar update")),
+    (("law", "legal", "attorney", "chambers", "consult", "accounting", "audit", "advisory", "firm", "tax"),
+     dict(industry="professional services", palette="bg #0b1220 · surface #121b2e · text #e8edf6 · accent #b48a3c (bronze) · accent2 #2f6fed",
+          fonts="Cormorant (display) + Inter (body)", hero="stately dark hero with thin gold rules, practice-area chips and a consultation CTA",
+          sections="hero · practice areas grid · about the firm · partners/team · results/credentials counters · process steps · insights/articles · testimonials · consultation form · footer with disclaimer",
+          feature="practice-area tabs with detail panels")),
+    (("travel", "tour", "safari", "trip", "flight", "vacation", "adventure", "tourism"),
+     dict(industry="travel / tours", palette="bg #06131a · surface #0d1f28 · text #ecf7fb · accent #ffb347 (sunset) · accent2 #2dd4bf",
+          fonts="Josefin Sans (display) + Nunito (body)", hero="wide hero with layered CSS mountains/sea gradient parallax and a trip search bar",
+          sections="hero with search bar · destinations grid · featured packages with prices · why travel with us · itinerary accordion · reviews slider · gallery · booking form · footer",
+          feature="package filter by budget/duration + itinerary accordion")),
+    (("salon", "beauty", "spa", "barber", "nail", "makeup", "hair", "lash", "massage"),
+     dict(industry="beauty / salon", palette="bg #fdf6f3 · surface #ffffff · text #2b1d1a · accent #b76e79 (rose gold) · accent2 #2f2f2f",
+          fonts="Italiana (display) + Jost (body)", hero="soft light hero with rose gradient orbs, service price highlights and a Book CTA",
+          sections="hero · services & price list tabs · signature treatments · team · gallery · packages · reviews · booking form with time slots · location & hours · footer",
+          feature="service tabs + booking time-slot picker")),
+    (("logistics", "delivery", "courier", "shipping", "transport", "haulage", "fleet", "dispatch", "moving"),
+     dict(industry="logistics", palette="bg #0a0f14 · surface #121a22 · text #eef3f7 · accent #ff7a00 (safety orange) · accent2 #00b4d8",
+          fonts="Rajdhani (display) + Inter (body)", hero="industrial hero with animated route line SVG, tracking input and coverage badges",
+          sections="hero with tracking input · services grid · coverage/network · how it works · fleet/capabilities counters · pricing estimator · clients strip · testimonials · quote form · footer",
+          feature="shipment tracking demo + price estimator")),
+    (("construction", "architect", "interior", "builder", "engineering", "renovation", "furniture", "design studio"),
+     dict(industry="construction / architecture", palette="bg #111111 · surface #1b1b1b · text #f3f1ec · accent #e3b23c (mustard) · accent2 #9aa5b1",
+          fonts="Archivo Black (display) + Archivo (body)", hero="grid-lined blueprint hero with CSS isometric building shapes and project counters",
+          sections="hero · services · featured projects grid with hover captions · process timeline · materials/quality · team · certifications strip · testimonials · quote form · footer",
+          feature="project gallery filter + before/after slider")),
+]
+_BLUEPRINT_DEFAULT = dict(industry="modern business", palette="bg #0b1020 · surface #121a2e · text #eaf0ff · accent #22d3ee (cyan) · accent2 #a78bfa (violet)",
+                          fonts="Outfit (display) + Inter (body)", hero="dark gradient hero with glowing CSS orbs, gradient headline and a product/feature mock card",
+                          sections="hero · trust strip · services/features grid · about split · process steps · stats counters · testimonials · FAQ accordion · contact form · footer",
+                          feature="FAQ accordion + animated stats counters")
+
+
+def _brief_blueprint(prompt):
+    """patch38: turn a brief into a concrete design blueprint (industry, palette,
+    fonts, section plan, hero idea, interactive feature) so the builder starts
+    from an art-directed plan instead of a blank page."""
+    low = " " + (prompt or "").lower() + " "
+    best, score = None, (0, 0)
+    for kws, bp in _BLUEPRINTS:
+        hits = []
+        for k in kws:
+            k = k.strip()
+            # word-start match; short words also need a word END ("bar" must not hit "barber")
+            m = re.search(r"\b" + re.escape(k) + (r"\b" if len(k) <= 4 else ""), low)
+            if m:
+                hits.append(m.start())
+        if not hits:
+            continue
+        # more keyword hits win; on a tie the industry named EARLIEST in the brief
+        # wins ("a boutique hotel ... with a restaurant" is a hotel, not a restaurant)
+        sc = (len(hits), -min(hits))
+        if sc > score:
+            best, score = bp, sc
+    bp = best or _BLUEPRINT_DEFAULT
+    return ("industry: " + bp["industry"] + " | palette (CSS variables): " + bp["palette"] +
+            " | typography: " + bp["fonts"] + " | hero: " + bp["hero"] +
+            " | section plan (in order, adapt names): " + bp["sections"] +
+            " | must-work interactive feature: " + bp["feature"])
+
+
+_DESIGN_KIT_CSS = ("<style id=\"ok-kit\">/* OraCool design kit */*,*::before,*::after{box-sizing:border-box}html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}"
+                   "body{margin:0;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}"
+                   "img,video{max-width:100%;height:auto}svg{max-width:100%}"
+                   ":focus-visible{outline:2px solid currentColor;outline-offset:3px}"
+                   ".ok-reveal{opacity:0;transform:translateY(18px);transition:opacity .75s cubic-bezier(.2,.7,.2,1),transform .75s cubic-bezier(.2,.7,.2,1)}"
+                   ".ok-reveal.ok-in{opacity:1;transform:none}.ok-scrolled{box-shadow:0 8px 28px rgba(0,0,0,.14)}"
+                   "@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.ok-reveal{opacity:1;transform:none;transition:none}}</style>")
+_DESIGN_KIT_JS = ("<script id=\"ok-kit-js\">(function(){var d=document;try{var els=[].slice.call(d.querySelectorAll('section,.card,.feature,.plan,.pricing-card,.testimonial,.service,.room,.dish,.project,article'))"
+                  ".filter(function(e){return !e.closest('header,nav,footer')});if(!('IntersectionObserver' in window)||matchMedia('(prefers-reduced-motion: reduce)').matches){return}"
+                  "els.forEach(function(e,i){e.classList.add('ok-reveal');if(e.tagName!=='SECTION'){e.style.transitionDelay=((i%6)*70)+'ms'}});"
+                  "var io=new IntersectionObserver(function(en){en.forEach(function(x){if(x.isIntersecting){x.target.classList.add('ok-in');io.unobserve(x.target)}})},{threshold:.08,rootMargin:'0px 0px -6% 0px'});"
+                  "els.forEach(function(e){io.observe(e)});setTimeout(function(){els.forEach(function(e){e.classList.add('ok-in')})},2500);"
+                  "var h=d.querySelector('header');if(h){var on=function(){h.classList.toggle('ok-scrolled',(window.scrollY||0)>8)};addEventListener('scroll',on,{passive:true});on()}}catch(e){}})();</script>")
+
+
+def _inject_design_kit(html):
+    """patch38: prepend the design kit (reset, smoothing, focus, scroll reveal,
+    sticky-header shadow, reduced-motion) into a generated page — idempotent."""
+    h = html or ""
+    if 'id="ok-kit"' in h:
+        return h
+    m = re.search(r"</head>", h, re.I)
+    if m:
+        h = h[:m.start()] + _DESIGN_KIT_CSS + h[m.start():]
+    else:
+        return h
+    m2 = None
+    for m2 in re.finditer(r"</body>", h, re.I):
+        pass
+    if m2:
+        h = h[:m2.start()] + _DESIGN_KIT_JS + h[m2.start():]
+    return h
+
+
+def _site_quality_issues(html):
+    """patch38: cheap design-review heuristics; a list of concrete gaps the
+    builder must fix in its upgrade pass (empty list = ship it)."""
+    h = html or ""
+    low = h.lower()
+    issues = []
+    if len(h) < 14000:
+        issues.append("the file is only {:,} bytes — too thin; expand real, specific copy and sections (target 18-34KB)".format(len(h)))
+    if low.count("<section") < 5:
+        issues.append("fewer than 5 <section> blocks — a real business site needs 6-8 distinct sections")
+    if "@media" not in low:
+        issues.append("no responsive @media rules")
+    if not any(k in low for k in ("intersectionobserver", "@keyframes", "transition")):
+        issues.append("no motion at all (add IntersectionObserver reveals, hover transitions, one keyframe animation)")
+    if "lorem" in low:
+        issues.append("lorem ipsum placeholder text present — write real copy")
+    if re.search(r"<img[^>]+src=[\"']https?://", h, re.I):
+        issues.append("external <img> URLs — replace with inline SVG / CSS art (external images break offline and on publish)")
+    if "<form" not in low:
+        issues.append("no contact/lead form with validation and success state")
+    if "<footer" not in low:
+        issues.append("no <footer> with anchor links")
+    if 'name="viewport"' not in low and "name='viewport'" not in low:
+        issues.append("missing viewport meta tag")
+    if "<nav" not in low:
+        issues.append("no <nav> in the header")
+    if re.search(r"\bTODO\b|\bTBD\b", h):
+        issues.append("TODO/TBD placeholders left in the page")
+    return issues
+
+
 def build_site(email, name, prompt):
     """Arena-style builder (patch27): designs a complete, professional static
     website matched to the brief — Lovable/Base44-grade template, real copy,
@@ -3121,7 +3328,7 @@ def build_site(email, name, prompt):
         "Aurora SaaS, Noir Dining, Editorial Portfolio, Commerce Grid, Bold Agency, Festival Event, Zen Clinic); "
         "line 2 'TITLE: <site name>'; line 3 exactly 'BEGIN index.html'; then the COMPLETE raw HTML file — "
         "no JSON, no markdown fences, no explanations, and nothing after the file except a final 'END' line. "
-        "The file starts with <!DOCTYPE html> and ends with </html>; the WHOLE reply stays between 12KB and 22KB (quality matters — do not go below 12KB) — "
+        "The file starts with <!DOCTYPE html> and ends with </html>; the WHOLE reply stays between 18KB and 34KB (quality matters — do not go below 18KB) — "
         "dense, efficient code (short selectors, compact CSS), not sprawling boilerplate. "
         "First pick the template family, palette and typography that genuinely fit the industry and mood "
         "(a restaurant is NOT a fintech is NOT a personal portfolio). ONE self-contained index.html with inline "
@@ -3138,7 +3345,13 @@ def build_site(email, name, prompt):
         "and make it work); a form with client-side validation and an inline success state; a footer with real "
         "anchor links; a <title>, meta description and an inline SVG data-URI favicon; smooth anchor scrolling; "
         "visible keyboard focus styles; prefers-reduced-motion respected. Fully responsive, mobile-first. "
-        "No TODOs, no placeholders.")
+        "No TODOs, no placeholders. "
+        # patch38: an explicit length contract — without it fast models ship thin 10KB pages
+        "LENGTH CONTRACT (hard): the HTML file must be between 20,000 and 30,000 characters. Reach it with SUBSTANCE, "
+        "not padding: 7-9 sections, each with a heading, an intro paragraph of 40-70 words and 3-6 cards/items of 20-40 "
+        "words each; a 5-6 question FAQ; a footer with 3 columns; complete CSS (~250 lines) with hover/focus/motion states; "
+        "and the JS for the interactive feature. Before you finish, count: if the file is under 20,000 characters, add "
+        "another real section (testimonials, FAQ, location, team, process) until it is not.")
     _generic = (not name) or name.strip().lower() in ("my-site", "site", "website", "app", "landing page", "page")
     user = ("Build this website now. " + ("Site name: " + name + ". " if not _generic else
             "No brand name was given — invent a short fitting name and put it after 'TITLE: '. ") +
@@ -3146,14 +3359,16 @@ def build_site(email, name, prompt):
             " Structure: header with nav, impactful hero, at least five distinct content sections a real "
             "business in this brief would have, and a footer. Match the visual language to the industry. "
             "Remember the strict output format: TEMPLATE line, TITLE line, BEGIN index.html, the complete "
-            "HTML file (under 18KB), END.")
-    c_raw, prov, finish = _llm_text(system, user, max_tokens=16000)
+            "HTML file (18-34KB), END. DESIGN BLUEPRINT (art direction — follow it, adapting names/copy to the brief): "
+            + _brief_blueprint(prompt) + ". Write like a top Awwwards studio: specific headlines, real-sounding "
+            "details (prices, hours, names, locations from the brief or plausible for it), polished micro-interactions.")
+    c_raw, prov, finish = _llm_text(system, user, max_tokens=16000, effort="medium")
     # the model can write past its single-reply token cap — continue the SAME
     # file where it stopped (how real AI builders stream long artifacts)
     for _turn in range(2):
         if not c_raw or "</html>" in c_raw.lower():
             break
-        cont, prov2, fin2 = _llm_text(system, user, max_tokens=16000, extra_msgs=[
+        cont, prov2, fin2 = _llm_text(system, user, max_tokens=16000, effort="medium", extra_msgs=[
             {"role": "assistant", "content": c_raw},
             {"role": "user", "content": "Continue the file EXACTLY from where you stopped — no repeats, no preamble, no fences, resume mid-line if needed. Finish the document and end with the END line."}])
         if not cont:
@@ -3163,7 +3378,7 @@ def build_site(email, name, prompt):
     data = _parse_builder_reply(c_raw)
     if not data or (finish == "length" and not data):
         c2, prov2, _f2 = _llm_text(system + " The previous reply was too long or malformed and got cut off. "
-                                           "This time keep the HTML file itself under 13KB (still professional: "
+                                           "This time keep the HTML file itself under 20KB (still professional: "
                                            "cut words, not design).", user, max_tokens=16000)
         d2 = _parse_builder_reply(c2)
         if d2:
@@ -3187,6 +3402,42 @@ def build_site(email, name, prompt):
         clean.append({"path": p, "content": c})
     if not any(f["path"] == "index.html" for f in clean):
         return {"error": "The AI did not include an index.html page. Please try again."}
+    # patch38: design review — when the first draft misses the bar on 2+ points,
+    # one upgrade pass rewrites the complete file against the concrete gap list
+    _idx = next(f for f in clean if f["path"] == "index.html")
+    _issues = _site_quality_issues(_idx["content"])
+    _qa = {"issues_before": len(_issues), "upgraded": False}
+    if c_raw and (len(_issues) >= 2 or len(_idx["content"]) < 16000):
+        try:
+            # the draft itself is NOT echoed back (fast providers cap prompt tokens per
+            # minute); a compact summary + the concrete gap list steers the rewrite
+            _h2s = re.findall(r"<h[12][^>]*>(.*?)</h[12]>", _idx["content"], re.I | re.S)
+            _h2s = [re.sub(r"<[^>]+>", "", x).strip()[:40] for x in _h2s][:12]
+            _summary = ("Your previous draft (TEMPLATE {}, {:,} characters, headings: {}) FAILED the design review on: {}."
+                        .format(str(data.get("template") or "?")[:40], len(_idx["content"]),
+                                " | ".join(_h2s) or "none", "; ".join(_issues) or "too little substance"))
+            _c3, _p3, _f3 = _llm_text(system, user, max_tokens=16000, effort="medium", extra_msgs=[
+                {"role": "assistant", "content": "(draft withheld — see review)"},
+                {"role": "user", "content": "DESIGN REVIEW — " + _summary + " Write the COMPLETE site again from scratch, "
+                                            "fixing every point: honour the LENGTH CONTRACT (20,000-30,000 characters of real "
+                                            "substance), keep the same brand, palette and section plan, same strict output format "
+                                            "(TEMPLATE line, TITLE line, BEGIN index.html, full HTML, END). No fences, no commentary."}])
+            _d3 = _parse_builder_reply(_c3)
+            _f3s = (_d3 or {}).get("files") if isinstance(_d3, dict) else None
+            _new = next((str(x.get("content") or "") for x in (_f3s or []) if isinstance(x, dict) and str(x.get("path") or "").strip().lstrip("/") == "index.html"), "")
+            if _new and "</html>" in _new.lower() and len(_site_quality_issues(_new)) < len(_issues):
+                _idx["content"] = _new[:_BUILD_MAX_FILE]
+                _qa["upgraded"] = True
+                _qa["issues_after"] = len(_site_quality_issues(_new))
+                if isinstance(_d3, dict):
+                    if _d3.get("template"):
+                        data["template"] = _d3.get("template")
+                    if _d3.get("name") and _generic:
+                        data["name"] = _d3.get("name")
+                prov = _p3 or prov
+        except Exception:
+            pass
+    _idx["content"] = _inject_design_kit(_idx["content"])
     # honour the model's title when the user gave no explicit name
     _gn = str(data.get("name") or "").strip()[:40] if isinstance(data, dict) else ""
     if _generic and _gn:
@@ -3225,7 +3476,7 @@ def build_site(email, name, prompt):
     return {"ok": True, "slug": slug, "url": "/builds/" + slug + "/", "name": name,
             "template": template, "files": [f["path"] for f in clean], "provider": prov,
             "coins_spent": COIN_COST_BUILD, "coins_left": coins_left,
-            "build_saved": bool(bsaved),
+            "build_saved": bool(bsaved), "qa": _qa, "bytes": len(_idx["content"]),
             "note": "Live preview is in the card above (auto-saved to the account vault — it survives app updates). "
                     "If the user asks to publish, run the publish tool and report the exact url it returns "
                     "(https://oracoolai.com/sites/<name>/ — opens instantly on every device); do NOT invent a "
@@ -3236,9 +3487,14 @@ def build_site(email, name, prompt):
 def build_list(email):
     builds_warm()
     meta = _builds_load()
+    # patch38: a user sees only their OWN builds (admins see everything) — the
+    # registry used to leak every account's studio into every Websites panel
+    em = (email or "").strip().lower()
+    adm = is_admin(em)
+    keep = [s for s in meta if adm or (em and str(meta[s].get("owner") or "").strip().lower() == em)]
     # newest first by build time (patch27: slug-alphabetical ordering pushed real
     # builds past the cap once the registry grew)
-    out = [dict(meta[s], slug=s) for s in sorted(meta, key=lambda s: (str(meta[s].get("t") or ""), s), reverse=True)]
+    out = [dict(meta[s], slug=s) for s in sorted(keep, key=lambda s: (str(meta[s].get("t") or ""), s), reverse=True)]
     return {"ok": True, "builds": out[:50]}
 
 _EDIT_DAILY = {}
@@ -5687,7 +5943,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch37-brand",
+        "build": "patch38-direct",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6714,22 +6970,24 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         out.append({"tool": "signal", "label": s2 + " signal", "result": _shrink(trade_signal(s2))})
     # IP
     ipm = re.search(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", t)
-    if ipm:
+    # patch38: every OSINT lookup (IP · domain · email · phone · username · dark-web) is Starter+
+    _osint_ok = tier_gte(tier, "starter")
+    if ipm and _osint_ok:
         out.append({"tool": "ip", "label": "IP " + ipm.group(1), "result": _shrink(osint_ip(ipm.group(1)))})
     # domain
     if not ipm:
         dm = re.search(r"\b([a-z0-9-]+\.(?:com|net|org|io|co|ng|dev|ai|me|xyz|app|info|biz))\b", low)
-        if dm and any(k in low for k in ("whois", "domain", "dns", "lookup", "website", "site", "check")):
+        if dm and _osint_ok and any(k in low for k in ("whois", "domain", "dns", "lookup", "website", "site", "check")):
             out.append({"tool": "domain", "label": "domain " + dm.group(1),
                         "result": _shrink(osint_domain(dm.group(1)))})
     # email breach
     em = re.search(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", low)
-    if em and any(k in low for k in ("breach", "hack", "pwned", "leak", "email", "investigate", "check")):
+    if em and _osint_ok and any(k in low for k in ("breach", "hack", "pwned", "leak", "email", "investigate", "check")):
         out.append({"tool": "email", "label": "breach · " + em.group(0),
                     "result": _shrink(osint_email(em.group(0), None))})
     # phone
     ph = re.search(r"\+?\d[\d\s\-()]{8,}", t)
-    if ph and any(k in low for k in ("phone", "number", "trace", "carrier", "who called", "caller")):
+    if ph and _osint_ok and any(k in low for k in ("phone", "number", "trace", "carrier", "who called", "caller")):
         out.append({"tool": "phone", "label": "phone " + ph.group(0),
                     "result": _shrink(phone_intel.lookup(ph.group(0), key_lookup=key, http_fetch=http_fetch))})
     # username OSINT (free) — @handle or "username X"
@@ -6737,14 +6995,14 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         um = re.search(r"@([a-z0-9_\.]{2,30})", low)
         if not um:
             um = re.search(r"(?:username|handle|profile)\s+(?:of|for)?\s*([a-z0-9_\.]{2,30})", low)
-        if um and any(k in low for k in ("username", "handle", "profile", "@", "lookup", "who is")):
+        if um and _osint_ok and any(k in low for k in ("username", "handle", "profile", "@", "lookup", "who is")):
             out.append({"tool": "username", "label": "username " + um.group(1),
                         "result": _shrink(osint_username(um.group(1)))})
-    # dark-web intelligence — FREE on every plan (passive public indexes only:
+    # dark-web intelligence — Starter+ since patch38 (passive public indexes only:
     # breach databases + OnionLand/Ahmia hidden-service directories. .onion sites
     # are NEVER opened; no Tor, no downloads, no transactions.)
-    if any(k in low for k in ("dark web", "dark-web", "darkweb", "onion", "tor site",
-                              "paste site", "criminal forum", "leaked on")):
+    if _osint_ok and any(k in low for k in ("dark web", "dark-web", "darkweb", "onion", "tor site",
+                                            "paste site", "criminal forum", "leaked on")):
         term = re.sub(r"(?i)\b(?:dark\s?-?\s?web|darkweb|onion|tor site|search|check|look up|look for|for|about|on|the|a|an)\b",
                       " ", t)
         term = " ".join(term.split())[:60] or "marketplace"
@@ -7203,6 +7461,13 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                                           "note": f"This feature unlocks on the {plan.title()} plan. The user is currently on {tier.title()}."})})
     if not tier_gte(tier, "starter") and any(k in low for k in ("search for", "search the web", "web search")):
         _locked("web search", "starter")
+    if not tier_gte(tier, "starter"):
+        _osint_ask = bool(ipm) or any(k in low for k in ("dark web", "dark-web", "darkweb", "onion", "breach", "pwned", "whois",
+                                                          "osint", "carrier", "who called", "caller", "username", "handle")) \
+            or (em is not None and any(k in low for k in ("leak", "hack", "investigate", "check", "email"))) \
+            or (ph is not None and any(k in low for k in ("phone", "number", "trace")))
+        if _osint_ask:
+            _locked("OSINT tools (IP · domain · email breach · phone · username · dark-web index)", "starter")
     if not tier_gte(tier, "pro"):
         if any(k in low for k in ("shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck")):
             _locked("deep OSINT (Shodan / VirusTotal / AbuseIPDB / URLScan / LeakCheck)", "pro")
@@ -8653,6 +8918,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_file(os.path.join(BASE_DIR, "voice-reminders.js"), "text/javascript")
         elif path == "/apps.js":
             self._send_file(os.path.join(BASE_DIR, "apps.js"), "text/javascript")
+        elif path == "/md.js":
+            self._send_file(os.path.join(BASE_DIR, "md.js"), "text/javascript")
         elif path == "/sw.js":
             self._send_file(os.path.join(BASE_DIR, "sw.js"), "text/javascript")
         elif path.startswith("/builds/"):
@@ -8794,7 +9061,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch37-brand",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch38-direct",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -8859,20 +9126,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(result)
             elif path == "/api/voice/transcribe":
                 self._send_json(voice_transcribe(body, body["email"]))
-            # ---- free OSINT
+            # ---- OSINT (patch38: Starter and above — the Free tier has no OSINT tools)
             elif path == "/api/osint/ip":
-                self._send_json(osint_ip(body.get("ip")))
+                if self._require_tier(body, "starter"):
+                    self._send_json(osint_ip(body.get("ip")))
             elif path == "/api/osint/domain":
-                self._send_json(osint_domain(body.get("domain")))
+                if self._require_tier(body, "starter"):
+                    self._send_json(osint_domain(body.get("domain")))
             elif path == "/api/osint/email":
                 # A caller-supplied HaveIBeenPwned key is an administrator override;
                 # everyone else uses the server's key (or none) — see _sanitize_overrides.
-                self._sanitize_overrides(body)
-                self._send_json(osint_email(body.get("email"), body.get("hibp_key")))
+                if self._require_tier(body, "starter"):
+                    self._sanitize_overrides(body)
+                    self._send_json(osint_email(body.get("email"), body.get("hibp_key")))
             elif path == "/api/osint/username":
-                self._send_json(osint_username(body.get("username")))
+                if self._require_tier(body, "starter"):
+                    self._send_json(osint_username(body.get("username")))
             elif path == "/api/osint/darkweb":
-                self._send_json(osint_darkweb(body.get("target") or body.get("query")))
+                if self._require_tier(body, "starter"):
+                    self._send_json(osint_darkweb(body.get("target") or body.get("query")))
             # ---- investigation platform (PRO+): cases, evidence, extraction, wallets, watch ----
             elif path == "/api/case/create":
                 if self._require_tier(body, "pro"):
@@ -8928,8 +9200,9 @@ class Handler(BaseHTTPRequestHandler):
                 if self._require_tier(body, "pro"):
                     self._send_json(watch_run_all())
             elif path == "/api/osint/phone":
-                self._send_json(phone_intel.lookup(body.get("phone") or "",
-                                                   key_lookup=key, http_fetch=http_fetch))
+                if self._require_tier(body, "starter"):
+                    self._send_json(phone_intel.lookup(body.get("phone") or "",
+                                                       key_lookup=key, http_fetch=http_fetch))
             elif path == "/api/weather":
                 self._send_json(weather(body.get("city"), body.get("lat"), body.get("lon")))
             # ---- markets (free)
@@ -8975,7 +9248,8 @@ class Handler(BaseHTTPRequestHandler):
                         _bname = _mn.group(1) if _mn else "my-site"
                     self._send_json(build_site(body.get("email"), _bname, _bm or _bname))
             elif path == "/api/builds/list":
-                self._send_json(build_list(body.get("email")))
+                _bp = self._auth(body)
+                self._send_json(build_list((_bp.get("sub") if _bp else None) or body.get("email")))
             elif path == "/api/sites":
                 _act = str(body.get("action") or "list").strip().lower()
                 _em = body.get("email") or ""

@@ -37,7 +37,7 @@ def read(name):
 # ---------------------------------------------------------------- markers
 
 def test_build_marker_patch25():
-    assert read("server.py").count('"build": "patch37-brand"') == 2
+    assert read("server.py").count('"build": "patch38-direct"') == 2
 
 
 # ---------------------------------------------------------------- voice notes
@@ -89,7 +89,7 @@ def test_build_site_with_mocked_llm(monkeypatch):
             + "</body></html>")
     monkeypatch.setattr(
         server, "_llm_text",
-        lambda s, u, max_tokens=16000, extra_msgs=None:
+        lambda s, u, max_tokens=16000, extra_msgs=None, effort="low":
         ("TEMPLATE: Mock Minimal\nTITLE: Demo\nBEGIN index.html\n" + html + "\nEND", "mock", "stop"))
     # clean slate
     meta = server._builds_load()

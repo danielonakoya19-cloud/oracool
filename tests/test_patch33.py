@@ -8,7 +8,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 
 class AlumniBandTests(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch37-brand"'), 2)
+        self.assertEqual(SRV.count('"patch38-direct"'), 2)
 
     def test_section_once_with_nav_anchor(self):
         self.assertEqual(LAND.count('id="partners"'), 1)

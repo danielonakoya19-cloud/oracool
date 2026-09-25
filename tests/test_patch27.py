@@ -95,14 +95,20 @@ def test_wallet_grants_and_drains(wallet, monkeypatch):
     assert st2["balance"] == 0 and st2["sites_left"] == 0
     err = server.coins_gate(email)
     assert err and err["locked"] == "coins" and "upgrade" in err["error"].lower()
-    assert "day" in err["error"]  # honest weekly-cooldown wording
+    assert "one-time" in err["error"]  # patch38: Free never refills — honest wording, no cooldown promise
 
 
-def test_wallet_refills_on_new_week(wallet):
+def test_wallet_refills_on_new_week(wallet, monkeypatch):
     email = wallet
+    # patch38: the FREE grant is one-time — a stale record is kept, never refilled
     server.touch_user(email, coins={"week": "2020-W01", "balance": 3})
     st = server.coins_state(email)
-    assert st["balance"] == 1_000_000  # stale week → full refill
+    assert st["balance"] == 3 and st["one_time"] and st["reset_in_days"] is None
+    # paid tiers still refill on the ISO week
+    monkeypatch.setattr(server, "check_tier", lambda e: "starter")
+    server.touch_user(email, coins={"week": "2020-W01", "balance": 3})
+    st = server.coins_state(email)
+    assert st["balance"] == 3_000_000 and not st["one_time"]
 
 
 def test_wallet_partial_balance_kept_same_week(wallet):
@@ -227,7 +233,7 @@ def test_publish_requires_existing_build(monkeypatch):
 # --------------------------------------------------------------------- markers
 def test_marker_and_endpoints_present():
     src = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
-    assert src.count('"build": "patch37-brand"') == 2
+    assert src.count('"build": "patch38-direct"') == 2
     assert '"/api/sites"' in src and '"/api/coins"' in src
     html = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
     assert "publishModal" in html and "refreshCoins" in html and "coinPill" in html

@@ -57,7 +57,7 @@ def test_build_site_reports_vault_save_flag(monkeypatch):
             + "<!--" + PAD + "-->" + "</body></html>")
     monkeypatch.setattr(
         server, "_llm_text",
-        lambda s, u, max_tokens=16000, extra_msgs=None:
+        lambda s, u, max_tokens=16000, extra_msgs=None, effort="low":
         ("TEMPLATE: Mock Vault\nTITLE: Vaultp28\nBEGIN index.html\n" + html + "\nEND", "mock", "stop"))
     meta = server._builds_load()
     meta.pop("vaultp28", None)
