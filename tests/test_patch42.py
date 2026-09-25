@@ -27,7 +27,7 @@ def _sse(pieces, finish="stop"):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch42-feed"'), 2)
+        self.assertEqual(SRV.count('"patch43-modes"'), 2)
         self.assertNotIn("patch41-studio", SRV)
 
 
@@ -108,7 +108,7 @@ class Feed(unittest.TestCase):
 class Client(unittest.TestCase):
     def test_feed_ui(self):
         for needle in ("function stepsCard(anchor, opts)", "Working for ", "'Building '+name", "const ICON={skill:", "function wantsEdit(q)",
-                       "if(session && (wantsBuild(text)||wantsEdit(text))) _steps=stepsCard(b);", "const feed=stepsCard(null,{parent:prog});"):
+                       "if(session && (_mode==='build' || wantsBuild(text)||wantsEdit(text))) _steps=stepsCard(b);", "const feed=stepsCard(null,{parent:prog});"):
             self.assertIn(needle, APP, needle)
 
 

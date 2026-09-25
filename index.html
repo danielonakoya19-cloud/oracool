@@ -168,6 +168,17 @@
   .edprog{height:6px; border-radius:4px; background:rgba(125,211,252,.12); overflow:hidden; margin-top:8px;} .edprog i{display:block; height:100%; width:0; background:var(--cyan,#22d3ee); transition:width .3s;}
   /* patch40: Arena-style "running steps" card for builds */
   .steps{border:1px solid var(--line); border-radius:12px; background:rgba(3,12,18,.55); margin:6px 0 10px; font-size:12.5px; overflow:hidden;}
+  .modebtn{display:inline-flex; align-items:center; gap:6px; height:36px; padding:0 12px 0 10px; margin-left:4px; border-radius:999px; border:1px solid var(--line); background:rgba(0,229,255,.05); color:var(--text); font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; white-space:nowrap;}
+  .modebtn:hover{background:rgba(0,229,255,.1);} .modebtn .mi-ch{color:var(--dim); font-size:10px;} .modebtn.build{border-color:rgba(251,191,36,.55); background:rgba(251,191,36,.10);} .modebtn.expert{border-color:rgba(167,139,250,.55);} .modebtn.fast{border-color:rgba(52,211,153,.5);}
+  .gpt-input.big{position:relative;}
+  .modemenu{position:absolute; left:12px; bottom:calc(100% + 8px); width:min(330px, calc(100vw - 40px)); background:#0b1520; border:1px solid var(--line); border-radius:16px; box-shadow:0 18px 50px rgba(0,0,0,.55); padding:6px; z-index:60;}
+  .modemenu[hidden]{display:none;}
+  .modemenu .mi{display:flex; align-items:center; gap:12px; width:100%; text-align:left; padding:9px 10px; border:0; border-radius:10px; background:transparent; color:var(--text); font:inherit; cursor:pointer;}
+  .modemenu .mi:hover{background:rgba(255,255,255,.06);} .modemenu .mi>span:nth-child(2){flex:1; display:flex; flex-direction:column; gap:1px;} .modemenu .mi b{font-size:13.5px;} .modemenu .mi small{color:var(--dim); font-size:11.5px; line-height:1.3;}
+  .modemenu .mi .mi-ic{width:22px; text-align:center; font-size:15px; color:var(--dim);} .modemenu .mi .mi-ok{visibility:hidden; color:var(--text);} .modemenu .mi.on .mi-ok{visibility:visible;}
+  .modemenu .mi-up{display:flex; align-items:center; gap:10px; margin:6px -6px -6px; padding:10px 14px; border-top:1px solid var(--line); background:rgba(255,255,255,.03); border-radius:0 0 16px 16px;} .modemenu .mi-up>span{flex:1; display:flex; flex-direction:column;} .modemenu .mi-up small{color:var(--dim); font-size:11.5px;} .modemenu .mi-up b{font-size:13px;}
+  .modemenu .mi-upbtn{border:0; border-radius:999px; padding:7px 14px; background:#fff; color:#0b1520; font:inherit; font-weight:700; font-size:12.5px; cursor:pointer;}
+  .modemenu .mi-up.hide{display:none;}
   .steps .st .ki{width:18px; text-align:center; color:var(--dim); font-size:13px; flex:0 0 18px;}
   .steps .st .tt{color:var(--dim);} .steps .st.run .tt{color:var(--text);} .steps .st.run .ki{color:var(--cyan2,#7dd3fc);}
   .steps .st .dt{color:var(--dim); opacity:.8; font-size:11.5px; margin-left:8px;}
@@ -804,11 +815,19 @@
             <button class="iconbtn" id="attachBtn" title="Attach a file (PDF, Word, Excel, text, code…)">📎</button>
             <button class="iconbtn" id="chatEmoji" title="Emoji">😀</button>
             <button class="iconbtn" id="micBtn" title="Speak to OraCool">🎙️</button>
+            <button class="modebtn" id="modeBtn" title="Mode — Auto, Fast, Build or Expert" aria-haspopup="menu" aria-expanded="false"><span class="mi-ic">✦</span><span class="mi-l">Auto</span><span class="mi-ch">▾</span></button>
             <span class="gpt-spacer"></span>
             <span class="gpt-hint">Enter ↵ to send · Shift+Enter = new line</span>
             <button class="gpt-send" id="sendBtn" title="Send">↑</button>
           </div>
           <input type="file" id="fileInput" style="display:none" multiple>
+          <div class="modemenu" id="modeMenu" role="menu" hidden>
+            <button class="mi" data-mode="fast" role="menuitemradio"><span class="mi-ic">⚡</span><span><b>Fast</b><small>quickest replies — turbo model</small></span><span class="mi-ok">✓</span></button>
+            <button class="mi" data-mode="build" role="menuitemradio"><span class="mi-ic">🏗</span><span><b>Build</b><small>always builds the website or app you describe — with the live step feed</small></span><span class="mi-ok">✓</span></button>
+            <button class="mi" data-mode="auto" role="menuitemradio"><span class="mi-ic">✦</span><span><b>Auto</b><small>OraCool decides — chat, tools, media or build</small></span><span class="mi-ok">✓</span></button>
+            <button class="mi" data-mode="expert" role="menuitemradio"><span class="mi-ic">💡</span><span><b>Expert</b><small>deeper reasoning, fuller answers</small></span><span class="mi-ok">✓</span></button>
+            <div class="mi-up" id="modeUpgrade"><span><b>OraCool Plans</b><small>more builds, OSINT tools, longer memory</small></span><button class="mi-upbtn" type="button">Upgrade</button></div>
+          </div>
         </div>
       </div>
     </div>
@@ -898,7 +917,7 @@
 const $ = (s, el=document) => el.querySelector(s);
 
 /* ---------- state ---------- */
-const DEFAULTS = { userName:'sir', provider:'auto', brainMode:'smart', apiKey:'', baseUrl:'', model:'',
+const DEFAULTS = { userName:'sir', provider:'auto', brainMode:'smart', chatMode:'auto', apiKey:'', baseUrl:'', model:'',
   hibpKey:'', haUrl:'', haToken:'', ttsOn:true, voiceName:'', wake:false, poSSID:'', proactive:false, proactiveConsent:false, voiceLanguage:'en-NG', directAnswers:true, layout:'clean' };
 let settings = {...DEFAULTS};
 let storageOK = true;
@@ -1423,6 +1442,26 @@ function wantsBuild(q){
   if(/^\s*(?:(?:please|pls|hey|hi|ok|okay|so|now|also|and|just)[\s,]+)*(?:how|what|why|when|who|which|can|could|should|would|is|are|do|does|tell|explain)\b/.test(q)) return false;
   return /\b(build|create|make|design|generate|develop|code|set ?up)\b/.test(q) && /\b(website|web ?site|landing ?page|web ?app|webpage|home ?page|portfolio site|online store|e-?commerce site|blog site|one-?pager|site for)\b/.test(q);
 }
+// patch43: composer modes — Auto (default) / Fast / Build / Expert, like the mode picker in Arena & Grok
+const MODES={auto:{ic:'✦',l:'Auto',ph:'What would you like to do?'}, fast:{ic:'⚡',l:'Fast',ph:'Quick question? Fast mode answers in a flash…'}, build:{ic:'🏗',l:'Build',ph:'Describe the website or app to build — name, business, sections, colours… OraCool builds it step by step.'}, expert:{ic:'💡',l:'Expert',ph:'Ask something hard — Expert mode reasons it through properly.'}};
+function chatMode(){ const m=settings.chatMode||'auto'; return MODES[m]?m:'auto'; }
+function renderModeBtn(){
+  const m=chatMode(); const btn=document.getElementById('modeBtn'); if(!btn) return;
+  btn.querySelector('.mi-ic').textContent=MODES[m].ic; btn.querySelector('.mi-l').textContent=MODES[m].l; btn.className='modebtn '+m;
+  document.querySelectorAll('#modeMenu .mi').forEach(x=>x.classList.toggle('on', x.dataset.mode===m));
+  const inp=document.getElementById('input'); if(inp) inp.placeholder=MODES[m].ph;
+  const up=document.getElementById('modeUpgrade'); if(up){ const t=(typeof myTier==='function'?myTier():'')||''; up.classList.toggle('hide', /pro|ultra|enterprise|admin/.test(String(t).toLowerCase())); }
+}
+function setMode(m){ if(!MODES[m]) m='auto'; settings.chatMode=m; saveSettings(); renderModeBtn(); const menu=document.getElementById('modeMenu'); if(menu){ menu.hidden=true; const b=document.getElementById('modeBtn'); if(b) b.setAttribute('aria-expanded','false'); } }
+(function wireModes(){
+  const btn=document.getElementById('modeBtn'), menu=document.getElementById('modeMenu'); if(!btn||!menu) return;
+  btn.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); menu.hidden=!menu.hidden; btn.setAttribute('aria-expanded', menu.hidden?'false':'true'); if(!menu.hidden) renderModeBtn(); };
+  menu.querySelectorAll('.mi').forEach(x=>{ x.onclick=(e)=>{ e.stopPropagation(); setMode(x.dataset.mode); const inp=document.getElementById('input'); if(inp) inp.focus(); }; });
+  const upb=menu.querySelector('.mi-upbtn'); if(upb) upb.onclick=(e)=>{ e.stopPropagation(); menu.hidden=true; try{ showView('plans'); }catch(err){} };
+  document.addEventListener('click',(e)=>{ if(!menu.hidden && !menu.contains(e.target) && e.target!==btn && !btn.contains(e.target)){ menu.hidden=true; btn.setAttribute('aria-expanded','false'); } });
+  document.addEventListener('keydown',(e)=>{ if(e.key==='Escape' && !menu.hidden){ menu.hidden=true; btn.setAttribute('aria-expanded','false'); } });
+  try{ renderModeBtn(); }catch(e){}
+})();
 function wantsEdit(q){
   q=String(q||'').toLowerCase();
   return /\b(change|update|edit|make|set|replace|add|remove|rewrite|fix|put|swap|turn|move|rename|restyle|redo)\b/.test(q) && /\b(hero|footer|header|headline|heading|button|colou?rs?|background|fonts?|prices?|pricing|booking|contact|whatsapp|section|logo|menu|gallery|testimonials?|faq|the site|my site|the website|my website|the page|my page|landing page|home ?page)\b/.test(q);
@@ -2670,18 +2709,19 @@ async function send(text){
   const b=addAI(''); const body=b.lastChild;
   if(coreNames.length){ const who=b.querySelector('.who'); if(who) who.textContent='ORA-COOL · '+[...new Set(coreNames)].join(' + '); }
   body.innerHTML='<span class="dots"></span>';
-  let _steps=null; try{ if(session && (wantsBuild(text)||wantsEdit(text))) _steps=stepsCard(b); }catch(e){}
+  const _mode=chatMode();
+  let _steps=null; try{ if(session && (_mode==='build' || wantsBuild(text)||wantsEdit(text))) _steps=stepsCard(b); }catch(e){}
   const msgs=[{role:'system',content:systemPrompt()+(coreExtra?('\n\n'+coreExtra):'')},...history];
   try{
     let acc='';
     const _sid=await ensureSession();
-    const payload={messages:msgs, stream:true, provider:settings.provider||'auto', max_tokens:(window.OraVoice?.enabled?450:900), voice_mode:!!window.OraVoice?.enabled, session_id:_sid||''};
+    const payload={messages:msgs, stream:true, provider:settings.provider||'auto', max_tokens:(window.OraVoice?.enabled?450:(_mode==='expert'?2200:900)), voice_mode:!!window.OraVoice?.enabled, session_id:_sid||'', mode:_mode};
     await ensureFreshLogin();
     if(session&&session.access_token) payload.access_token=session.access_token;
     const _em=myEmail(); if(_em) payload.email=_em; if(proToken) payload.token=proToken;
     if(settings.haUrl && settings.haToken){ payload.ha_url=settings.haUrl; payload.ha_token=settings.haToken; }
     if(isAdminSession() && settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
-    else if(settings.brainMode==='fast' && srv && srv.brain && srv.brain.fast_model){ payload.provider='groq'; payload.model=srv.brain.fast_model; }
+    else if((_mode==='fast' || (settings.brainMode==='fast' && _mode!=='expert')) && srv && srv.brain && srv.brain.fast_model){ payload.provider='groq'; payload.model=srv.brain.fast_model; }
     const resp=await Promise.race([fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:chatAbort.signal}), new Promise((_,rej)=>setTimeout(()=>rej(new Error('No answer from the brain in 45s — the provider is jammed. Send again.')),45000))]);
     if(!resp.ok){ let j=null; try{j=await resp.json();}catch(e){} if(resp.status===403 && j && (j.suspended||j.blocked)){ showBlockedScreen(); throw new Error('Account suspended — pay the reinstatement fine to continue.'); } throw new Error((j&&j.error)||('AI provider error '+resp.status)); }
     const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf=''; let finished=false; let streamMedia=[]; let _streamErr=null;
@@ -2699,6 +2739,7 @@ async function send(text){
             try{
               const j=JSON.parse(data);
               if(j.error){ _streamErr=new Error(String(j.error).slice(0,240)); finished=true; break outer; }
+              if(j.__progress && !_steps && session){ try{ _steps=stepsCard(b); }catch(e){} }
               if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build'){ if(x.coins_left!=null){ COINS=COINS||{}; COINS.balance=x.coins_left; renderCoinPill(); } if(x.url){ try{ buildCard(x); }catch(e){ addAI('<b>🏗 '+(x.name||'Your site')+'</b> is built — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the live preview here</a> (auto-saved to your vault).'); } } } if(x.tool==='edit'&&x.url){ try{ buildCard(x); }catch(e){ addAI('<b>✏️ '+(x.name||'Your site')+' updated</b> — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the new preview</a>.'); } } if(x.tool==='publish'){ try{ addAI(x.url?('🌐 Published — live at <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener">'+escapeHtml(x.url)+'</a>'):''); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } }); }
               if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
               if(j.__media && j.__media.length){ streamMedia=streamMedia.concat(j.__media); }

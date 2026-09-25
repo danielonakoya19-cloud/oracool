@@ -14,7 +14,7 @@ VOICE = open(os.path.join(ROOT, "voice-reminders.js"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch42-feed"'), 2)
+        self.assertEqual(SRV.count('"patch43-modes"'), 2)
         self.assertNotIn("patch39-arena", SRV)
         self.assertIn('/voice-reminders.js?v=40', APP)
 
@@ -192,7 +192,7 @@ class EarlyStream(unittest.TestCase):
 
     def test_wiring(self):
         self.assertIn("def _sse_begin(self):", SRV)
-        self.assertIn("_slow = stream and _looks_slow_tool(last_user)", SRV)
+        self.assertIn('_slow = stream and (_mode == "build" or _looks_slow_tool(last_user))', SRV)
         self.assertIn('self.wfile.write(b": ping\\n\\n")', SRV)
         self.assertIn('if not getattr(self, "_sse_on", False):\n            self._sse_on = True\n            self.send_response(200)', SRV)
         # once the stream is open, JSON errors are delivered as SSE frames instead of a second HTTP response

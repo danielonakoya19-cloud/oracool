@@ -6335,7 +6335,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch42-feed",
+        "build": "patch43-modes",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -7277,6 +7277,34 @@ _NAME_RX = re.compile(r"(?:called|named|titled)\s+[\"\u201c\u2018']?([A-Za-z0-9&
                       r"(?=\s+(?:with|that|which|for|and|having|featuring|including|in|on|at|to|where|who|so|but|plus|using|\u2014|-)\b|\s*[,.;:!?\"\u201d)]|\s*$)", re.I)
 
 
+_SITE_NOUN_RX = re.compile(r"\b(?:web ?site|web ?app|webapp|web ?page|webpage|homepage|landing ?page|online store|"
+                           r"e-?commerce|portfolio|dashboard|blog|shop|store|app|application|saas|platform|site for)\b")
+_MEDIA_NOUN_RX = re.compile(r"\b(?:images?|pictures?|photos?|art|artwork|logos?|posters?|banners?|icons?|graphics?|"
+                            r"illustrations?|drawings?|renders?|avatars?|wallpapers?|mockups?|flyers?|videos?|clips?|animations?)\b")
+_QUESTION_RX = re.compile(r"^\s*(?:(?:please|pls|hey|hi|hello|yo|ok|okay|so|now|also|and|just)[\s,]+)*"
+                          r"(?:how|what|why|when|who|which|can|could|should|would|tell|explain|difference)\b")
+
+
+_EXPERT_MODE = ("EXPERT MODE is on for this reply: reason carefully before answering, check your facts and arithmetic, "
+                "cover the important angles and edge cases, structure the answer with clear headings or steps, and give "
+                "concrete numbers, examples and next actions. Stay direct — depth, not padding.")
+
+
+def _looks_site_build(text):
+    """patch43: True when the message will run the site builder or the in-place editor — the chat handler
+    announces `__progress` on the event-stream so the client shows the live build feed for ANY phrasing
+    (voice, 'make me an app for…', edits) instead of guessing with its own regex."""
+    low = (text or "").lower()
+    if len(low) < 8 or _QUESTION_RX.match(low):
+        return False
+    if re.search(r"\b(?:hero|footer|headline|heading|button|colou?rs?|background|fonts?|prices?|pricing|booking|contact|whatsapp|section)\b", low) \
+            and re.search(r"(?:my|the|our|current|existing)\s+(?:\w+\s+){0,3}?(?:site|website|page|landing)", low):
+        return True  # in-place edit
+    if not re.search(r"\b(?:build|create|make|design|generate|code|develop|launch|rebuild|redesign|set ?up)\b", low):
+        return False
+    return bool(_SITE_NOUN_RX.search(low)) and not _MEDIA_NOUN_RX.search(low)
+
+
 def _looks_slow_tool(text):
     """patch40: messages that fire a long-running tool (site builder, image/video generation) — the chat
     handler opens the event-stream first and pings while they run so browsers never hit a connect timeout."""
@@ -7336,7 +7364,7 @@ def _pending_media_brief(history, current):
     return kind, cur.rstrip(".!, "), style
 
 
-def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto_site="", history=None):
+def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto_site="", history=None, force_build=False):
     """Detect intent in the user's message and RUN the matching live tool(s)."""
     t = (text or "").strip()
     if not t:
@@ -7361,6 +7389,8 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     _ask = bool(re.match(r"^\s*(?:(?:please|pls|hey|hi|hello|yo|ok|okay|so|now|also|and|just)[\s,]+)*"
                           r"(?:how|what|why|when|who|which|can|could|should|would|tell|explain|difference)\b", low))
     _wants = (_mb or _site_ish) and not _ask
+    if force_build and len(t) > 8:
+        _wants = True  # patch43: the composer's Build mode — the message IS the brief, whatever the phrasing
     # patch30: "make my site's footer say 24/7" is an EDIT even though "make…site"
     # looks like a build verb — part words + "my/the site" reference mean in-place change
     _eparts = (_wants or _site_ish) and bool(re.search(
@@ -7577,6 +7607,11 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             _after = t[mb.end():].strip().lstrip(" ,").strip()
             if _after and len(_after) < 60 and not re.search(r"\b(with|that|which|using|about|for|on|by|and)\b", _after):
                 _bn = _after
+        if not _bn and force_build:
+            # patch43: Build mode briefs often open with the brand — "Legend Fintech — instant transfers…"
+            _lead = re.match(r"^\s*((?:[A-Z][A-Za-z0-9&'-]*\s?){1,4}?)\s*(?:[—–:|,\-]|\n|\bis\b|\ba\b|\ban\b)", t)
+            if _lead and _lead.group(1).strip() not in ("OraCool", "Lagos", "Nigeria", "Build", "Create", "Make", "Design", "Please", "I", "We", "A", "An", "The"):
+                _bn = _lead.group(1).strip()
         if not _bn:
             # patch29: "build a website for Becfom Hotel" -> use the visible proper-noun run so a
             # real client site is never buried under the generic "my-site" name
@@ -9636,7 +9671,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch42-feed",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch43-modes",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -10599,6 +10634,7 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_chat(self, body):
         messages = body.get("messages") or []
         stream = bool(body.get("stream", True))
+        _mode = str(body.get("mode") or "auto").strip().lower()  # patch43: auto | fast | build | expert
         self._sanitize_overrides(body)   # admin-only overrides stripped before any provider use
         api_key, base_url, model, provider = self._resolve_provider(body)
         if body.get("voice_mode") and not body.get("api_key") and key("GROQ_API_KEY"):
@@ -10669,15 +10705,22 @@ class Handler(BaseHTTPRequestHandler):
                     _site = (key("TRACKER_DOMAIN") or (("https://" + _host) if "." in _host else "")).strip()
                     if _site and not _site.startswith("http"):
                         _site = "https://" + _site
-                    _slow = stream and _looks_slow_tool(last_user)
+                    _slow = stream and (_mode == "build" or _looks_slow_tool(last_user))
                     if _slow:
                         self._sse_begin()
+                        if _mode == "build" or _looks_site_build(last_user):
+                            try:  # patch43: tell the client a build is starting so it opens the live feed now
+                                self.wfile.write(b'data: {"__progress": "build"}\n\n')
+                                self.wfile.flush()
+                            except Exception:
+                                pass
                         _tr = {}
                         def _run_tools():
                             try:
                                 _tr["r"] = auto_tools(last_user, tier, ha_url=body.get("ha_url"),
                                                       ha_token=body.get("ha_token"),
-                                                      email=chat_email, crypto_site=_site, history=messages)
+                                                      email=chat_email, crypto_site=_site, history=messages,
+                                                      force_build=(_mode == "build"))
                             except Exception as _e:
                                 _tr["e"] = _e
                         _th = threading.Thread(target=_run_tools, daemon=True)
@@ -10698,7 +10741,8 @@ class Handler(BaseHTTPRequestHandler):
                         tool_runs = auto_tools(last_user, tier,
                                                ha_url=body.get("ha_url"),
                                                ha_token=body.get("ha_token"),
-                                               email=chat_email, crypto_site=_site, history=messages)
+                                               email=chat_email, crypto_site=_site, history=messages,
+                                               force_build=(_mode == "build"))
                 except Exception as e:
                     tool_runs = [{"tool": "error", "label": "auto-tools", "result": str(e)[:200]}]
         tool_ctx = tool_context(tool_runs)
@@ -10922,8 +10966,13 @@ class Handler(BaseHTTPRequestHandler):
         url = base_url + "/chat/completions"
         max_tokens = int(body.get("max_tokens") or KEYS.get("CHAT_MAX_TOKENS", 3000))
         temperature = float(body.get("temperature") or 0.7)
+        if _mode == "expert":  # patch43: Expert mode — think harder, answer fuller
+            max_tokens = max(max_tokens, 2200)
+            messages = messages[:1] + [{"role": "system", "content": _EXPERT_MODE}] + messages[1:]
         payload = {"model": model, "messages": messages, "temperature": temperature,
                    "max_tokens": max(16, min(max_tokens, 4096)), "stream": stream}
+        if _mode == "expert" and "gpt-oss" in str(model):
+            payload["reasoning_effort"] = "high"
 
         if not stream:
             # Non-streaming path mirrors the streaming fallback: if 'auto' hits a

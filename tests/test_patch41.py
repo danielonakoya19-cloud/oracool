@@ -15,7 +15,7 @@ MD = open(os.path.join(ROOT, "md.js"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch42-feed"'), 2)
+        self.assertEqual(SRV.count('"patch43-modes"'), 2)
         self.assertNotIn("patch40-studio", SRV)
         self.assertIn('/md.js?v=41', APP)
 
@@ -105,7 +105,7 @@ class MediaIntents(unittest.TestCase):
         self.assertFalse(any(x["tool"] == "locked" for x in r))
 
     def test_history_is_passed_from_chat(self):
-        self.assertEqual(SRV.count("crypto_site=_site, history=messages)"), 2)
+        self.assertEqual(SRV.count("crypto_site=_site, history=messages,"), 2)
 
 
 class VisionPurpose(unittest.TestCase):
