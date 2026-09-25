@@ -44,7 +44,7 @@ class ScrubTests(unittest.TestCase):
 
 class LockWiringTests(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch38-direct"'), 2)
+        self.assertEqual(SRV.count('"patch39-arena"'), 2)
 
     def test_lock_prepended_to_every_provider_call(self):
         self.assertIn('messages = [{"role": "system", "content": _IDENTITY_LOCK}] + messages', SRV)
@@ -55,8 +55,8 @@ class LockWiringTests(unittest.TestCase):
         self.assertLess(abs(i_lock - i_payload), 200)
 
     def test_finish_and_stream_scrubbed(self):
-        self.assertIn("clean = _identity_scrub(_strip_agent_markup(text))", SRV)
-        self.assertIn("_final_txt = _identity_scrub(_final_txt)", SRV)
+        self.assertIn("clean = _pii_scrub(_identity_scrub(_strip_agent_markup(text)), conv_em)", SRV)
+        self.assertIn("_final_txt = _pii_scrub(_identity_scrub(_final_txt), chat_email)", SRV)
 
     def test_client_wiring(self):
         for k in ("if(j.error){ _streamErr=new Error",

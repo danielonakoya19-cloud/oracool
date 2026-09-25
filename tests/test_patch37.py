@@ -14,7 +14,7 @@ FILES = {"icon.png": (512, 512), "icon-192.png": (192, 192), "icon-512.png": (51
 
 class Assets(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch38-direct"'), 2)
+        self.assertEqual(SRV.count('"patch39-arena"'), 2)
 
     def test_files_exist_with_right_sizes(self):
         for f, size in FILES.items():

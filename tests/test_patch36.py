@@ -11,7 +11,7 @@ JS = open(ROOT / 'apps.js', encoding='utf-8').read()
 
 class StaticWiring(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch38-direct"'), 2)
+        self.assertEqual(SRV.count('"patch39-arena"'), 2)
 
     def test_server_serves_apps_js(self):
         self.assertIn('elif path == "/apps.js":', SRV)
@@ -19,7 +19,7 @@ class StaticWiring(unittest.TestCase):
         self.assertTrue((ROOT / 'apps.js').exists())
 
     def test_client_wiring(self):
-        for k in ('<script src="/apps.js?v=36"></script>',
+        for k in ('<script src="/apps.js?v=39"></script>',
                   "OraApps.extract(text)",                       # renderRich pulls fences out before escaping
                   'OraApps.render(_apps.specs[+h.dataset.i], h)',  # …and mounts them after innerHTML
                   "OraApps.command(text)",                        # chat/voice moves drive the active board

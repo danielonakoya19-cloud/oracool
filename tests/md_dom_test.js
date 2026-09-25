@@ -8,7 +8,7 @@ window.OraMd=require(__dirname+'/../md.js');
 window.OraApps=require(__dirname+'/../apps.js');
 // pull the real renderRich + helpers out of index.html
 function fn(name){ const i=src.indexOf('function '+name+'('); assert.ok(i>0,name); let d=0,j=src.indexOf('{',i); for(let k=j;k<src.length;k++){ if(src[k]==='{')d++; else if(src[k]==='}'){d--; if(!d) return src.slice(i,k+1);} } }
-const code=[fn('escapeHtml'),fn('_cleanReply'),fn('renderRich')].join('\n');
+const code=[fn('escapeHtml'),fn('_cleanReply'),fn('_splitFollowups'),fn('renderRich')].join('\n')+'\nfunction send(q){ this.__sent=q; }';
 const vm=require('vm'); const ctx={window,document,OraApps:window.OraApps,OraMd:window.OraMd,console}; vm.createContext(ctx); vm.runInContext(code+'\nthis.renderRich=renderRich;',ctx);
 const el=document.createElement('div');
 ctx.renderRich(el,"**What I CAN Do Instead:**\n\n| You Want | What I Actually Offer |\n|----------|------------------------|\n| Unlimited freedom | **Focused precision** |\n\n1. one\n2. two\n\nplain <b>x</b> line");
@@ -29,4 +29,16 @@ const wp=src.slice(src.indexOf('function wantsPreview(q){'), src.indexOf('if(wan
 vm.runInContext(wp+'\nthis.wantsPreview=wantsPreview;',ctx);
 for(const q of ['show me the preview','can you show the preview of the website you built','preview is not loading','show me the website you built','open the site you made','let me see the page']) assert.ok(ctx.wantsPreview(q),q);
 for(const q of ['open youtube','show me the preview of the code','build a website for my shop','open the website of nike','preview my document']) assert.ok(!ctx.wantsPreview(q),'neg: '+q);
+// patch39: follow-up chips, code copy button, ask block
+const el3=document.createElement('div'); document.getElementById('chat').appendChild(el3);
+ctx.renderRich(el3,"Here is the plan.\n```js\nlet a=1;\n```\n\nFOLLOW-UPS: Build the site | Add a menu | Publish it");
+assert.strictEqual(el3.querySelectorAll('.fups button').length,3,'3 follow-up chips');
+assert.ok(!el3.textContent.includes('FOLLOW-UPS'),'raw follow-up line hidden');
+assert.strictEqual(el3.querySelectorAll('.md-pre .cpy').length,1,'copy button on code block');
+const el4=document.createElement('div'); document.getElementById('chat').appendChild(el4);
+ctx.renderRich(el4,'Quick question.\n```oracool-app\n{"app":"ask","question":"Which style?","options":["Dark","Light","Playful"]}\n```');
+assert.strictEqual(el4.querySelectorAll('.oc-ask .opts button').length,3,'ask options');
+let picked=null; window.OraApps.onAsk=(t)=>{ picked=t; };
+el4.querySelectorAll('.oc-ask .opts button')[1].onclick.call(el4.querySelectorAll('.oc-ask .opts button')[1]);
+assert.strictEqual(picked,'Light'); assert.ok(el4.querySelector('.oc-ask').classList.contains('done'));
 console.log('DOM OK');

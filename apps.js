@@ -644,6 +644,26 @@
     rows.forEach(function (r) { h += '<tr>' + cols.map(function (c, i) { return '<td>' + esc(Array.isArray(r) ? r[i] : r[c]) + '</td>'; }).join('') + '</tr>'; });
     return h + '</tbody></table></div>' + (d.title ? '<div class="oc-cap">' + esc(d.title) + '</div>' : '');
   }
+  // patch39: clarifying question → tappable options (Arena-style ask_user)
+  function vizAsk(d) {
+    var q = String(d.question || d.q || d.title || 'Which one?').slice(0, 240);
+    var opts = (Array.isArray(d.options) ? d.options : []).map(function (o) { return typeof o === 'string' ? o : (o && (o.label || o.text || o.id)) || ''; })
+      .filter(function (o) { return o && String(o).trim(); }).slice(0, 6);
+    if (!opts.length) throw new Error('ask needs options');
+    return '<div class="oc-ask" role="group" aria-label="' + esc(q) + '"><div class="q">' + esc(q) + '</div><div class="opts">' +
+      opts.map(function (o) { return '<button type="button" data-opt="' + esc(String(o)) + '">' + esc(String(o)) + '</button>'; }).join('') + '</div></div>';
+  }
+  function wireAsk(host) {
+    var box = host.querySelector('.oc-ask'); if (!box) return;
+    var btns = box.querySelectorAll('.opts button');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].onclick = function () {
+        if (box.classList.contains('done')) return;
+        box.classList.add('done'); this.classList.add('picked');
+        try { if (api.onAsk) api.onAsk(this.getAttribute('data-opt')); } catch (e) { }
+      };
+    }
+  }
   function vizCountdown(d) {
     return '<div class="oc-cd" data-target="' + esc(d.target || '') + '"><div class="oc-cdl">' + esc(d.label || 'Countdown') + '</div><div class="oc-cdr">' +
       ['days', 'hrs', 'min', 'sec'].map(function (u) { return '<div><div class="oc-cdn" data-u="' + u + '">–</div><div class="oc-cdu">' + u + '</div></div>'; }).join('') + '</div></div>';
@@ -849,6 +869,7 @@
     if (app === 'flow' || app === 'diagram' || app === 'flowchart') return vizFlow(d);
     if (app === 'table') return vizTable(d);
     if (app === 'countdown') return vizCountdown(d);
+    if (app === 'ask' || app === 'question' || app === 'choice') return vizAsk(d);
     throw new Error('unknown app "' + app + '"');
   }
   function render(spec, host) {
@@ -860,11 +881,12 @@
       if (app === 'ludo') return mountLudo(host, d);
       host.innerHTML = '<div class="oc-app">' + buildStatic(d) + '</div>';
       if (app === 'countdown') tickCountdowns(host);
+      if (app === 'ask' || app === 'question' || app === 'choice') wireAsk(host);
     } catch (e) {
       host.innerHTML = '<div class="oc-err">⚠️ That visual could not be built (' + esc((e && e.message) || 'error').slice(0, 80) + ') — ask OraCool to redo it.</div>';
     }
   }
-  var KNOWN = { chess: 1, ludo: 1, chart: 1, plot: 1, graph: 1, 'function': 1, compare: 1, timeline: 1, flow: 1, diagram: 1, flowchart: 1, table: 1, countdown: 1 };
+  var KNOWN = { chess: 1, ludo: 1, chart: 1, plot: 1, graph: 1, 'function': 1, compare: 1, timeline: 1, flow: 1, diagram: 1, flowchart: 1, table: 1, countdown: 1, ask: 1, question: 1, choice: 1 };
   var APP_RE = /\{\s*"app"\s*:\s*"([a-z_-]+)"/gi;
   function matchBrace(s, start) { // index of the brace closing the object at `start`, or -1
     var depth = 0, inStr = false;
@@ -923,7 +945,7 @@
 
   var api = {
     render: render, extract: extract, parseSpec: parseSpec, stripForSpeech: stripForSpeech, command: command, tickCountdowns: tickCountdowns, buildStatic: buildStatic, esc: esc,
-    onSay: null, get active() { return active; },
+    onSay: null, onAsk: null, get active() { return active; },
     chess: { newChess: newChess, fromFen: fromFen, toFen: toFen, legalMoves: legalMoves, applyMove: applyMove, undoMove: undoMove, bestMove: bestMove,
       inCheck: inCheck, moveToSan: moveToSan, parseMove: parseMove, attackedBy: attackedBy, sqIndex: sqIndex, sqName: sqName, evaluate: evaluate },
     ludo: { TRACK: TRACK, LT: LT, RING_STEPS: RING_STEPS, FINISH_STEP: FINISH_STEP, PLAYERS: LUDO_PLAYERS, newLudo: newLudo, ludoRoll: ludoRoll,

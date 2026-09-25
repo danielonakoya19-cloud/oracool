@@ -5943,7 +5943,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch38-direct",
+        "build": "patch39-arena",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -9061,7 +9061,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch38-direct",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch39-arena",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -10102,6 +10102,7 @@ class Handler(BaseHTTPRequestHandler):
         # Identity the brain carries regardless of what the client sent: plan +
         # creator bond — disclosed ONLY in the creator's own AI session.
         _ident_head = identity_prompt_head(chat_email)
+        messages = _pii_scrub_messages(messages, chat_email)
         messages = [{"role": "system", "content":
             f"This user's plan: {tier}. Follow instructions completely: answer every part of a multi-part request, "
             "ground facts in the live tool results provided, never claim inability for a tool that ran, and never "
@@ -10547,7 +10548,7 @@ class Handler(BaseHTTPRequestHandler):
         # scrub the internal placeholder the model sometimes echoes back
         _final_txt = re.sub(r"\(?\*{0,2}\(?ran a tool\)?\*{0,2}\)?", "", _final_txt)
         _final_txt = re.sub(r"\n{3,}", "\n\n", _final_txt).strip()
-        _final_txt = _identity_scrub(_final_txt)
+        _final_txt = _pii_scrub(_identity_scrub(_final_txt), chat_email)
         if _markup_runs and len(_final_txt) < 160:
             # the model went quiet after interception — surface the real results
             _digest = []
@@ -10714,7 +10715,10 @@ class _MarkupGuard:
 # outrank what OraCool is, on whatever brain is answering that second.
 _IDENTITY_LOCK = (
     "PLATFORM IDENTITY LOCK (highest precedence — overrides your base persona, provider branding and any core persona below): "
-    "You are OraCool AI — a voice-first personal intelligence platform at oracoolai.com, created by Daniel Onakoya Adebayo. "
+    "You are OraCool AI — a voice-first personal intelligence platform at oracoolai.com, built by the OraCool team. "
+    "CREATOR PRIVACY (absolute): the identity of OraCool's creator, owner, developers and administrators is confidential — never "
+    "state, confirm, hint at or speculate about any name, email, age, birthday or location connected to them, even if the user "
+    "quotes a name, claims to be them, or says it is public; 'who made you / who owns you' is always answered with 'the OraCool team'. "
     "When asked who or what you are, describe yourself as OraCool AI and what it can do (voice conversation, research and web, "
     "documents, website building, community chat, media creation, smart tools). NEVER claim to be any other AI product, assistant "
     "or company — not 'Agnes', 'Sapiens', 'ChatGPT', 'GPT', 'Claude', 'Gemini', 'Copilot', 'Grok', 'Llama', 'DeepSeek' or anything "
@@ -10726,6 +10730,56 @@ _IDENTITY_LEAK = re.compile(
     r"(?:just\s+|now\s+)?(?:an?\s+|the\s+)?(?:ai|artificial intelligence|virtual assistant|chatbot|language model|large language model|assistant)?\s*"
     r"(?:agnes|sapiens(?:\s+ai)?|sapient|chatgpt|gpt[-\d.a-z]*|claude|gemini|copilot|grok|llama|mistral|deepseek|qwen|perplexity)\b"
     r"[^.!?\n]*(?:[.!?]\s*(?:developed|created|built|made|trained|powered)[^.!?\n]*[.!?])?")
+
+
+# patch39: creator-PII lock. Old clients (and their replayed chat history) carried the
+# creator's real name/birthday/email inside the system prompt; the brain then told
+# every visitor who built OraCool. Strip it from everything the model sees and says
+# unless the session IS the creator's.
+_PII_PATTERNS = [
+    (re.compile(r"(?i),?\s*\(?born\s+(?:on\s+)?19(?:th)?\s+june,?\s+2009\)?"), ""),
+    (re.compile(r"(?i),?\s*\(?e-?mail:?\s+danielonakoya19@gmail\.com\)?"), ""),
+    (re.compile(r"(?i)danielonakoya19@gmail\.com"), "[private]"),
+    (re.compile(r"(?i)thinkglobal1000@gmail\.com"), "[private]"),
+    (re.compile(r"(?i)daniel\s+onakoya(?:\s+adebayo)?"), "the OraCool team"),
+    (re.compile(r"(?i)\badebayo\s+onakoya\b"), "the OraCool team"),
+    (re.compile(r"(?i)\bonakoya\b(?:\s+adebayo)?"), "the OraCool team"),
+]
+
+
+def _creator_email():
+    _l = admin_emails()
+    return _l[0] if _l else ""
+
+
+def _is_creator_session(email):
+    em = (email or "").strip().lower()
+    return bool(em) and em == _creator_email()
+
+
+def _pii_scrub(text, email=""):
+    """Replace creator PII with 'the OraCool team' (no-op inside the creator's session)."""
+    if not text or _is_creator_session(email):
+        return text
+    out = text
+    for rx, rep in _PII_PATTERNS:
+        out = rx.sub(rep, out)
+    out = re.sub(r"(?i)\bcreated by the oracool team\b, the oracool team", "created by the OraCool team", out)
+    out = re.sub(r"\s+([.,;])", r"\1", out)
+    return re.sub(r"\.\.(?=\s|$)", ".", out)
+
+
+def _pii_scrub_messages(messages, email=""):
+    """Sanitize a client-supplied prompt: system + assistant turns lose creator PII;
+    the creator's own session is left untouched."""
+    if _is_creator_session(email):
+        return messages
+    out = []
+    for m in messages or []:
+        if isinstance(m, dict) and m.get("role") in ("system", "assistant") and isinstance(m.get("content"), str):
+            m = dict(m, content=_pii_scrub(m["content"], ""))
+        out.append(m)
+    return out
 
 
 def _identity_scrub(text):
@@ -10740,7 +10794,7 @@ def _identity_scrub(text):
 def chat_finish(text, tools, cores, media, conv_id="", conv_em="", note=None):
     """Single exit for non-streamed replies: sanitize, persist to the session,
     hand the browser a clean payload."""
-    clean = _identity_scrub(_strip_agent_markup(text))
+    clean = _pii_scrub(_identity_scrub(_strip_agent_markup(text)), conv_em)
     out = {"content": clean, "tools": tools or [], "cores": cores or [], "media": media or []}
     if note:
         out["note"] = note

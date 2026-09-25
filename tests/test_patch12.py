@@ -171,7 +171,15 @@ class Patch12Tests(unittest.TestCase):
             server, t = self.serve()
             try:
                 port = server.server_port
-                _post(port, '/api/osint/email', {'email': 'target@example.test', 'hibp_key': 'user-supplied'})
+                # patch38: OSINT routes are Starter+ — an anonymous (free) caller is refused before any lookup
+                import urllib.error
+                with self.assertRaises(urllib.error.HTTPError) as cm:
+                    _post(port, '/api/osint/email', {'email': 'target@example.test', 'hibp_key': 'user-supplied'})
+                self.assertEqual(cm.exception.code, 402)
+                self.assertIsNone(osint.call_args)
+                # a paid non-admin caller runs the lookup but the key override is dropped
+                _post(port, '/api/osint/email', {'email': 'target@example.test', 'hibp_key': 'user-supplied',
+                                                 'token': s.make_tier_token('member@example.test', 'starter')})
                 self.assertEqual(osint.call_args.args, ('target@example.test', None))
                 _post(port, '/api/osint/email', {'email': 'target@example.test', 'hibp_key': 'owner-supplied',
                                                  'token': s.make_admin_token('owner@example.test')})
