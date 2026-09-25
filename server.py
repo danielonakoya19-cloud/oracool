@@ -9998,7 +9998,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
         elif path == "/api/health":
             self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch46-durable",
-                             "persist": ("cloud" if _PERSIST.get("enabled") else "local"),
+                             "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
+                             "restored": _PERSIST.get("restored", 0),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
