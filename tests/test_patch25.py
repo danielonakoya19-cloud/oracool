@@ -37,7 +37,7 @@ def read(name):
 # ---------------------------------------------------------------- markers
 
 def test_build_marker_patch25():
-    assert read("server.py").count('"build": "patch41-studio"') == 2
+    assert read("server.py").count('"build": "patch42-feed"') == 2
 
 
 # ---------------------------------------------------------------- voice notes
@@ -87,10 +87,10 @@ def test_build_site_with_mocked_llm(monkeypatch):
             "<body><h1>Demo site</h1><script>console.log('hi')</script>"
             + "<!--" + "pad pad pad pad pad pad " * 40 + "-->"
             + "</body></html>")
-    monkeypatch.setattr(
-        server, "_llm_text",
-        lambda s, u, max_tokens=16000, extra_msgs=None, effort="low":
-        ("TEMPLATE: Mock Minimal\nTITLE: Demo\nBEGIN index.html\n" + html + "\nEND", "mock", "stop"))
+    _double = (lambda *a, **k:
+               ("TEMPLATE: Mock Minimal\nTITLE: Demo\nBEGIN index.html\n" + html + "\nEND", "mock", "stop"))
+    monkeypatch.setattr(server, "_llm_text", _double)
+    monkeypatch.setattr(server, "_llm_text_stream", _double)  # patch42: the main pass streams
     # clean slate
     meta = server._builds_load()
     meta.pop("demo-site", None)

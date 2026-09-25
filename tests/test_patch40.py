@@ -14,7 +14,7 @@ VOICE = open(os.path.join(ROOT, "voice-reminders.js"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch41-studio"'), 2)
+        self.assertEqual(SRV.count('"patch42-feed"'), 2)
         self.assertNotIn("patch39-arena", SRV)
         self.assertIn('/voice-reminders.js?v=40', APP)
 
@@ -45,7 +45,7 @@ class BuildProgress(unittest.TestCase):
         # progress is emitted from inside build_site so the client can show Arena-style running steps
         self.assertIn('_bp_step(email, "Reading the brief"', SRV)
         self.assertIn('_bp_step(email, "Collecting licensed photos"', SRV)
-        self.assertIn('_bp_step(email, "Writing index.html"', SRV)
+        self.assertIn('_bp_step(email, "Building " + (name or "the site")', SRV)
         self.assertIn('_bp_step(email, "Preview ready"', SRV)
         self.assertNotIn("gpt-oss-120b\")", SRV.split("def build_site(")[1].split("def build_edit(")[0].split("_bp_step")[0] + "")  # no engine names in user-visible step text
 
@@ -131,12 +131,12 @@ class ImageSearch(unittest.TestCase):
 
 class Client(unittest.TestCase):
     def test_steps_card(self):
-        self.assertIn("function stepsCard(anchor)", APP)
+        self.assertIn("function stepsCard(anchor, opts)", APP)
         self.assertIn("function wantsBuild(q)", APP)
         self.assertIn("post('/api/builds/progress',{})", APP)
         self.assertIn("_steps=stepsCard(b)", APP)
         self.assertIn("_steps.finish()", APP)
-        self.assertIn("'Ran '+steps.length+' steps'", APP)
+        self.assertIn("' · '+steps.length+' steps'", APP)
 
     def test_video_recording(self):
         self.assertIn("function videoAuto(seconds)", APP)

@@ -168,6 +168,12 @@
   .edprog{height:6px; border-radius:4px; background:rgba(125,211,252,.12); overflow:hidden; margin-top:8px;} .edprog i{display:block; height:100%; width:0; background:var(--cyan,#22d3ee); transition:width .3s;}
   /* patch40: Arena-style "running steps" card for builds */
   .steps{border:1px solid var(--line); border-radius:12px; background:rgba(3,12,18,.55); margin:6px 0 10px; font-size:12.5px; overflow:hidden;}
+  .steps .st .ki{width:18px; text-align:center; color:var(--dim); font-size:13px; flex:0 0 18px;}
+  .steps .st .tt{color:var(--dim);} .steps .st.run .tt{color:var(--text);} .steps .st.run .ki{color:var(--cyan2,#7dd3fc);}
+  .steps .st .dt{color:var(--dim); opacity:.8; font-size:11.5px; margin-left:8px;}
+  .steps .live{display:flex; align-items:center; gap:8px; padding:7px 0 2px; color:var(--dim); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px;}
+  .steps .live .eye{color:var(--cyan2,#7dd3fc); animation:blink 1.6s ease-in-out infinite;} @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+  .steps.done .sh b{color:var(--ok);} .steps .sb .st{font-family:inherit; font-size:12.5px; padding:6px 0;}
   .steps .sh{display:flex; align-items:center; gap:8px; padding:8px 12px; cursor:pointer; color:var(--dim); user-select:none;}
   .steps .sh b{color:var(--text); font-weight:600;} .steps .sh .chev{margin-left:auto; transition:transform .2s;} .steps.open .sh .chev{transform:rotate(180deg);}
   .steps .sb{display:none; padding:2px 12px 10px;} .steps.open .sb{display:block;}
@@ -1414,25 +1420,41 @@ function _cleanReply(t){
 /* patch40: live "running steps" card (Arena-style) — polls /api/builds/progress while a build runs */
 function wantsBuild(q){
   q=String(q||'').toLowerCase();
+  if(/^\s*(?:(?:please|pls|hey|hi|ok|okay|so|now|also|and|just)[\s,]+)*(?:how|what|why|when|who|which|can|could|should|would|is|are|do|does|tell|explain)\b/.test(q)) return false;
   return /\b(build|create|make|design|generate|develop|code|set ?up)\b/.test(q) && /\b(website|web ?site|landing ?page|web ?app|webpage|home ?page|portfolio site|online store|e-?commerce site|blog site|one-?pager|site for)\b/.test(q);
 }
-function stepsCard(anchor){
+function wantsEdit(q){
+  q=String(q||'').toLowerCase();
+  return /\b(change|update|edit|make|set|replace|add|remove|rewrite|fix|put|swap|turn|move|rename|restyle|redo)\b/.test(q) && /\b(hero|footer|header|headline|heading|button|colou?rs?|background|fonts?|prices?|pricing|booking|contact|whatsapp|section|logo|menu|gallery|testimonials?|faq|the site|my site|the website|my website|the page|my page|landing page|home ?page)\b/.test(q);
+}
+function stepsCard(anchor, opts){
+  opts=opts||{};
+  const ICON={skill:'⊞', explore:'⌕', build:'✦', write:'✎', review:'◎', save:'▣', ready:'✓'};
   const d=document.createElement('div'); d.className='steps open'; d.style.display='none';
-  d.innerHTML='<div class="sh"><span class="ic" style="display:inline-block;animation:spin 1s linear infinite">⟳</span><b>Running steps</b><span class="cnt"></span><span class="chev">▾</span></div><div class="sb"></div>';
+  d.innerHTML='<div class="sh"><span class="ic" style="display:inline-block;animation:spin 1s linear infinite">⟳</span><b>Working…</b><span class="cnt"></span><span class="chev">▾</span></div><div class="sb"></div>';
   d.querySelector('.sh').onclick=()=>d.classList.toggle('open');
-  if(anchor&&anchor.parentElement){ anchor.parentElement.insertBefore(d, anchor); } else { chat.appendChild(d); }
-  let timer=null, lastN=0, stopped=false;
-  const fmt=ms=>ms==null?'':(ms<1000?ms+'ms':(ms/1000).toFixed(1)+'s');
+  if(opts.parent){ opts.parent.appendChild(d); } else if(anchor&&anchor.parentElement){ anchor.parentElement.insertBefore(d, anchor); } else { chat.appendChild(d); }
+  let timer=null, lastN=0, stopped=false, name='', t0=Date.now(), liveTimer=null, lastSig='';
+  const fmt=ms=>ms==null?'':(ms<1000?ms+'ms':ms<60000?(ms/1000).toFixed(ms<10000?1:0)+'s':Math.floor(ms/60000)+'m '+Math.round((ms%60000)/1000)+'s');
+  const liveRow=()=>{ let l=d.querySelector('.live'); if(!l){ l=document.createElement('div'); l.className='live'; l.innerHTML='<span class="eye">◉</span><span class="lt"></span>'; d.querySelector('.sb').appendChild(l); } return l; };
+  liveTimer=setInterval(()=>{ if(stopped) return; const l=d.querySelector('.live .lt'); if(l) l.textContent='Working for '+fmt(Date.now()-t0); }, 1000);
   const paint=(p)=>{
     const sb=d.querySelector('.sb'); const steps=p.steps||[]; if(steps.length) d.style.display='';
-    sb.innerHTML=steps.map(st=>'<div class="st '+(st.running?'run':'')+'"><span class="ic">'+(st.running?'⟳':'✓')+'</span><span class="tt">'+escapeHtml(st.title)+'</span><span class="dt">'+escapeHtml(st.detail||'')+'</span><span class="ms">'+fmt(st.ms)+'</span></div>').join('');
-    d.querySelector('.cnt').textContent=steps.length?(' '+steps.length):'';
-    if(steps.length!==lastN){ lastN=steps.length; scrollChat(); }
-    if(p.done){ const h=d.querySelector('.sh'); h.querySelector('.ic').style.animation='none'; h.querySelector('.ic').textContent=p.ok_build===false?'⚠️':'✓'; h.querySelector('b').textContent=(p.ok_build===false?'Build stopped':'Ran '+steps.length+' steps')+(p.total_ms?' in '+fmt(p.total_ms):''); if(p.ok_build===false){ const last=sb.lastElementChild; if(last) last.classList.add('err'); } d.classList.remove('open'); }
+    name=p.name||name; if(name && !p.done) d.querySelector('.sh b').textContent='Building '+name;
+    const sig=JSON.stringify(steps.map(st=>[st.title,st.detail,st.running]));
+    if(sig!==lastSig){ lastSig=sig;
+      sb.innerHTML=steps.map(st=>'<div class="st '+(st.running?'run':'')+'"><span class="ki">'+(st.running?'⟳':(ICON[st.kind]||'•'))+'</span><span class="tt">'+escapeHtml(st.title)+'</span><span class="dt">'+escapeHtml(st.detail||'')+'</span></div>').join('');
+      if(!p.done){ const l=liveRow(); l.querySelector('.lt').textContent='Working for '+fmt(Date.now()-t0); }
+    }
+    d.querySelector('.cnt').textContent='';
+    if(steps.length!==lastN){ lastN=steps.length; if(!opts.parent) scrollChat(); }
+    if(p.done){ const h=d.querySelector('.sh'); h.querySelector('.ic').style.animation='none'; h.querySelector('.ic').textContent=p.ok_build===false?'⚠️':'✓'; d.classList.add('done');
+      h.querySelector('b').textContent=(p.ok_build===false?'Stopped':('Worked'))+(p.total_ms?' for '+fmt(p.total_ms):'')+' · '+steps.length+' steps'+(name?' · '+name:'');
+      if(p.ok_build===false){ const last=sb.lastElementChild; if(last) last.classList.add('err'); } const l=d.querySelector('.live'); if(l) l.remove(); d.classList.remove('open'); if(liveTimer) clearInterval(liveTimer); }
   };
-  const tick=async()=>{ if(stopped) return; try{ const p=await post('/api/builds/progress',{}); if(p&&p.ok){ if(p.steps&&p.steps.length) paint(p); if(p.done){ stop(); return; } } }catch(e){} timer=setTimeout(tick, 1100); };
-  const stop=()=>{ stopped=true; if(timer) clearTimeout(timer); };
-  timer=setTimeout(tick, 700);
+  const tick=async()=>{ if(stopped) return; try{ const p=await post('/api/builds/progress',{}); if(p&&p.ok){ const stale=p.done && !lastN && (p.age_ms||0)>8000; /* a previous build's finished record — the new one has not started yet */ if(!stale){ if(p.steps&&p.steps.length) paint(p); if(p.done){ stop(); return; } } } }catch(e){} timer=setTimeout(tick, 900); };
+  const stop=()=>{ stopped=true; if(timer) clearTimeout(timer); if(liveTimer) clearInterval(liveTimer); };
+  timer=setTimeout(tick, 600);
   return {stop, finish:()=>{ stop(); if(!lastN){ d.remove(); return; } (async()=>{ try{ const p=await post('/api/builds/progress',{}); if(p&&p.ok&&p.steps) paint(Object.assign({},p,{done:true})); }catch(e){} })(); }};
 }
 function buildCard(x){
@@ -1523,12 +1545,14 @@ async function renderWeb(){
   if(go) go.onclick=async()=>{
     const name=(box.querySelector('#webName').value||'').trim(), brief=(box.querySelector('#webBrief').value||'').trim();
     if(!name&&!brief){ box.querySelector('#webProg').textContent='Give it a name or a one-line brief first.'; return; }
-    go.disabled=true; box.querySelector('#webProg').innerHTML='<span class="spinner"></span> Building '+escapeHtml(name||'your site')+' — about 20–40s. OraCool picks the right template and writes a full professional page…';
+    go.disabled=true; const prog=box.querySelector('#webProg'); prog.innerHTML='<div class="hint">Building '+escapeHtml(name||'your site')+' — OraCool picks the right template, collects licensed photos and writes the page section by section:</div>';
+    const feed=stepsCard(null,{parent:prog});
     try{
       const r=await post('/api/builds',{name:name||'',message:(name?('a website for '+name):'')+' '+(brief||'')});
-      if(r&&r.ok){ box.querySelector('#webProg').textContent='✅ Built: '+r.slug+(r.build_saved?' — auto-saved to your vault':'')+'. Preview below.'; await renderWeb(); }
-      else box.querySelector('#webProg').textContent='⚠ '+((r&&r.error)||'build failed');
-    }catch(e){ box.querySelector('#webProg').textContent='⚠ '+(e.message||e); }
+      try{ feed.finish(); }catch(e){}
+      if(r&&r.ok){ prog.insertAdjacentHTML('beforeend','<div class="hint">✅ Built: '+escapeHtml(r.slug)+(r.build_saved?' — auto-saved to your vault':'')+'. Preview below.</div>'); setTimeout(()=>renderWeb(), 1800); }
+      else prog.insertAdjacentHTML('beforeend','<div class="hint">⚠ '+escapeHtml((r&&r.error)||'build failed')+'</div>');
+    }catch(e){ try{ feed.finish(); }catch(err){} box.querySelector('#webProg').textContent='⚠ '+(e.message||e); }
     go.disabled=false;
   };
   box.querySelectorAll('[data-wb]').forEach(btn=>{ btn.onclick=async()=>{
@@ -2646,7 +2670,7 @@ async function send(text){
   const b=addAI(''); const body=b.lastChild;
   if(coreNames.length){ const who=b.querySelector('.who'); if(who) who.textContent='ORA-COOL · '+[...new Set(coreNames)].join(' + '); }
   body.innerHTML='<span class="dots"></span>';
-  let _steps=null; try{ if(session && wantsBuild(text)) _steps=stepsCard(b); }catch(e){}
+  let _steps=null; try{ if(session && (wantsBuild(text)||wantsEdit(text))) _steps=stepsCard(b); }catch(e){}
   const msgs=[{role:'system',content:systemPrompt()+(coreExtra?('\n\n'+coreExtra):'')},...history];
   try{
     let acc='';

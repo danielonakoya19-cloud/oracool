@@ -3120,6 +3120,117 @@ def _llm_text(system, user, max_tokens=16000, extra_msgs=None, effort="low"):
     return None, last_err, "error"
 
 
+def _llm_text_stream(system, user, max_tokens=16000, extra_msgs=None, effort="low", on_delta=None):
+    """patch42: same provider ladder as _llm_text, but streamed — `on_delta(text_so_far)` fires as the
+    page is written so the build feed can show progress section by section. Falls back to the
+    non-streaming call if every provider refuses to stream."""
+    attempts = []
+    k = key("GROQ_API_KEY")
+    if k:
+        attempts.append((k, "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "groq-oss", {"reasoning_effort": effort}))
+        attempts.append((k, "https://api.groq.com/openai/v1", KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), "groq", {}))
+    k = key("OPENAI_API_KEY")
+    if k:
+        attempts.append((k, "https://api.openai.com/v1", "gpt-4o-mini", "openai", {}))
+    k = key("AGNES_API_KEY")
+    if k:
+        attempts.append((k, AGNES_BASE, KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), "agnes", {}))
+    if not attempts:
+        return None, "no LLM key configured", "nokey"
+    for k, base, model, prov, extra in attempts:
+        acc = []; finish = ""; last_cb = 0.0
+        try:
+            req_body = {"model": model, "max_tokens": max_tokens, "temperature": 0.4, "stream": True,
+                        "messages": ([{"role": "system", "content": system}, {"role": "user", "content": user}] + (extra_msgs or []))}
+            req_body.update(extra)
+            req = urllib.request.Request(base.rstrip("/") + "/chat/completions", data=json.dumps(req_body).encode("utf-8"),
+                                         headers={"Authorization": "Bearer " + k, "Content-Type": "application/json",
+                                                  "Accept": "text/event-stream", "User-Agent": UA}, method="POST")
+            with urllib.request.urlopen(req, timeout=240, context=ssl.create_default_context()) as resp:
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", "ignore").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        d = json.loads(payload)
+                    except Exception:
+                        continue
+                    ch = (d.get("choices") or [{}])[0]
+                    piece = (ch.get("delta") or {}).get("content") or ""
+                    if piece:
+                        acc.append(piece)
+                    if ch.get("finish_reason"):
+                        finish = str(ch.get("finish_reason"))
+                    if on_delta and (piece or not acc) and time.time() - last_cb > 0.6:
+                        last_cb = time.time()
+                        try:
+                            on_delta("".join(acc))
+                        except Exception:
+                            pass
+            text = "".join(acc).strip()
+            if text:
+                if on_delta:
+                    try:
+                        on_delta(text)
+                    except Exception:
+                        pass
+                return text, prov, finish
+        except Exception:
+            if acc and len("".join(acc)) > 4000:   # the stream broke late: keep what we have (the caller can continue it)
+                return "".join(acc), prov, "length"
+            continue
+    return _llm_text(system, user, max_tokens=max_tokens, extra_msgs=extra_msgs, effort=effort)
+
+
+_SECTION_RX = re.compile(r"<(header|section|footer|main|aside|article)\b([^>]*)>", re.I)
+
+
+def _section_label(tag, attrs):
+    tag = tag.lower()
+    m = re.search(r"\b(?:id|aria-label|data-section)\s*=\s*[\"']([^\"']{2,40})[\"']", attrs or "", re.I)
+    name = m.group(1) if m else ""
+    if not name:
+        m = re.search(r"\bclass\s*=\s*[\"']([^\"']{2,80})[\"']", attrs or "", re.I)
+        if m:
+            toks = [t for t in m.group(1).split() if t and not re.match(r"^(?:reveal|container|wrap|section|row|col|flex|grid|py|px|mt|mb|sec|block|is-|js-)", t)]
+            name = toks[0] if toks else ""
+    name = re.sub(r"[-_]+", " ", name).strip().lower()
+    if tag == "header":
+        return "header & navigation" if not name or name in ("site header", "header", "top") else name
+    if tag == "nav":
+        return "navigation"
+    if tag == "footer":
+        return "footer"
+    if tag == "main":
+        return ""
+    return name or "next content section"
+
+
+def _writer_progress(email, verb="Writing"):
+    """patch42: returns an on_delta callback that turns the streamed HTML into feed steps:
+    'Thinking through the layout…' → 'Writing the hero section' → '… pricing section' → … with live sizes."""
+    state = {"t0": time.time(), "seen": 0, "labels": []}
+    def cb(text):
+        n = len(text or "")
+        if not n:
+            _bp_note(email, "thinking through the layout & copy… %ds" % int(time.time() - state["t0"]))
+            return
+        kb = "%.1f KB written" % (n / 1024.0)
+        tags = _SECTION_RX.findall(text)
+        if len(tags) > state["seen"]:
+            for tag, attrs in tags[state["seen"]:]:
+                lab = _section_label(tag, attrs)
+                if lab and lab not in state["labels"] and len(state["labels"]) < 14:
+                    state["labels"].append(lab)
+                    _bp_step(email, verb + " the " + lab + (" section" if lab not in ("header & navigation", "navigation", "footer") else ""), kb, kind="write")
+            state["seen"] = len(tags)
+        _bp_note(email, kb + (" · closing tags & scripts" if "</html>" in text.lower() else ""))
+    return cb
+
+
 def _parse_builder_reply(c):
     """Marker format: TEMPLATE line, TITLE line, then the raw HTML file. Accepts
     a legacy {files:[...]} JSON reply too. Returns dict or None."""
@@ -3289,7 +3400,23 @@ def _bp_reset(email, name=""):
         _BUILD_PROGRESS[(email or "").lower()] = {"started": time.time(), "steps": [], "done": False, "name": name}
 
 
-def _bp_step(email, title, detail=""):
+_BP_KINDS = (("ready", ("ready", "preview", "done")),
+             ("explore", ("collect", "photo", "explor", "reading the current", "search")),
+             ("review", ("review", "gap", "fixing", "checking")),
+             ("save", ("saving", "saved", "workspace", "design kit")),
+             ("skill", ("brief", "art direction", "blueprint", "skill", "template")),
+             ("write", ("writing", "continuing", "rewriting", "section", "index.html")))
+
+
+def _bp_kind(title):
+    low = (title or "").lower()
+    for kind, words in _BP_KINDS:
+        if any(w in low for w in words):
+            return kind
+    return "build"
+
+
+def _bp_step(email, title, detail="", kind=""):
     with _BP_LOCK:
         rec = _BUILD_PROGRESS.get((email or "").lower())
         if not rec:
@@ -3297,7 +3424,18 @@ def _bp_step(email, title, detail=""):
         now = time.time()
         if rec["steps"] and rec["steps"][-1].get("ms") is None:
             rec["steps"][-1]["ms"] = int((now - rec["steps"][-1]["t"]) * 1000)
-        rec["steps"].append({"title": title, "detail": detail, "t": now, "ms": None})
+        if len(rec["steps"]) >= 40:  # never let a runaway stream flood the feed
+            return
+        rec["steps"].append({"title": title, "detail": detail, "t": now, "ms": None, "kind": kind or _bp_kind(title)})
+
+
+def _bp_note(email, detail):
+    """patch42: live detail on the step that is running right now ("14 KB written · pricing section")."""
+    with _BP_LOCK:
+        rec = _BUILD_PROGRESS.get((email or "").lower())
+        if not rec or not rec["steps"] or rec["steps"][-1].get("ms") is not None:
+            return
+        rec["steps"][-1]["detail"] = str(detail or "")[:160]
 
 
 def _bp_done(email, ok=True, detail=""):
@@ -3320,7 +3458,8 @@ def build_progress(email):
         steps = [dict(x, ms=(x["ms"] if x["ms"] is not None else int((time.time() - x["t"]) * 1000)), running=(x["ms"] is None))
                  for x in rec["steps"]]
         return {"ok": True, "active": not rec["done"], "done": rec["done"], "ok_build": rec.get("ok"),
-                "steps": steps, "total_ms": rec.get("total_ms"), "result": rec.get("result", ""), "name": rec.get("name", "")}
+                "steps": steps, "total_ms": rec.get("total_ms"), "result": rec.get("result", ""), "name": rec.get("name", ""),
+                "started": rec["started"], "age_ms": int((time.time() - rec["started"]) * 1000)}
 
 
 # ---- patch38: builder quality — industry blueprint, injected design kit, QA pass ----
@@ -3589,7 +3728,7 @@ def build_site(email, name, prompt):
                       + " ".join("[%d] %s — %s%s (%s, %s)" % (i + 1, x["url"], (x.get("title") or "photo")[:50],
                                                               (" by " + x["author"]) if x.get("author") else "", x.get("license", "CC"), x.get("source", ""))
                                  for i, x in enumerate(_imgs)))
-    _bp_step(email, "Writing index.html", "OraCool builder brain — full page, real copy")
+    _bp_step(email, "Building " + (name or "the site"), "thinking through the layout & copy…", kind="build")
     user = ("Build this website now. " + ("Site name: " + name + ". " if not _generic else
             "No brand name was given — invent a short fitting name and put it after 'TITLE: '. ") +
             "Brief: " + prompt +
@@ -3599,7 +3738,7 @@ def build_site(email, name, prompt):
             "HTML file (18-34KB), END. DESIGN BLUEPRINT (art direction — follow it, adapting names/copy to the brief): "
             + _bpt + ". Write like a top Awwwards studio: specific headlines, real-sounding "
             "details (prices, hours, names, locations from the brief or plausible for it), polished micro-interactions." + _img_block)
-    c_raw, prov, finish = _llm_text(system, user, max_tokens=16000, effort="medium")
+    c_raw, prov, finish = _llm_text_stream(system, user, max_tokens=16000, effort="medium", on_delta=_writer_progress(email))
     # the model can write past its single-reply token cap — continue the SAME
     # file where it stopped (how real AI builders stream long artifacts)
     for _turn in range(2):
@@ -3767,6 +3906,9 @@ def build_edit(email, slug, instructions):
         old = open(idx, encoding="utf-8").read()
     except Exception as e:
         return {"error": "Could not read the current site: " + str(e)[:120]}
+    _bp_reset(email, b.get("name") or slug)
+    _bp_step(email, "Reading the current site", "%s · %.1f KB" % (b.get("name") or slug, len(old) / 1024.0), kind="explore")
+    _bp_step(email, "Applying your change", instructions[:90], kind="build")
     if len(old) > 180_000:
         return {"error": "This site is too large for one in-chat edit — rebuild it with the change instead."}
     now = time.time()
@@ -3775,8 +3917,8 @@ def build_edit(email, slug, instructions):
         return {"error": "60 edits/day is the fair-use cap — edits are free, this just keeps the AI healthy."}
     c, prov, finish = "", "", ""
     try:
-        c, prov, finish = _llm_text(_EDIT_SYS, "REQUEST: " + instructions + "\n\nCURRENT index.html:\n\n" + old,
-                                    max_tokens=16000)
+        c, prov, finish = _llm_text_stream(_EDIT_SYS, "REQUEST: " + instructions + "\n\nCURRENT index.html:\n\n" + old,
+                                           max_tokens=16000, on_delta=_writer_progress(email, "Rewriting"))
     except Exception:
         pass
     if c and "</html>" not in c.lower():
@@ -3800,10 +3942,13 @@ def build_edit(email, slug, instructions):
     if new is None and files and files[0].get("content"):
         new = files[0]["content"]
     if not new or "</html>" not in new.lower():
+        _bp_done(email, False, "editor returned nothing usable")
         return {"error": "The editor brain returned nothing usable (" + str(prov or "")[:40] +
                 "). Try a shorter, concrete request like 'make the hero background deep navy with gold buttons'."}
     if len(new) < max(600, int(len(old) * 0.55)):
+        _bp_done(email, False, "edit would have cut the page short")
         return {"error": "That edit would have cut the page short (reply limit) — split it into two smaller changes."}
+    _bp_step(email, "Saving the workspace", "%.1f KB → data/builds · vault mirror" % (len(new) / 1024.0), kind="save")
     try:
         os.makedirs(dest, exist_ok=True)
         with open(idx, "w", encoding="utf-8") as fh:
@@ -3820,6 +3965,8 @@ def build_edit(email, slug, instructions):
     _builds_save(meta)
     saved = builds_sup_save(slug, [{"path": "index.html", "content": new}])
     _EDIT_DAILY[email] = recent + [now]
+    _bp_step(email, "Preview refreshed", "/builds/" + slug + "/", kind="ready")
+    _bp_done(email, True, "/builds/" + slug + "/")
     return {"ok": True, "slug": slug, "url": "/builds/" + slug + "/",
             "name": ent.get("name") or slug, "files": ["index.html"], "provider": prov,
             "build_saved": bool(saved),
@@ -6188,7 +6335,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch41-studio",
+        "build": "patch42-feed",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -9489,7 +9636,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch41-studio",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch42-feed",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())

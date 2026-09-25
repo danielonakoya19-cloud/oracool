@@ -30,8 +30,8 @@ def test_build_edit_updates_in_place(monkeypatch):
     d = _mk(slug)
     try:
         newdoc = "<html><head><title>t</title></head><body><h1>NEW GOLD HERO</h1>" + PAD + "</body></html>"
-        monkeypatch.setattr(server, "_llm_text",
-                            lambda s, u, max_tokens=16000, extra_msgs=None: (newdoc, "mock", "stop"))
+        monkeypatch.setattr(server, "_llm_text", lambda *a, **k: (newdoc, "mock", "stop"))
+        monkeypatch.setattr(server, "_llm_text_stream", lambda *a, **k: (newdoc, "mock", "stop"))
         r = server.build_edit("e30@example.invalid", slug, "make the hero gold")
         assert r.get("ok"), r
         assert r["url"] == "/builds/p30-edit-site/"
@@ -63,9 +63,8 @@ def test_edit_truncation_guard(monkeypatch):
     d = _mk(slug)
     try:
         tiny = "<html><body><h1>TINY</h1>" + ("z" * 520) + "</body></html>"  # passes the parse floor, fails the 55% guard
-        monkeypatch.setattr(server, "_llm_text",
-                            lambda s, u, max_tokens=16000, extra_msgs=None:
-                            (tiny, "mock", "length"))
+        monkeypatch.setattr(server, "_llm_text", lambda *a, **k: (tiny, "mock", "length"))
+        monkeypatch.setattr(server, "_llm_text_stream", lambda *a, **k: (tiny, "mock", "length"))
         r = server.build_edit("e30@example.invalid", slug, "shrink everything")
         assert "cut the page short" in r.get("error", "")
         assert "OLD HERO" in open(os.path.join(d, "index.html")).read()  # original intact
