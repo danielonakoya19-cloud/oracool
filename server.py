@@ -3103,6 +3103,168 @@ def _parse_builder_reply(c):
             "name": (nm.group(1).strip()[:60] if nm else "")}
 
 
+# ---- patch40: image collection (licensed photos for builds + "find me images of X") ----
+def _img_get(url, timeout=12):
+    _, raw, _ = http_fetch(url, timeout=timeout, headers={"User-Agent": UA + " (+https://oracoolai.com)"})
+    return json.loads(raw)
+
+
+def image_search(query, n=6):
+    """Real, licensed photos: Pexels (if PEXELS_API_KEY) → Openverse (CC, commercial-ok)
+    → Wikimedia Commons. Returns [{url, thumb, title, author, license, source, w, h}]."""
+    q = " ".join(str(query or "").split())[:80]
+    n = max(1, min(int(n or 6), 12))
+    if not q:
+        return []
+    out = []
+    pk = key("PEXELS_API_KEY")
+    if pk:
+        try:
+            _, raw, _ = http_fetch("https://api.pexels.com/v1/search?" + urllib.parse.urlencode({"query": q, "per_page": n, "orientation": "landscape"}),
+                                   timeout=12, headers={"Authorization": pk})
+            for ph in (json.loads(raw).get("photos") or [])[:n]:
+                src = ph.get("src") or {}
+                out.append({"url": src.get("large2x") or src.get("large") or src.get("original"), "thumb": src.get("medium"),
+                            "title": (ph.get("alt") or q)[:90], "author": ph.get("photographer") or "", "license": "Pexels License",
+                            "source": "pexels", "w": ph.get("width"), "h": ph.get("height")})
+        except Exception:
+            pass
+    if len(out) < n:
+        try:
+            d = _img_get("https://api.openverse.org/v1/images/?" + urllib.parse.urlencode(
+                {"q": q, "page_size": n * 2, "mature": "false", "license_type": "commercial,modification"}))
+            for r in (d.get("results") or []):
+                u = r.get("url") or ""
+                if not u.startswith("http") or (r.get("width") or 0) < 640:
+                    continue
+                out.append({"url": u, "thumb": r.get("thumbnail") or u, "title": (r.get("title") or q)[:90],
+                            "author": (r.get("creator") or "")[:60], "license": ("CC " + str(r.get("license") or "").upper()).strip(),
+                            "source": r.get("source") or "openverse", "w": r.get("width"), "h": r.get("height")})
+                if len(out) >= n:
+                    break
+        except Exception:
+            pass
+    if len(out) < n:
+        try:
+            d = _img_get("https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode(
+                {"action": "query", "generator": "search", "gsrsearch": "filetype:bitmap " + q, "gsrnamespace": "6",
+                 "gsrlimit": str(n * 2), "prop": "imageinfo", "iiprop": "url|extmetadata|size", "iiurlwidth": "1400", "format": "json"}))
+            pages = sorted(((d.get("query") or {}).get("pages") or {}).values(), key=lambda p: p.get("index", 0))
+            for pg in pages:
+                ii = (pg.get("imageinfo") or [{}])[0]
+                u = ii.get("thumburl") or ii.get("url") or ""
+                if not u or (ii.get("width") or 0) < 640 or u.lower().endswith((".svg", ".gif", ".tif", ".tiff")):
+                    continue
+                md = ii.get("extmetadata") or {}
+                auth = re.sub(r"<[^>]+>", "", str((md.get("Artist") or {}).get("value") or ""))[:60]
+                lic = str((md.get("LicenseShortName") or {}).get("value") or "CC")[:30]
+                out.append({"url": u, "thumb": u, "title": str(pg.get("title") or "").replace("File:", "")[:90],
+                            "author": auth, "license": lic, "source": "wikimedia", "w": ii.get("width"), "h": ii.get("height")})
+                if len(out) >= n:
+                    break
+        except Exception:
+            pass
+    seen, uniq = set(), []
+    for x in out:
+        if x.get("url") and x["url"] not in seen:
+            seen.add(x["url"]); uniq.append(x)
+    return uniq[:n]
+
+
+_BUILD_IMG_QUERIES = {
+    "restaurant / food & drink": ["restaurant interior warm lighting", "gourmet plated dish", "chef cooking kitchen"],
+    "hotel / hospitality": ["luxury hotel room interior", "hotel swimming pool resort", "hotel lobby lounge"],
+    "fintech / finance": ["mobile banking app phone hands", "modern office finance team", "city skyline night"],
+    "SaaS / software product": ["team working laptops modern office", "dashboard analytics screen", "developer coding"],
+    "e-commerce / retail": ["fashion boutique products display", "sneakers product photo", "shopping bags lifestyle"],
+    "personal portfolio": ["creative workspace desk", "designer sketching", "photographer camera portrait"],
+    "creative agency": ["creative team brainstorming", "brand design studio", "camera film production"],
+    "healthcare / clinic": ["doctor consultation clinic", "modern clinic reception", "medical team hospital"],
+    "education": ["students classroom learning", "university campus", "teacher lecture"],
+    "real estate": ["modern house exterior", "luxury apartment living room", "city apartment building"],
+    "fitness": ["gym training weights", "fitness class group", "running athlete"],
+    "event": ["concert crowd lights", "conference stage speaker", "wedding decoration"],
+    "community / nonprofit": ["volunteers community helping", "charity donation hands", "community gathering"],
+    "professional services": ["law office meeting", "business handshake", "professional consultation"],
+    "travel / tours": ["tropical beach resort", "safari landscape", "travel adventure mountains"],
+    "beauty / salon": ["hair salon interior", "spa treatment relaxing", "makeup artist"],
+    "logistics": ["delivery truck highway", "warehouse logistics", "courier delivering package"],
+    "construction / architecture": ["modern architecture building", "construction site workers", "interior design living room"],
+    "modern business": ["modern office team", "business meeting", "city skyline"],
+}
+
+
+def _build_image_library(prompt, blueprint_text):
+    """Collect 6-9 licensed photos matched to the brief (industry queries + the
+    brief's own subject words). Never blocks a build: 8s budget, failures = []."""
+    ind = blueprint_text.split("|")[0].replace("industry:", "").strip()
+    qs = list(_BUILD_IMG_QUERIES.get(ind, _BUILD_IMG_QUERIES["modern business"]))
+    subj = re.sub(r"[^a-z0-9 ]", " ", (prompt or "").lower())
+    subj = " ".join(w for w in subj.split() if len(w) > 3 and w not in ("with", "that", "this", "from", "your", "their", "have", "page", "website", "site", "landing", "build", "make", "create"))[:60]
+    if subj:
+        qs.insert(0, subj)
+    lib = []
+    try:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futs = [ex.submit(image_search, q, 3) for q in qs[:4]]
+            for f in futs:
+                try:
+                    lib.extend(f.result(timeout=8))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    seen, out = set(), []
+    for x in lib:
+        if x["url"] not in seen:
+            seen.add(x["url"]); out.append(x)
+    return out[:9]
+
+
+# ---- patch40: live build progress (Arena-style "running steps" card in the chat) ----
+_BUILD_PROGRESS = {}
+_BP_LOCK = threading.Lock()
+
+
+def _bp_reset(email, name=""):
+    with _BP_LOCK:
+        _BUILD_PROGRESS[(email or "").lower()] = {"started": time.time(), "steps": [], "done": False, "name": name}
+
+
+def _bp_step(email, title, detail=""):
+    with _BP_LOCK:
+        rec = _BUILD_PROGRESS.get((email or "").lower())
+        if not rec:
+            return
+        now = time.time()
+        if rec["steps"] and rec["steps"][-1].get("ms") is None:
+            rec["steps"][-1]["ms"] = int((now - rec["steps"][-1]["t"]) * 1000)
+        rec["steps"].append({"title": title, "detail": detail, "t": now, "ms": None})
+
+
+def _bp_done(email, ok=True, detail=""):
+    with _BP_LOCK:
+        rec = _BUILD_PROGRESS.get((email or "").lower())
+        if not rec:
+            return
+        now = time.time()
+        if rec["steps"] and rec["steps"][-1].get("ms") is None:
+            rec["steps"][-1]["ms"] = int((now - rec["steps"][-1]["t"]) * 1000)
+        rec["done"] = True; rec["ok"] = bool(ok); rec["result"] = detail
+        rec["total_ms"] = int((now - rec["started"]) * 1000)
+
+
+def build_progress(email):
+    with _BP_LOCK:
+        rec = _BUILD_PROGRESS.get((email or "").lower())
+        if not rec:
+            return {"ok": True, "active": False, "steps": []}
+        steps = [dict(x, ms=(x["ms"] if x["ms"] is not None else int((time.time() - x["t"]) * 1000)), running=(x["ms"] is None))
+                 for x in rec["steps"]]
+        return {"ok": True, "active": not rec["done"], "done": rec["done"], "ok_build": rec.get("ok"),
+                "steps": steps, "total_ms": rec.get("total_ms"), "result": rec.get("result", ""), "name": rec.get("name", "")}
+
+
 # ---- patch38: builder quality — industry blueprint, injected design kit, QA pass ----
 _BLUEPRINTS = [
     (("restaurant", "cafe", "café", "coffee", "bakery", "kitchen", "food", "chef", "bar", "grill", "pizza", "suya", "eatery", "bistro", "lounge"),
@@ -3280,8 +3442,8 @@ def _site_quality_issues(html):
         issues.append("no motion at all (add IntersectionObserver reveals, hover transitions, one keyframe animation)")
     if "lorem" in low:
         issues.append("lorem ipsum placeholder text present — write real copy")
-    if re.search(r"<img[^>]+src=[\"']https?://", h, re.I):
-        issues.append("external <img> URLs — replace with inline SVG / CSS art (external images break offline and on publish)")
+    if re.search(r"<img[^>]+src=[\"'][^\"']*(?:placeholder|placehold\.it|example\.com|your-image|image\d*\.(?:jpg|png)|via\.placeholder)", h, re.I):
+        issues.append("placeholder image URLs — use the collected IMAGE LIBRARY URLs or CSS/SVG art")
     if "<form" not in low:
         issues.append("no contact/lead form with validation and success state")
     if "<footer" not in low:
@@ -3317,6 +3479,8 @@ def build_site(email, name, prompt):
     _gate = coins_gate(email, COIN_COST_BUILD)
     if _gate is not None:
         return _gate
+    _bp_reset(email, name)
+    _bp_step(email, "Reading the brief", prompt[:80])
     slug0 = _build_slug(name)
     slug = slug0
     i = 2
@@ -3336,8 +3500,8 @@ def build_site(email, name, prompt):
         "back to system fonts. PROFESSIONAL BAR (non-negotiable): cohesive CSS custom-property palette "
         "(background, surface, text, accent, muted) with real contrast; display font for headings + readable "
         "body font; generous spacing and a strong typographic scale; a hero with a clear value-prop H1, "
-        "supporting line, primary + secondary CTA and a hero VISUAL built purely from CSS/SVG (gradient orbs, "
-        "device mock, illustrated shapes — never <img> tags pointing to external URLs); a sticky translucent "
+        "supporting line, primary + secondary CTA and a hero VISUAL (a photo from the IMAGE LIBRARY when one is provided, "
+        "layered with gradients/CSS shapes; otherwise pure CSS/SVG art — never invented image URLs); a sticky translucent "
         "header with a working mobile menu; 5-7 content sections with believable, specific copy for THIS "
         "business (no lorem, no invented statistics); at least one signature motion moment (IntersectionObserver "
         "scroll reveals, hover lifts, animated counters, gradient shift); one functional interactive feature "
@@ -3353,6 +3517,21 @@ def build_site(email, name, prompt):
         "and the JS for the interactive feature. Before you finish, count: if the file is under 20,000 characters, add "
         "another real section (testimonials, FAQ, location, team, process) until it is not.")
     _generic = (not name) or name.strip().lower() in ("my-site", "site", "website", "app", "landing page", "page")
+    _bpt = _brief_blueprint(prompt)
+    _bp_step(email, "Art direction", _bpt.split("|")[0].replace("industry:", "").strip())
+    _bp_step(email, "Collecting licensed photos", "Pexels · Openverse · Wikimedia Commons")
+    _imgs = _build_image_library(prompt, _bpt)
+    _bp_step(email, "Photos collected", "%d images ready" % len(_imgs))
+    _img_block = ""
+    if _imgs:
+        _img_block = (" IMAGE LIBRARY (real licensed photos collected for this brief — use these EXACT URLs for the hero, "
+                      "gallery and section cards — pick only the ones that genuinely fit the brief and skip odd ones; every <img> needs loading=\"lazy\", a descriptive alt and a container with a "
+                      "gradient background-color so a slow image never leaves a hole; never invent other image URLs; add a small "
+                      "'Photos: <sources>' credit line in the footer): "
+                      + " ".join("[%d] %s — %s%s (%s, %s)" % (i + 1, x["url"], (x.get("title") or "photo")[:50],
+                                                              (" by " + x["author"]) if x.get("author") else "", x.get("license", "CC"), x.get("source", ""))
+                                 for i, x in enumerate(_imgs)))
+    _bp_step(email, "Writing index.html", "OraCool builder brain — full page, real copy")
     user = ("Build this website now. " + ("Site name: " + name + ". " if not _generic else
             "No brand name was given — invent a short fitting name and put it after 'TITLE: '. ") +
             "Brief: " + prompt +
@@ -3360,14 +3539,15 @@ def build_site(email, name, prompt):
             "business in this brief would have, and a footer. Match the visual language to the industry. "
             "Remember the strict output format: TEMPLATE line, TITLE line, BEGIN index.html, the complete "
             "HTML file (18-34KB), END. DESIGN BLUEPRINT (art direction — follow it, adapting names/copy to the brief): "
-            + _brief_blueprint(prompt) + ". Write like a top Awwwards studio: specific headlines, real-sounding "
-            "details (prices, hours, names, locations from the brief or plausible for it), polished micro-interactions.")
+            + _bpt + ". Write like a top Awwwards studio: specific headlines, real-sounding "
+            "details (prices, hours, names, locations from the brief or plausible for it), polished micro-interactions." + _img_block)
     c_raw, prov, finish = _llm_text(system, user, max_tokens=16000, effort="medium")
     # the model can write past its single-reply token cap — continue the SAME
     # file where it stopped (how real AI builders stream long artifacts)
     for _turn in range(2):
         if not c_raw or "</html>" in c_raw.lower():
             break
+        _bp_step(email, "Continuing the file", "the reply hit the length cap — resuming where it stopped")
         cont, prov2, fin2 = _llm_text(system, user, max_tokens=16000, effort="medium", extra_msgs=[
             {"role": "assistant", "content": c_raw},
             {"role": "user", "content": "Continue the file EXACTLY from where you stopped — no repeats, no preamble, no fences, resume mid-line if needed. Finish the document and end with the END line."}])
@@ -3384,6 +3564,7 @@ def build_site(email, name, prompt):
         if d2:
             data, prov = d2, prov2
     if not data:
+        _bp_done(email, False, "builder brain unavailable")
         return {"error": "The builder brain is unavailable right now (" + str(prov)[:140] + "). Please try again in a moment."}
     files = data.get("files") if isinstance(data, dict) else None
     if not isinstance(files, list) or not files:
@@ -3408,6 +3589,7 @@ def build_site(email, name, prompt):
     _issues = _site_quality_issues(_idx["content"])
     _qa = {"issues_before": len(_issues), "upgraded": False}
     if c_raw and (len(_issues) >= 2 or len(_idx["content"]) < 16000):
+        _bp_step(email, "Design review", "%d gap(s) found — rewriting" % len(_issues))
         try:
             # the draft itself is NOT echoed back (fast providers cap prompt tokens per
             # minute); a compact summary + the concrete gap list steers the rewrite
@@ -3437,7 +3619,9 @@ def build_site(email, name, prompt):
                 prov = _p3 or prov
         except Exception:
             pass
+    _bp_step(email, "Design kit", "reset · scroll reveals · focus rings · reduced-motion")
     _idx["content"] = _inject_design_kit(_idx["content"])
+    _bp_step(email, "Saving the workspace", "data/builds → vault mirror")
     # honour the model's title when the user gave no explicit name
     _gn = str(data.get("name") or "").strip()[:40] if isinstance(data, dict) else ""
     if _generic and _gn:
@@ -3464,7 +3648,10 @@ def build_site(email, name, prompt):
             with open(fp, "w", encoding="utf-8") as fh:
                 fh.write(f["content"])
     except Exception as e:
+        _bp_done(email, False, "could not save")
         return {"error": "Could not save the site: " + str(e)[:120]}
+    _bp_step(email, "Preview ready", "/builds/" + slug + "/")
+    _bp_done(email, True, "/builds/" + slug + "/")
     meta = _builds_load()
     meta[slug] = {"owner": email, "name": name, "brief": prompt[:300], "provider": prov,
                   "files": [f["path"] for f in clean], "t": _now(), "template": template}
@@ -5943,7 +6130,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch39-arena",
+        "build": "patch40-studio",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -6880,6 +7067,28 @@ def _shrink(obj, limit=1200):
         txt = str(obj)
     return txt[:limit]
 
+# patch40: "called Sweet Crumbs with a menu and order form" → name is "Sweet Crumbs" (stop at joiner words / punctuation)
+_NAME_RX = re.compile(r"(?:called|named|titled)\s+[\"\u201c\u2018']?([A-Za-z0-9&.'\u2019-]+(?:\s+[A-Za-z0-9&.'\u2019-]+){0,4}?)[\"\u201d\u2019']?"
+                      r"(?=\s+(?:with|that|which|for|and|having|featuring|including|in|on|at|to|where|who|so|but|plus|using|\u2014|-)\b|\s*[,.;:!?\"\u201d)]|\s*$)", re.I)
+
+
+def _looks_slow_tool(text):
+    """patch40: messages that fire a long-running tool (site builder, image/video generation) — the chat
+    handler opens the event-stream first and pings while they run so browsers never hit a connect timeout."""
+    low = (text or "").lower()
+    if len(low) < 8:
+        return False
+    if re.match(r"^\s*(?:(?:please|pls|hey|hi|hello|yo|ok|okay|so|now|also|and|just)[\s,]+)*"
+                r"(?:how|what|why|when|who|which|can|could|should|would|tell|explain|difference)\b", low):
+        return False
+    verb = re.search(r"\b(?:build|create|make|design|generate|code|develop|launch|rebuild|redesign|draw|imagine|render|animate|produce)\b", low)
+    if not verb:
+        return False
+    return bool(re.search(r"\b(?:web ?site|web ?app|webapp|web ?page|webpage|homepage|landing ?page|online store|"
+                          r"e-?commerce|portfolio|dashboard|blog|shop|store|images?|pictures?|photos?|art|artwork|logos?|"
+                          r"posters?|banners?|wallpapers?|illustrations?|videos?|clips?|animations?)\b", low))
+
+
 def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto_site=""):
     """Detect intent in the user's message and RUN the matching live tool(s)."""
     t = (text or "").strip()
@@ -7008,6 +7217,14 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         term = " ".join(term.split())[:60] or "marketplace"
         out.append({"tool": "darkweb", "label": "dark-web · " + term,
                     "result": _shrink(osint_darkweb(term), 1800)})
+    # patch40: image collection — "find/collect/get me 6 images of X"
+    _imq = re.search(r"\b(?:find|search|collect|get|show|fetch|gather|source)\s+(?:me\s+)?(?:some\s+|a few\s+|(\d{1,2})\s+)?(?:stock\s+|real\s+|licensed\s+|free\s+)?(?:images?|photos?|pictures?|pics)\s+(?:of|for|about|showing)\s+(.{3,80})", low)
+    if _imq and not any(k in low for k in ("generate", "draw", "imagine", "create an image", "make an image")):
+        _imn = int(_imq.group(1) or 6)
+        _imt = re.sub(r"[.!?].*$", "", _imq.group(2)).strip()
+        out.append({"tool": "images", "label": "photos · " + _imt[:40],
+                    "result": _shrink({"query": _imt, "images": image_search(_imt, _imn),
+                                       "note": "Licensed photos. Show them to the user as markdown images (![title](url)) with a one-line credit (author · license · source) under each; offer to use them in a website build."}, 2600)})
     # space (free)
     if any(k in low for k in ("picture of the day", "apod", "space picture", "nasa picture", "picture today")):
         out.append({"tool": "space", "label": "NASA picture of the day", "result": _shrink(space_apod())})
@@ -7102,9 +7319,9 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     if _wants and len(t) > 8 and not _eparts:
         mb = _mb
         _bn = ""
-        _mn = re.search(r"(?:called|named)\s+\"?([A-Za-z0-9 &.\'-]{2,40})\"?", t, re.I)
+        _mn = _NAME_RX.search(t)
         if _mn:
-            _bn = _mn.group(1)
+            _bn = _mn.group(1).strip(" .")
         elif mb:
             _after = t[mb.end():].strip().lstrip(" ,").strip()
             if _after and len(_after) < 60 and not re.search(r"\b(with|that|which|using|about|for|on|by|and)\b", _after):
@@ -8768,7 +8985,36 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def _sse_begin(self):
+        """patch40: open the event-stream early (before slow tools such as the site builder run) so the
+        browser gets headers within a second and keep-alive pings while OraCool works — no 45s timeout."""
+        if getattr(self, "_sse_on", False):
+            return
+        self._sse_on = True
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        try:
+            self.wfile.write(b": ok\n\n")
+            self.wfile.flush()
+        except Exception:
+            pass
+
     def _send_json(self, obj, status=200):
+        if getattr(self, "_sse_on", False):
+            # the stream is already open: deliver the payload as SSE frames instead of a second HTTP response
+            try:
+                if isinstance(obj, dict) and status >= 400 and not obj.get("error"):
+                    obj = dict(obj, error=obj.get("message") or ("HTTP %d" % status))
+                self.wfile.write(("data: " + json.dumps(obj) + "\n\n").encode("utf-8"))
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+            except Exception:
+                pass
+            return
         data = json.dumps(obj).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -9061,7 +9307,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch39-arena",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch40-studio",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -9244,9 +9490,15 @@ class Handler(BaseHTTPRequestHandler):
                     _bm = (body.get("message") or body.get("brief") or "").strip()
                     _bname = (body.get("name") or "").strip()
                     if not _bname:
-                        _mn = re.search(r"(?:called|named)\s+\"?([A-Za-z0-9 &.\'-]{2,40})\"?", _bm, re.I)
-                        _bname = _mn.group(1) if _mn else "my-site"
+                        _mn = _NAME_RX.search(_bm)
+                        _bname = (_mn.group(1).strip(" .") if _mn else "") or "my-site"
                     self._send_json(build_site(body.get("email"), _bname, _bm or _bname))
+            elif path == "/api/builds/progress":
+                self._send_json(build_progress(body.get("email")))
+            elif path in ("/api/builds/images", "/api/images/search"):
+                if not body.get("_verified_email") and not request_identity(self, body):
+                    self._send_json({"error": "Sign in to access your account.", "auth_required": True}, 401); return
+                self._send_json({"ok": True, "query": body.get("q") or "", "images": image_search(body.get("q") or body.get("query") or "", body.get("n") or 6)})
             elif path == "/api/builds/list":
                 _bp = self._auth(body)
                 self._send_json(build_list((_bp.get("sub") if _bp else None) or body.get("email")))
@@ -10079,10 +10331,36 @@ class Handler(BaseHTTPRequestHandler):
                     _site = (key("TRACKER_DOMAIN") or (("https://" + _host) if "." in _host else "")).strip()
                     if _site and not _site.startswith("http"):
                         _site = "https://" + _site
-                    tool_runs = auto_tools(last_user, tier,
-                                           ha_url=body.get("ha_url"),
-                                           ha_token=body.get("ha_token"),
-                                           email=chat_email, crypto_site=_site)
+                    _slow = stream and _looks_slow_tool(last_user)
+                    if _slow:
+                        self._sse_begin()
+                        _tr = {}
+                        def _run_tools():
+                            try:
+                                _tr["r"] = auto_tools(last_user, tier, ha_url=body.get("ha_url"),
+                                                      ha_token=body.get("ha_token"),
+                                                      email=chat_email, crypto_site=_site)
+                            except Exception as _e:
+                                _tr["e"] = _e
+                        _th = threading.Thread(target=_run_tools, daemon=True)
+                        _th.start()
+                        while _th.is_alive():
+                            _th.join(4.0)
+                            if _th.is_alive():
+                                try:
+                                    self.wfile.write(b": ping\n\n")
+                                    self.wfile.flush()
+                                except Exception:
+                                    break  # browser went away; the build itself still completes
+                        _th.join(1.0)
+                        if "e" in _tr:
+                            raise _tr["e"]
+                        tool_runs = _tr.get("r") or []
+                    else:
+                        tool_runs = auto_tools(last_user, tier,
+                                               ha_url=body.get("ha_url"),
+                                               ha_token=body.get("ha_token"),
+                                               email=chat_email, crypto_site=_site)
                 except Exception as e:
                     tool_runs = [{"tool": "error", "label": "auto-tools", "result": str(e)[:200]}]
         tool_ctx = tool_context(tool_runs)
@@ -10393,11 +10671,13 @@ class Handler(BaseHTTPRequestHandler):
         _guard = _MarkupGuard()
         stream_msgs = messages
         first_frame = True
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
+        if not getattr(self, "_sse_on", False):
+            self._sse_on = True
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
         if tool_summary or core_names or chat_media:
             try:
                 self.wfile.write(("data: " + json.dumps({"__tools": tool_summary,

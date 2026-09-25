@@ -175,12 +175,20 @@
     const u=new SpeechSynthesisUtterance(text);u.lang=settings.voiceLanguage||'en-NG';u.rate=1.08;
     const chosen=voices.find(v=>v.name===settings.voiceName)||voices.find(v=>(v.lang||'').startsWith(u.lang.slice(0,2)));
     if(chosen)u.voice=chosen;
-    u.onstart=()=>{if(epoch===speechEpoch){startWave();pauseWake();}};
-    const finish=()=>{if(epoch!==speechEpoch)return;activeSpeech=false;if(speechQueue.length)pump();else{stopWave();if(!streaming)resumeWake();state(enabled?'Conversation ready':'Microphone off');resume();}};
+    let started=false,finished=false;
+    u.onstart=()=>{started=true;if(epoch===speechEpoch){startWave();pauseWake();}};
+    const finish=()=>{if(finished)return;finished=true;clearTimeout(wdStart);clearTimeout(wdEnd);clearInterval(keep);if(epoch!==speechEpoch)return;activeSpeech=false;if(speechQueue.length)pump();else{stopWave();if(!streaming)resumeWake();state(enabled?'Conversation ready':'Microphone off');resume();}};
     u.onend=finish;u.onerror=finish;
-    speechSynthesis.speak(u);
+    // patch40: stuck-speech recovery — Chrome/Android sometimes never fires onstart/onend, which used to leave
+    // activeSpeech=true forever: no more speech AND no more listening ("mute, won't respond"). Watchdogs + resume keep it alive.
+    const wdStart=setTimeout(()=>{if(started||finished)return;try{speechSynthesis.cancel();}catch(e){}if(!u.__retried){u.__retried=true;finished=true;clearTimeout(wdEnd);clearInterval(keep);if(epoch===speechEpoch){activeSpeech=false;speechQueue.unshift(text);try{speechSynthesis.resume();}catch(e){}setTimeout(pump,200);}}else finish();},3500);
+    const wdEnd=setTimeout(()=>{if(finished)return;try{speechSynthesis.cancel();}catch(e){}finish();},6000+text.length*95);
+    const keep=setInterval(()=>{try{if(speechSynthesis.paused)speechSynthesis.resume();}catch(e){}},4000);
+    try{speechSynthesis.speak(u);}catch(e){finish();}
   }
-  function enqueue(text){const clean=speechClean(_cleanReply(text));if(clean&&settings.ttsOn){speechQueue.push(clean);pump();}}
+  function enqueue(text){const clean=speechClean(_cleanReply(text));if(!clean||!settings.ttsOn)return;
+    if(clean.length<=220){speechQueue.push(clean);}else{let cur='';clean.split(/(?<=[.!?…])\s+|\n+/).forEach(p=>{p=p.trim();if(!p)return;if((cur+' '+p).length>200&&cur){speechQueue.push(cur);cur=p;}else cur=cur?cur+' '+p:p;});if(cur)speechQueue.push(cur);}
+    pump();}
   window.OraVoice={
     get enabled(){return enabled;},
     pause:pauseCapture,resume,stop,setAbort(fn){abortReply=fn;},

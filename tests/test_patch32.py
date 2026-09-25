@@ -10,7 +10,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 
 class BargeInTests(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch39-arena"'), 2)
+        self.assertEqual(SRV.count('"patch40-studio"'), 2)
 
     def test_send_never_swallows_new_messages(self):
         self.assertNotIn("if(busy) return;", APP)
@@ -49,7 +49,7 @@ class BargeInTests(unittest.TestCase):
         self.assertIn("Talk over the AI any time", VOICE)
 
     def test_cache_bust_and_js_valid(self):
-        self.assertIn('/voice-reminders.js?v=32', APP)
+        self.assertIn('/voice-reminders.js?v=40', APP)
         for label, script in (("voice", VOICE),):
             with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as f:
                 f.write(script); p = f.name

@@ -152,6 +152,16 @@
   .bubble .md-img{max-width:100%; border-radius:10px; margin:8px 0; display:block;} .bubble .md-video{max-width:100%; border-radius:10px; margin:8px 0;} .bubble .md-audio{width:100%; margin:8px 0;}
   .bubble .md a{color:var(--cyan2,#7dd3fc);}
   .bubble .md-pre{position:relative;} .bubble .md-pre .cpy{position:absolute; top:6px; right:6px; font-size:10px; letter-spacing:1px; text-transform:uppercase; background:rgba(0,229,255,.10); border:1px solid var(--line); color:var(--cyan2,#7dd3fc); border-radius:6px; padding:3px 7px; cursor:pointer;}
+  /* patch40: Arena-style "running steps" card for builds */
+  .steps{border:1px solid var(--line); border-radius:12px; background:rgba(3,12,18,.55); margin:6px 0 10px; font-size:12.5px; overflow:hidden;}
+  .steps .sh{display:flex; align-items:center; gap:8px; padding:8px 12px; cursor:pointer; color:var(--dim); user-select:none;}
+  .steps .sh b{color:var(--text); font-weight:600;} .steps .sh .chev{margin-left:auto; transition:transform .2s;} .steps.open .sh .chev{transform:rotate(180deg);}
+  .steps .sb{display:none; padding:2px 12px 10px;} .steps.open .sb{display:block;}
+  .steps .st{display:flex; align-items:center; gap:8px; padding:5px 0; border-top:1px solid rgba(125,211,252,.06); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px;}
+  .steps .st .ic{width:16px; text-align:center; color:var(--ok);} .steps .st.run .ic{color:var(--cyan2,#7dd3fc); animation:spin 1s linear infinite; display:inline-block;}
+  .steps .st .dt{color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0;} .steps .st .ms{color:var(--dim); font-size:11px; margin-left:auto; flex:0 0 auto;}
+  .steps .st.err .ic{color:var(--danger);}
+  @keyframes spin{to{transform:rotate(360deg)}}
   /* patch39: Arena-style clean layout (Settings → Layout) */
   .acts{display:flex; gap:4px; margin-top:8px; opacity:.55; transition:opacity .2s; flex-wrap:wrap;} .bubble:hover .acts{opacity:1;}
   .acts button{background:transparent; border:1px solid transparent; color:var(--dim); font-size:11px; padding:4px 8px; border-radius:8px; cursor:pointer; min-height:28px;}
@@ -1315,15 +1325,36 @@ function speak(text){
     return;
   }
   if(!voices.length) loadVoices();
+  // patch40: Chrome/Android speech gets stuck (no onstart / silent after ~15s / paused queue) → the app went "mute".
+  // Speak in sentence chunks, keep the engine resumed, and force-recover when an utterance never starts or never ends.
   try{
     speechSynthesis.cancel();
-    const u=new SpeechSynthesisUtterance(speechClean(text)); u.rate=1.02; u.pitch=0.92; u.volume=1;
-    if(settings.voiceName){ const v=voices.find(v=>v.name===settings.voiceName); if(v)u.voice=v; }
-    else { const v=voices.find(v=>/en[-_]GB|Daniel|George|UK English Male/i.test(v.name)) || voices.find(v=>v.lang&&v.lang.startsWith('en')); if(v)u.voice=v; }
-    u.onstart=()=>{ startWave(); pauseWake(); };
-    u.onend=()=>{ stopWave(); resumeWake(); };
-    u.onerror=()=>{ stopWave(); resumeWake(); };
-    speechSynthesis.speak(u);
+    const clean=speechClean(text)||''; if(!clean.trim()) return;
+    const chunks=[]; let cur='';
+    clean.split(/(?<=[.!?…])\s+|\n+/).forEach(p=>{ p=p.trim(); if(!p) return; if((cur+' '+p).length>200 && cur){ chunks.push(cur); cur=p; } else cur=cur?cur+' '+p:p; });
+    if(cur) chunks.push(cur);
+    const epoch=(window.__speakEpoch=(window.__speakEpoch||0)+1);
+    let i=0;
+    const pickVoice=()=>{ if(settings.voiceName){ const v=voices.find(v=>v.name===settings.voiceName); if(v) return v; } return voices.find(v=>/en[-_]GB|Daniel|George|UK English Male/i.test(v.name)) || voices.find(v=>v.lang&&v.lang.startsWith('en')) || null; };
+    const stopAll=()=>{ stopWave(); resumeWake(); if(window.__speakTick){ clearInterval(window.__speakTick); window.__speakTick=null; } };
+    if(window.__speakTick) clearInterval(window.__speakTick);
+    window.__speakTick=setInterval(()=>{ try{ if(speechSynthesis.paused) speechSynthesis.resume(); if(!speechSynthesis.speaking && !speechSynthesis.pending){ stopAll(); } }catch(e){} }, 4000);
+    const next=()=>{
+      if(epoch!==window.__speakEpoch) return;
+      if(i>=chunks.length){ stopAll(); return; }
+      const piece=chunks[i++];
+      const u=new SpeechSynthesisUtterance(piece); u.rate=1.02; u.pitch=0.92; u.volume=1;
+      const v=pickVoice(); if(v) u.voice=v;
+      let started=false, finished=false;
+      const finish=()=>{ if(finished) return; finished=true; clearTimeout(wdStart); clearTimeout(wdEnd); if(epoch!==window.__speakEpoch) return; if(i>=chunks.length) stopAll(); next(); };
+      u.onstart=()=>{ started=true; startWave(); pauseWake(); };
+      u.onend=finish;
+      u.onerror=(ev)=>{ if(ev && ev.error==='not-allowed' && !window.__ttsBlockedNote){ window.__ttsBlockedNote=true; addSystemNote('🔇 The browser blocked speech until you interact with the page — tap <b>🔊 Speak</b> under any reply once and voice output resumes.'); } finish(); };
+      const wdStart=setTimeout(()=>{ if(!started && !finished){ try{ speechSynthesis.cancel(); }catch(e){} if(!u.__retried){ u.__retried=true; i--; try{ speechSynthesis.resume(); }catch(e){} setTimeout(next, 150); finished=true; } else finish(); } }, 3500);
+      const wdEnd=setTimeout(()=>{ if(!finished){ try{ speechSynthesis.cancel(); }catch(e){} finish(); } }, 6000+piece.length*95);
+      try{ speechSynthesis.speak(u); }catch(e){ finish(); }
+    };
+    next();
   }catch(e){}
 }
 
@@ -1365,6 +1396,30 @@ function _cleanReply(t){
   s=s.replace(/<\s*\/?\s*(think|thinking|reasoning)\b[^>]*>/gi,'');
   s=s.replace(/\(?\*{0,2}\(?ran a tool\)?\*{0,2}\)?/g,'');
   return s.replace(/\n{3,}/g,'\n\n').trim();
+}
+/* patch40: live "running steps" card (Arena-style) — polls /api/builds/progress while a build runs */
+function wantsBuild(q){
+  q=String(q||'').toLowerCase();
+  return /\b(build|create|make|design|generate|develop|code|set ?up)\b/.test(q) && /\b(website|web ?site|landing ?page|web ?app|webpage|home ?page|portfolio site|online store|e-?commerce site|blog site|one-?pager|site for)\b/.test(q);
+}
+function stepsCard(anchor){
+  const d=document.createElement('div'); d.className='steps open'; d.style.display='none';
+  d.innerHTML='<div class="sh"><span class="ic" style="display:inline-block;animation:spin 1s linear infinite">⟳</span><b>Running steps</b><span class="cnt"></span><span class="chev">▾</span></div><div class="sb"></div>';
+  d.querySelector('.sh').onclick=()=>d.classList.toggle('open');
+  if(anchor&&anchor.parentElement){ anchor.parentElement.insertBefore(d, anchor); } else { chat.appendChild(d); }
+  let timer=null, lastN=0, stopped=false;
+  const fmt=ms=>ms==null?'':(ms<1000?ms+'ms':(ms/1000).toFixed(1)+'s');
+  const paint=(p)=>{
+    const sb=d.querySelector('.sb'); const steps=p.steps||[]; if(steps.length) d.style.display='';
+    sb.innerHTML=steps.map(st=>'<div class="st '+(st.running?'run':'')+'"><span class="ic">'+(st.running?'⟳':'✓')+'</span><span class="tt">'+escapeHtml(st.title)+'</span><span class="dt">'+escapeHtml(st.detail||'')+'</span><span class="ms">'+fmt(st.ms)+'</span></div>').join('');
+    d.querySelector('.cnt').textContent=steps.length?(' '+steps.length):'';
+    if(steps.length!==lastN){ lastN=steps.length; scrollChat(); }
+    if(p.done){ const h=d.querySelector('.sh'); h.querySelector('.ic').style.animation='none'; h.querySelector('.ic').textContent=p.ok_build===false?'⚠️':'✓'; h.querySelector('b').textContent=(p.ok_build===false?'Build stopped':'Ran '+steps.length+' steps')+(p.total_ms?' in '+fmt(p.total_ms):''); if(p.ok_build===false){ const last=sb.lastElementChild; if(last) last.classList.add('err'); } d.classList.remove('open'); }
+  };
+  const tick=async()=>{ if(stopped) return; try{ const p=await post('/api/builds/progress',{}); if(p&&p.ok){ if(p.steps&&p.steps.length) paint(p); if(p.done){ stop(); return; } } }catch(e){} timer=setTimeout(tick, 1100); };
+  const stop=()=>{ stopped=true; if(timer) clearTimeout(timer); };
+  timer=setTimeout(tick, 700);
+  return {stop, finish:()=>{ stop(); if(!lastN){ d.remove(); return; } (async()=>{ try{ const p=await post('/api/builds/progress',{}); if(p&&p.ok&&p.steps) paint(Object.assign({},p,{done:true})); }catch(e){} })(); }};
 }
 function buildCard(x){
   const d=document.createElement('div'); d.className='msg ai';
@@ -1983,6 +2038,49 @@ function appLaunchCard(app, u, mode){
   };
   chat.appendChild(d); scrollChat(); saveChat&&saveChat();
 }
+/* patch40: "record a video / clip of me" — camera + mic, MediaRecorder, inline playback */
+function videoAuto(seconds){
+  seconds=Math.max(3, Math.min(60, seconds||10));
+  const d=document.createElement('div'); d.className='msg ai';
+  d.innerHTML='<div class="who">ORA-COOL</div><div class="body">🎥 <b>Camera open</b> — recording a '+seconds+'-second clip… <span id="vcCount" style="font-weight:800;color:var(--cyan2,#7dd3fc)">3</span>'+
+    '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn ghost small" id="vcStop" style="min-height:40px">⏹ Stop now</button></div></div>';
+  chat.appendChild(d); scrollChat();
+  const body=d.querySelector('.body'), cnt=d.querySelector('#vcCount'), stopBtn=d.querySelector('#vcStop');
+  let stream=null, rec=null, chunks=[], done=false, timer=null;
+  const cleanup=()=>{ if(timer) clearInterval(timer); if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } };
+  (async()=>{
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:1280},height:{ideal:720}},audio:true});
+      const v=document.createElement('video'); v.srcObject=stream; v.muted=true; v.playsInline=true;
+      v.style.cssText='width:100%;max-width:420px;border-radius:12px;margin-top:8px;background:#000;display:block';
+      body.insertBefore(v, stopBtn.parentElement); await v.play();
+      for(const n of [3,2,1]){ if(cnt) cnt.textContent=n; await new Promise(r=>setTimeout(r,800)); }
+      const mime=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'].find(m=>{ try{ return MediaRecorder.isTypeSupported(m); }catch(e){ return false; } })||'';
+      rec=new MediaRecorder(stream, mime?{mimeType:mime}:undefined);
+      rec.ondataavailable=e=>{ if(e.data&&e.data.size) chunks.push(e.data); };
+      const finish=()=>new Promise(res=>{ rec.onstop=res; try{ rec.stop(); }catch(e){ res(); } });
+      rec.start(250);
+      let left=seconds; if(cnt) cnt.textContent='● REC '+left+'s';
+      timer=setInterval(()=>{ left--; if(cnt) cnt.textContent='● REC '+left+'s'; if(left<=0 && !done){ done=true; finish().then(show); } },1000);
+      stopBtn.onclick=()=>{ if(!done){ done=true; finish().then(show); } };
+      async function show(){
+        cleanup(); v.remove(); stopBtn.parentElement.remove(); if(cnt) cnt.remove();
+        const type=(rec&&rec.mimeType)||mime||'video/webm'; const blob=new Blob(chunks,{type}); const url=URL.createObjectURL(blob);
+        const ext=/mp4/.test(type)?'mp4':'webm';
+        const box=document.createElement('div');
+        box.innerHTML='<video controls playsinline src="'+url+'" style="width:100%;max-width:420px;border-radius:12px;margin-top:8px;background:#000;display:block"></video>'+
+          '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><a class="btn ghost small" href="'+url+'" download="oracool-clip.'+ext+'" style="min-height:40px">⬇️ Download clip</a>'+
+          '<button class="btn ghost small" id="vcAgain" style="min-height:40px">🔁 Record again</button></div>'+
+          '<div class="hint" style="margin-top:6px">'+(Math.round(blob.size/1024))+' KB · '+ext.toUpperCase()+' · recorded on this device only — nothing was uploaded.</div>';
+        body.appendChild(box); box.querySelector('#vcAgain').onclick=()=>{ d.remove(); videoAuto(seconds); }; scrollChat();
+      }
+    }catch(e){
+      cleanup(); if(cnt) cnt.remove(); stopBtn.parentElement.remove();
+      const msg=/NotAllowed|Permission|denied/i.test(String(e&&e.name||e))?'Camera/microphone permission was denied — tap the padlock in the address bar → Site settings → allow Camera and Microphone, then ask again.':(/NotFound|Devices/i.test(String(e&&e.name||e))?'No camera was found on this device.':'Camera error: '+escapeHtml(String(e&&e.message||e)));
+      body.insertAdjacentHTML('beforeend','<div class="errbox" style="margin-top:8px">'+msg+'</div>');
+    }
+  })();
+}
 function cameraAuto(){
   window.__camAutoRunning=true;
   const d=document.createElement('div'); d.className='msg ai';
@@ -2092,6 +2190,17 @@ function runDeviceCommand(text){
   const t=text.toLowerCase();
   const ua=navigator.userAgent||'';
   const android=/android/i.test(ua), ios=/iphone|ipad|ipod/i.test(ua);
+  // patch40: video clips + "open my camera" never go to the app launcher
+  const _vm=t.match(/\b(?:record|take|shoot|make|capture|film|start)\b.{0,30}?\b(?:video|clip|recording|reel|footage)\b|\b(?:video|clip)\s+of\s+(?:me|myself|my face)\b|\bfilm me\b|\brecord me\b/);
+  if(_vm){
+    const secs=(t.match(/(\d{1,2})\s*(?:s|sec|secs|seconds?)\b/)||[])[1];
+    videoAuto(secs?+secs:10);
+    return {handled:true, reply:'Camera and microphone opening now, sir — recording a <b>'+(secs?+secs:10)+'-second clip</b> after the countdown; press <b>Stop now</b> any time. Allow the camera/mic permission if your browser asks. The clip plays right here and stays on your device.'};
+  }
+  if(/\bopen\s+(?:my\s+|the\s+)?(?:camera|webcam|front camera|selfie camera)\b/.test(t) && !/\b(?:app|application)\b/.test(t)){
+    cameraAuto();
+    return {handled:true, reply:'Opening your camera now, sir — capturing in <b>3… 2… 1</b>. Say "record a clip" if you want video instead.'};
+  }
   if(/\b(?:take|snap|capture|click|shoot|get)\s+(?:me\s+|my\s+(?:face\s+)?|a\s+)?(?:picture|photo|selfie)\b/.test(t) || /\b(?:picture|photo|selfie)\s+of\s+(?:me|my face)\b/.test(t)){
     cameraAuto();
     return {handled:true, reply:'Opening your camera now, sir — hold still, capturing in <b>3… 2… 1</b>. If your browser asks for camera permission, allow it. Your photo will appear right here in the chat to view, download or attach.'};
@@ -2148,7 +2257,7 @@ function runDeviceCommand(text){
   }
   if(wantsPreview(t)){ showLatestBuild(); return {handled:true, reply:null}; }
   const R=[
-    [/^open\s+([a-z0-9 .+-]{2,30}?)\s*(?:app|application)?\s*(?:for me)?[.!?]?$/, async (m)=>{ const msg=await smartOpen(m[1]); if(msg) addAI(msg); return !!msg; }, 'smart'],
+    [/^open\s+(?!(?:my|the)?\s*(?:camera|webcam|video|mic|microphone|screen)\b)([a-z0-9 .+-]{2,30}?)\s*(?:app|application)?\s*(?:for me)?[.!?]?$/, async (m)=>{ const msg=await smartOpen(m[1]); if(msg) addAI(msg); return !!msg; }, 'smart'],
     [/\bopen\s+whatsapp\b/, ()=>open('https://wa.me/'), 'Opening WhatsApp on your device, sir.'],
     [/\bopen\s+(?:youtube|yt)\b/, ()=>open('https://youtube.com'), 'Opening YouTube, sir.'],
     [/\bopen\s+instagram\b/, ()=>open('https://instagram.com'), 'Opening Instagram, sir.'],
@@ -2283,6 +2392,7 @@ async function send(text){
   const b=addAI(''); const body=b.lastChild;
   if(coreNames.length){ const who=b.querySelector('.who'); if(who) who.textContent='ORA-COOL · '+[...new Set(coreNames)].join(' + '); }
   body.innerHTML='<span class="dots"></span>';
+  let _steps=null; try{ if(session && wantsBuild(text)) _steps=stepsCard(b); }catch(e){}
   const msgs=[{role:'system',content:systemPrompt()+(coreExtra?('\n\n'+coreExtra):'')},...history];
   try{
     let acc='';
@@ -2334,10 +2444,12 @@ async function send(text){
       });
     }
     history.push({role:'assistant',content:acc}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
+    if(_steps){ try{ _steps.finish(); }catch(e){} _steps=null; }
     attachActions(b, acc);
     try{ loadSessions(); }catch(e){}
     if(turnSpeaker)turnSpeaker.finish(_noApp(_cleanReply(acc)));else speak(_noApp(acc));
   }catch(e){
+    if(_steps){ try{ _steps.finish(); }catch(err){} _steps=null; }
     if(turnSpeaker)turnSpeaker.cancel();
     if(e.name==='AbortError'){ if(_wd)clearInterval(_wd); body.textContent+=(body.textContent?'\n':'')+( _wdFired?' ⏱ The provider timed out with no answer — send again and I will pick it up.':'Reply interrupted.');}else if(myTurn===CHAT_TURN){
     body.textContent='';
@@ -5673,7 +5785,7 @@ _pwaRefreshInstall();
 </script>
 <script src="/md.js?v=38"></script>
 <script src="/apps.js?v=39"></script>
-<script src="/voice-reminders.js?v=32"></script>
+<script src="/voice-reminders.js?v=40"></script>
 <script src="/communications.js"></script>
 </body>
 </html>
