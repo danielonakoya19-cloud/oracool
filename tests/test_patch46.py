@@ -97,6 +97,24 @@ class Failover(unittest.TestCase):
         self.assertIn("rate-limited right now", raw)
         self.assertNotIn("no credits", raw)
 
+    def test_silent_brain_rotates(self):
+        seen = []
+        def urlopen(req, timeout=0, context=None):
+            m = json.loads(req.data.decode())["model"]; seen.append(m)
+            if m == "qwen/qwen3.8-27b":  # reasoning ate the budget: a stream with no content at all
+                return _SSE(("data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": "length"}]}) + "\ndata: [DONE]\n").encode())
+            return _sse_reply("Hello from " + m)
+        h = _fake_handler()
+        body = {"messages": [{"role": "user", "content": "hi there, quick one"}], "stream": True, "provider": "auto",
+                "email": "f46@example.invalid", "_verified_email": "f46@example.invalid", "tools": False}
+        with mock.patch.object(s.urllib.request, "urlopen", urlopen), mock.patch.object(s, "key", lambda k, d="": {"GROQ_API_KEY": "gk"}.get(k, "")), \
+             mock.patch.dict(s.KEYS, {"GROQ_MODEL": "qwen/qwen3.8-27b", "BRAIN_PROVIDER": "groq"}, clear=False), \
+             mock.patch.object(s, "is_blocked", lambda e: False), mock.patch.object(s, "chat_touch_async", lambda *a, **k: None), \
+             mock.patch.object(s, "conv_append", lambda *a, **k: None), mock.patch.object(s, "check_tier", lambda e: "pro"):
+            h._handle_chat(body)
+        self.assertEqual(seen, ["qwen/qwen3.8-27b", "openai/gpt-oss-120b"])
+        self.assertIn("Hello from openai/gpt-oss-120b", h.wfile.getvalue().decode())
+
     def test_error_texts(self):
         self.assertIn("no credits left", s._brain_error_text(429, '{"error":{"type":"insufficient_quota"}}'))
         self.assertIn("rate-limited", s._brain_error_text(429, "Rate limit reached for model"))

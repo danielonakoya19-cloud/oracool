@@ -11398,7 +11398,9 @@ class Handler(BaseHTTPRequestHandler):
                         api_key, base_url, model = _nb
                         url = base_url + "/chat/completions"
                         payload["model"] = model
-                        if "gpt-oss" not in model:
+                        if "gpt-oss" in model:
+                            payload.setdefault("reasoning_effort", "low")  # chat answers, not deep reasoning
+                        else:
                             payload.pop("reasoning_effort", None)
                         continue
                     if acc_full:
@@ -11464,7 +11466,9 @@ class Handler(BaseHTTPRequestHandler):
                     api_key, base_url, model = _nb
                     url = base_url + "/chat/completions"
                     payload["model"] = model
-                    if "gpt-oss" not in model:
+                    if "gpt-oss" in model:
+                        payload.setdefault("reasoning_effort", "low")
+                    else:
                         payload.pop("reasoning_effort", None)
                     continue
                 if not acc_stream:
@@ -11562,6 +11566,19 @@ class Handler(BaseHTTPRequestHandler):
                     stream_msgs = stream_msgs + [{"role": "system", "content": _ctx2}]
                 continue
             acc_stream += round_txt
+            if not acc_stream.strip():
+                # patch46: a silent round (reasoning ate the budget, empty provider reply) is a brain failure —
+                # rotate to the next brain instead of showing "(no response)"
+                _nb = self._next_brain(provider, base_url, model, _tried)
+                if _nb:
+                    api_key, base_url, model = _nb
+                    url = base_url + "/chat/completions"
+                    payload["model"] = model
+                    if "gpt-oss" in model:
+                        payload.setdefault("reasoning_effort", "low")
+                    else:
+                        payload.pop("reasoning_effort", None)
+                    continue
             if fr == "length" and round_txt.strip() and cont_rounds < 2 and len(acc_stream) < 40000:
                 cont_rounds += 1
                 stream_msgs = list(stream_msgs) + [
