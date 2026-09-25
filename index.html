@@ -2419,11 +2419,11 @@ function cameraAuto(){
           if(f.size>5*1024*1024){ addErr('⚠️ Photo is over 5 MB — skipped.'); return; }
           const dataURL=await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>res(null); r.readAsDataURL(f); });
           if(!dataURL) throw new Error('read failed');
-          const r=await post('/api/files/analyze',{name:f.name, mime:'image/jpeg', data_b64:dataURL.split(',')[1]||''});
+          const r=await post('/api/files/analyze',{name:f.name, mime:'image/jpeg', data_b64:dataURL.split(',')[1]||'', purpose:'attachment'});
           if(r.error){ addErr('⚠️ '+r.error); return; }
-          pendingFiles.push({name:f.name, type:r.type, text:r.text});
+          pendingFiles.push({name:f.name, type:'image', thumb:dataURL, text:r.text||('(Image attached: '+f.name+'. OraCool\'s vision could not read it right now — say so honestly.)')});
           renderFileChips();
-          addSystemNote('📎 '+escapeHtml(f.name)+' attached'+(r.text?' — I can see it: '+escapeHtml(r.text.slice(0,140)):'')+'.');
+          addSystemNote('📎 '+escapeHtml(f.name)+' attached'+(r.text?' — I can see it: '+escapeHtml(r.text.slice(0,140)):' — ⚠️ I could not look inside it right now')+'.');
           btn2.disabled=true; btn2.textContent='Attached ✓';
         }catch(e){ addErr('⚠️ Could not attach the photo: '+(e.message||e)); }
       };
@@ -2473,11 +2473,11 @@ function cameraCard(){
           if(f.size>5*1024*1024){ addErr('⚠️ Photo is over 5 MB — skipped.'); return; }
           const dataURL=await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>res(null); r.readAsDataURL(f); });
           if(!dataURL) throw new Error('read failed');
-          const r=await post('/api/files/analyze',{name:f.name, mime:'image/jpeg', data_b64:dataURL.split(',')[1]||''});
+          const r=await post('/api/files/analyze',{name:f.name, mime:'image/jpeg', data_b64:dataURL.split(',')[1]||'', purpose:'attachment'});
           if(r.error){ addErr('⚠️ '+r.error); return; }
-          pendingFiles.push({name:f.name, type:r.type, text:r.text});
+          pendingFiles.push({name:f.name, type:'image', thumb:dataURL, text:r.text||('(Image attached: '+f.name+'. OraCool\'s vision could not read it right now — say so honestly.)')});
           renderFileChips();
-          addSystemNote('📎 '+escapeHtml(f.name)+' attached'+(r.text?' — I can see it: '+escapeHtml(r.text.slice(0,140)):'')+'.');
+          addSystemNote('📎 '+escapeHtml(f.name)+' attached'+(r.text?' — I can see it: '+escapeHtml(r.text.slice(0,140)):' — ⚠️ I could not look inside it right now')+'.');
           btn2.disabled=true; btn2.textContent='Attached ✓';
         }catch(e){ addErr('⚠️ Could not attach the photo: '+(e.message||e)); }
       };
@@ -2669,6 +2669,7 @@ async function send(text){
   if(isBlockedSession()){ showBlockedScreen(); return; }
   const files=pendingFiles.slice(); pendingFiles=[]; renderFileChips();
   if(!text && !files.length) return;
+  try{ const _in=$('#input'); if(_in && (_in.value||'').trim()===text){ _in.value=''; _in.style.height=''; } }catch(e){}  // patch44: clear the box before any early-return path
   const myTurn=++CHAT_TURN;
   if(busy){ // patch32: human barge-in — whatever you send interrupts the reply in progress
     try{ if(window.OraVoice)window.OraVoice.interrupt(); }catch(e){}
@@ -2693,10 +2694,14 @@ async function send(text){
   let display=text, content=text;
   if(window.__sendOverride){ display=window.__sendOverride.display||display; content=window.__sendOverride.content||content; window.__sendOverride=null; }
   if(files.length){
-    display=(text||'Please analyze the attached file')+' 📎 '+files.map(f=>f.name).join(', ');
-    content=(text||'Please analyze the attached file(s) and summarize the key points.')+'\n\n'+files.map(f=>`=== FILE: ${f.name} (${f.type||'text'}) ===\n${f.text}`).join('\n\n');
+    const imgs=files.filter(f=>f.type==='image');
+    display=(text||(imgs.length===files.length?'What do you see in this picture?':'Please analyze the attached file'))+' 📎 '+files.map(f=>f.name).join(', ');
+    content=(text||(imgs.length===files.length?'Look at the attached picture and tell me what you see.':'Please analyze the attached file(s) and summarize the key points.'))+'\n\n'+
+      (imgs.length?'(The user attached '+imgs.length+' picture'+(imgs.length>1?'s':'')+'. You CAN see '+(imgs.length>1?'them':'it')+' — a vision model already looked and wrote the description below. Answer as if you are looking at the picture yourself; never say you cannot see images.)\n\n':'')+
+      files.map(f=>`=== ${f.type==='image'?'IMAGE':'FILE'}: ${f.name} (${f.type||'text'}) ===\n${f.text}`).join('\n\n');
   }
   addUser(display, content);
+  if(files.some(f=>f.thumb)){ try{ const ub=chat.querySelector('.bubble.user:last-of-type .bttext'); if(ub){ files.filter(f=>f.thumb).forEach(f=>{ const im=document.createElement('img'); im.src=f.thumb; im.alt=f.name; im.style.cssText='display:block;max-height:180px;max-width:100%;border-radius:10px;margin-top:6px'; ub.appendChild(im); }); } }catch(e){} }
   let coreNames=[], coreExtra='';
   if(activeCore){ coreNames.push(activeCore.name); coreExtra+=activeCore.persona+'\n\n'; }
   if(/[@#][A-Za-z0-9_]+/.test(text)){
@@ -2798,8 +2803,16 @@ $('#fileInput').addEventListener('change',async ()=>{
       const dataURL=await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>res(null); r.readAsDataURL(f); });
       if(!dataURL) throw new Error('read failed');
       const data_b64=dataURL.split(',')[1]||'';
-      const r=await post('/api/files/analyze',{name:f.name, mime:f.type||'', data_b64});
+      const isImg=/^image\//.test(f.type||'')||/\.(jpe?g|png|webp|gif|heic)$/i.test(f.name);
+      const r=await post('/api/files/analyze',{name:f.name, mime:f.type||'', data_b64, purpose:isImg?'attachment':''});
       if(r.error){ addErr('⚠️ '+r.error); continue; }
+      if(isImg){
+        // patch44: a photo is always attached — with what OraCool saw (or an honest "could not look") — and shown in the thread
+        const seen=(r.text||'').trim();
+        pendingFiles.push({name:f.name, type:'image', thumb:dataURL, text: seen || ('(Image attached: '+f.name+'. OraCool\'s vision could not read it right now'+(r.vision_error?' — '+String(r.vision_error).slice(0,120):'')+'. Tell the user honestly that you could not see the picture and ask them to describe it or try again.)')});
+        addSystemNote('<img src="'+dataURL+'" alt="" style="max-height:140px;max-width:min(100%,260px);border-radius:10px;display:block;margin-bottom:6px">📎 '+escapeHtml(f.name)+(seen?' — I can see it: '+escapeHtml(seen.slice(0,200))+(seen.length>200?'…':''):' — ⚠️ I could not look inside this picture right now'+(r.vision_error?' ('+escapeHtml(String(r.vision_error).slice(0,90))+')':'')+'.')+' <span style="color:var(--dim)">Ask me anything about it.</span>');
+        continue;
+      }
       if(!r.text){ addSystemNote('📎 '+escapeHtml(f.name)+': '+escapeHtml(r.note||'')); continue; }
       pendingFiles.push({name:f.name, type:r.type, text:r.text});
       addSystemNote('📎 '+escapeHtml(f.name)+' attached — '+(r.chars||0).toLocaleString()+' chars, ready to analyze.');

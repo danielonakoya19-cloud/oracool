@@ -15,7 +15,7 @@ MD = open(os.path.join(ROOT, "md.js"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch43-modes"'), 2)
+        self.assertEqual(SRV.count('"patch44-vision"'), 2)
         self.assertNotIn("patch40-studio", SRV)
         self.assertIn('/md.js?v=41', APP)
 
@@ -111,7 +111,7 @@ class MediaIntents(unittest.TestCase):
 class VisionPurpose(unittest.TestCase):
     def test_selfie_and_clip_prompts(self):
         seen = {}
-        def fake(prompt, mime, b64):
+        def fake(prompt, mime, b64, max_tokens=420):
             seen["p"] = prompt; return "Even light, centred, calm expression."
         with mock.patch.object(s, "_vision_describe_prompt", fake):
             r = s.analyze_file("clip-frames.jpg", "image/jpeg", "aGVsbG8=", purpose="clip")

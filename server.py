@@ -6335,7 +6335,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch43-modes",
+        "build": "patch44-vision",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -8087,19 +8087,49 @@ def _xlsx_text(data):
         return ""
 
 
-def _vision_describe_prompt(prompt, mime, data_b64):
-    """Run one vision prompt through the available providers (Gemini → Groq vision → OpenAI)."""
+_VISION_LAST = {"provider": "", "error": "", "at": 0}
+
+
+def _groq_vision_models():
+    """patch44: Groq retired its Llama-4 vision models; qwen3.8-27b on Groq accepts images. A configured
+    GROQ_VISION_MODEL is tried first, then the known multimodal ids."""
+    ms = []
+    cfg = str(KEYS.get("GROQ_VISION_MODEL") or os.environ.get("GROQ_VISION_MODEL") or "").strip()
+    if cfg:
+        ms.append(cfg)
+    for m in ("qwen/qwen3.8-27b", "meta-llama/llama-4-scout-17b-16e-instruct", "meta-llama/llama-4-maverick-17b-128e-instruct"):
+        if m not in ms:
+            ms.append(m)
+    return ms
+
+
+def _vision_err_text(e):
+    try:
+        body = e.read().decode("utf-8", "replace") if hasattr(e, "read") else ""
+        msg = (json.loads(body).get("error") or {}).get("message") if body else ""
+        return (msg or body or str(e))[:160]
+    except Exception:
+        return str(e)[:160]
+
+
+def _vision_describe_prompt(prompt, mime, data_b64, max_tokens=420):
+    """Run one vision prompt through the available providers (Gemini → Groq multimodal ladder → OpenAI).
+    Returns "" when nothing can serve it — never a fabricated description; the last error is kept in _VISION_LAST."""
+    errs = []
     if gemini_key() and not _gemini_skipped():
         try:
             gt, gerr = _gemini_text(prompt, model="gemini-flash-lite-latest", image_b64=(data_b64 or "")[:1_400_000], mime=mime or "image/jpeg")
             if gt and len(gt.strip()) > 20:
+                _VISION_LAST.update(provider="gemini-flash-lite", error="", at=time.time())
                 return gt.strip()
-        except Exception:
-            pass
+            if gerr:
+                errs.append("gemini: " + str(gerr)[:120])
+        except Exception as e:
+            errs.append("gemini: " + str(e)[:120])
     tries = []
     if key("GROQ_API_KEY"):
-        tries.append(("https://api.groq.com/openai/v1/chat/completions", key("GROQ_API_KEY"),
-                      KEYS.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")))
+        for m in _groq_vision_models():
+            tries.append(("https://api.groq.com/openai/v1/chat/completions", key("GROQ_API_KEY"), m))
     if key("OPENAI_API_KEY"):
         tries.append(("https://api.openai.com/v1/chat/completions", key("OPENAI_API_KEY"), "gpt-4o-mini"))
     payload_img = {"type": "image_url", "image_url": {"url": "data:" + (mime or "image/jpeg") + ";base64," + (data_b64 or "")[:1_400_000]}}
@@ -8107,17 +8137,26 @@ def _vision_describe_prompt(prompt, mime, data_b64):
         try:
             _, raw, _ = http_fetch(url, method="POST", timeout=60,
                                    headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
-                                   json_body={"model": model, "max_tokens": 420,
+                                   json_body={"model": model, "max_tokens": max_tokens,
                                               "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, payload_img]}]})
             c = (json.loads(raw).get("choices") or [{}])[0].get("message", {}).get("content")
             if c and len(c.strip()) > 20:
+                _VISION_LAST.update(provider=model, error="", at=time.time())
                 return c.strip()
-        except Exception:
+            errs.append(model + ": empty reply")
+        except Exception as e:
+            errs.append(model + ": " + _vision_err_text(e))
             continue
+    _VISION_LAST.update(provider="", error=" | ".join(errs)[:400] or "no vision provider configured", at=time.time())
     return ""
 
 
 _VISION_PROMPTS = {
+    "attachment": ("The user attached this image to a chat with an assistant that cannot see images. Describe it thoroughly so the assistant can "
+                   "answer any question about it: what it is (photo, screenshot, document, chart, meme…), the main subjects and what they are doing, "
+                   "setting, colours and mood, ALL visible text transcribed exactly (labels, numbers, prices, names, UI buttons, error messages), "
+                   "counts of people/objects, brands or logos, and anything notable or unusual. Never guess identity, age or ethnicity of people. "
+                   "Plain prose, 5-10 sentences; if it is a document or screenshot, transcribe the text faithfully first."),
     "selfie": ("This is the user's OWN camera photo (a selfie they just took for their assistant). Describe warmly and honestly how they look "
                "on camera: framing and angle, lighting (too dark / backlit / even), facial expression, outfit and colours, background and anything "
                "distracting, image sharpness. Then give 3 concrete tips to look better on camera. Never guess identity, age or ethnicity. 4-6 sentences."),
@@ -8132,37 +8171,9 @@ def _vision_describe(name, mime, data_b64, purpose=""):
     Returns "" when nothing can serve it — never a fabricated description."""
     _vp = _VISION_PROMPTS.get((purpose or "").strip().lower())
     if _vp:
-        return _vision_describe_prompt(_vp, mime, data_b64)
-    if gemini_key() and not _gemini_skipped():
-        gt, gerr = _gemini_text("Describe this image factually for an OSINT analyst: objects, text visible, people-count (no names), scene type, likely edit/screenshot evidence. 3 sentences max.",
-                                model="gemini-flash-lite-latest", image_b64=(data_b64 or "")[:1_400_000], mime=mime or "image/jpeg")
-        if gt and len(gt.strip()) > 20:
-            return gt.strip()
-    gk = key("GROQ_API_KEY")
-    tries = []
-    if gk:
-        tries.append(("https://api.groq.com/openai/v1/chat/completions", gk,
-                      KEYS.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")))
-    ok_ = key("OPENAI_API_KEY")
-    if ok_:
-        tries.append(("https://api.openai.com/v1/chat/completions", ok_, "gpt-4o-mini"))
-    payload_img = {"type": "image_url", "image_url": {"url": "data:" + (mime or "image/jpeg") + ";base64," + (data_b64 or "")[:1_400_000]}}
-    for url, k, model in tries:
-        try:
-            _, raw, _ = http_fetch(url, method="POST", timeout=60,
-                                   headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
-                                   json_body={"model": model, "max_tokens": 300,
-                                              "messages": [{"role": "user", "content": [
-                                                  {"type": "text",
-                                                   "text": "Describe this image factually for an OSINT analyst: objects, text visible, people-count (no names), scene type, likely edit/screenshot evidence. 3 sentences max."},
-                                                  payload_img]}]})
-            d = json.loads(raw)
-            c = (d.get("choices") or [{}])[0].get("message", {}).get("content")
-            if c and len(c.strip()) > 20:
-                return c.strip()
-        except Exception:
-            continue
-    return ""
+        return _vision_describe_prompt(_vp, mime, data_b64, max_tokens=(600 if purpose == "attachment" else 420))
+    return _vision_describe_prompt("Describe this image factually for an OSINT analyst: objects, text visible, people-count (no names), "
+                                   "scene type, likely edit/screenshot evidence. 3 sentences max.", mime, data_b64, max_tokens=300)
 
 
 def analyze_file(name, mime, data_b64, purpose=""):
@@ -8198,7 +8209,9 @@ def analyze_file(name, mime, data_b64, purpose=""):
         if purpose in ("selfie", "clip"):
             return {"name": name, "type": "image", "chars": 0, "text": desc[:4000], "purpose": purpose,
                     "note": desc[:600] if desc else "Vision is not configured on this server — the capture is saved on the device only."}
-        note = ("Image received. " + (desc + " " if desc else "") +
+        if not desc:
+            desc = ""  # never fabricate — the client tells the user vision could not read it
+        note = ("Image received. " + (desc[:600] + " " if desc else "(OraCool could not look inside this image right now — vision provider offline.) ") +
                 "Fingerprints: SHA-256 " + str(fore.get("sha256") or "?")[:16] + "… · " +
                 str(fore.get("format") or "?").upper() + " " +
                 (f"{fore.get('width')}x{fore.get('height')}" if fore.get("width") else "") +
@@ -8206,8 +8219,10 @@ def analyze_file(name, mime, data_b64, purpose=""):
                 (" · GPS embedded" if fore.get("gps") else " · no GPS") +
                 (" · editing software detected: " + str(fore.get("software")) if fore.get("software") else "") +
                 " — say 'preserve as evidence' to freeze it into a case.")
-        return {"name": name, "type": "image", "chars": 0, "text": desc[:4000],
-                "sha256": fore.get("sha256", ""), "note": note}
+        return {"name": name, "type": "image", "chars": len(desc), "text": desc[:4000],
+                "sha256": fore.get("sha256", ""), "note": note, "vision": bool(desc),
+                "vision_error": ("" if desc else str(_VISION_LAST.get("error") or "")[:200]),
+                "width": fore.get("width"), "height": fore.get("height")}
     elif mime.startswith("video/") or ext in (".mp4", ".mov", ".webm", ".avi", ".mkv"):
         sha = hashlib.sha256(data).hexdigest()
         return {"name": name, "type": "video", "chars": 0, "text": "",
@@ -9671,7 +9686,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch43-modes",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch44-vision",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
