@@ -42,5 +42,15 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   w.eval(`progress={ok:true,active:true,done:false,name:'Gym',steps:[{title:'Reading the brief',detail:'',kind:'skill',ms:2,running:false}]};`);
   const f2 = w.stepsCard(null, { parent: host }); await sleep(900);
   assert.ok(host.querySelector('.steps .st')); f2.stop(); ok('panel mode renders inside the given container');
+  // patch45: push mode — frames arrive inside the chat stream, no polling at all
+  w.eval(`var postCalls=0; post=async function(u,b){ postCalls++; return {ok:true,steps:[]}; };`);
+  const anchor3 = w.document.createElement('div'); w.chat.appendChild(anchor3);
+  const c4 = w.stepsCard(anchor3, { push: true });
+  const el4 = w.chat.querySelectorAll('.steps')[w.chat.querySelectorAll('.steps').length - 1];
+  c4.push({ ok: true, done: false, name: 'Fashion Designer', steps: [{ title: 'Reading the brief', detail: 'create a website for a fashion designer', kind: 'skill', ms: 3, running: false }, { title: 'Building Fashion Designer', detail: 'thinking…', kind: 'build', ms: null, running: true }] });
+  assert.ok(el4.style.display !== 'none' && el4.querySelectorAll('.st').length === 2 && /Building Fashion Designer/.test(el4.querySelector('.sh b').textContent)); ok('push mode paints frames immediately');
+  c4.push({ ok: true, done: true, ok_build: true, total_ms: 26000, name: 'Fashion Designer', steps: [{ title: 'Reading the brief', detail: '', kind: 'skill', ms: 3, running: false }, { title: 'Building Fashion Designer', detail: '', kind: 'build', ms: 20000, running: false }, { title: 'Preview ready', detail: '/builds/fashion-designer/', kind: 'ready', ms: 1, running: false }] });
+  assert.ok(el4.classList.contains('done') && /Worked for 26s · 3 steps · Fashion Designer/.test(el4.querySelector('.sh b').textContent)); ok('push mode finishes with the collapsed summary');
+  await sleep(1500); assert.strictEqual(w.eval('postCalls'), 0); c4.finish(); await sleep(200); assert.strictEqual(w.eval('postCalls'), 0); ok('push mode never polls the progress endpoint');
   console.log('client42 DOM OK (' + n + ' checks)'); process.exit(0);
 })().catch(e => { console.error(e); process.exit(1); });

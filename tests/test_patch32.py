@@ -10,7 +10,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 
 class BargeInTests(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch44-vision"'), 2)
+        self.assertEqual(SRV.count('"patch45-inline-feed"'), 2)
 
     def test_send_never_swallows_new_messages(self):
         self.assertNotIn("if(busy) return;", APP)

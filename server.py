@@ -6335,7 +6335,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch44-vision",
+        "build": "patch45-inline-feed",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -7622,6 +7622,16 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 _cand = _pn.group(1).strip().rstrip(".,;:")
                 if _cand not in ("OraCool", "Lagos", "Nigeria") and len(_cand) > 3:
                     _bn = _cand
+        if not _bn:
+            # patch45: no brand in the brief ("create a website for a fashion designer") -> a descriptive name
+            # instead of the anonymous "my-site", so the feed reads "Building Fashion Designer"
+            _dn = re.search(r"\b(?:for|about)\s+(?:a|an|the|my|our|his|her|their)?\s*([a-z][a-z0-9'&-]*(?:\s+[a-z][a-z0-9'&-]*){0,3}?)"
+                            r"(?=\s*(?:$|[,.;:!?]|\s+(?:in|at|based|with|that|which|who|and|selling|offering|called|named|using|from|to|on|near)\b))", low)
+            if _dn:
+                _cand = re.sub(r"\b(?:website|web ?site|site|web ?app|app|landing page|page|business|company|brand|store|shop|online)\b", "", _dn.group(1)).strip(" -'&")
+                _cand = re.sub(r"\s{2,}", " ", _cand)
+                if 2 < len(_cand) <= 40 and not re.match(r"^(?:me|us|you|him|her|them|it|this|that|myself)$", _cand):
+                    _bn = " ".join(w.capitalize() for w in _cand.split())
         _br = (t[:mb.end()] + t[mb.end():][:400]) if mb else t[:400]
         out.append({"tool": "build", "label": "build · " + (_bn or "website")[:30],
                     "result": _shrink(build_site(email, _bn or "my-site", _br), 1500)})
@@ -9686,7 +9696,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch44-vision",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch45-inline-feed",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -10740,15 +10750,36 @@ class Handler(BaseHTTPRequestHandler):
                                 _tr["e"] = _e
                         _th = threading.Thread(target=_run_tools, daemon=True)
                         _th.start()
+                        # patch45: the live build feed rides INSIDE this event-stream (same handler, same email key) —
+                        # no separate polling, no session/identity mismatch; a keep-alive ping still goes every ~4s
+                        _feed_sig, _last_ping, _feed_since = None, time.time(), time.time()
                         while _th.is_alive():
-                            _th.join(4.0)
-                            if _th.is_alive():
-                                try:
+                            _th.join(0.8)
+                            try:
+                                _pp = build_progress(chat_email) if chat_email else {}
+                                _st = _pp.get("steps") or []
+                                if _st and _pp.get("started", 0) >= _feed_since - 2:
+                                    _sig = (len(_st), _st[-1].get("detail"), bool(_pp.get("done")))
+                                    if _sig != _feed_sig:
+                                        _feed_sig = _sig
+                                        self.wfile.write(("data: " + json.dumps({"__steps": _pp}) + "\n\n").encode("utf-8"))
+                                        self.wfile.flush()
+                                        _last_ping = time.time()
+                                        continue
+                                if time.time() - _last_ping >= 4.0 and _th.is_alive():
                                     self.wfile.write(b": ping\n\n")
                                     self.wfile.flush()
-                                except Exception:
-                                    break  # browser went away; the build itself still completes
+                                    _last_ping = time.time()
+                            except Exception:
+                                break  # browser went away; the build itself still completes
                         _th.join(1.0)
+                        try:  # final frame: the finished feed ("Preview ready" + total time)
+                            _pp = build_progress(chat_email) if chat_email else {}
+                            if (_pp.get("steps") or []) and _pp.get("started", 0) >= _feed_since - 2 and _feed_sig != (len(_pp["steps"]), _pp["steps"][-1].get("detail"), bool(_pp.get("done"))):
+                                self.wfile.write(("data: " + json.dumps({"__steps": _pp}) + "\n\n").encode("utf-8"))
+                                self.wfile.flush()
+                        except Exception:
+                            pass
                         if "e" in _tr:
                             raise _tr["e"]
                         tool_runs = _tr.get("r") or []

@@ -20,7 +20,7 @@ NAME = "Daniel " + "Onakoya"  # split so this test file itself never carries the
 
 class CreatorPrivacy(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch44-vision"'), 2)
+        self.assertEqual(SRV.count('"patch45-inline-feed"'), 2)
 
     def test_client_source_has_no_creator_identity(self):
         # anyone can read index.html — the creator's name/birthday must not be in it

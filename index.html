@@ -1473,7 +1473,7 @@ function stepsCard(anchor, opts){
   d.innerHTML='<div class="sh"><span class="ic" style="display:inline-block;animation:spin 1s linear infinite">⟳</span><b>Working…</b><span class="cnt"></span><span class="chev">▾</span></div><div class="sb"></div>';
   d.querySelector('.sh').onclick=()=>d.classList.toggle('open');
   if(opts.parent){ opts.parent.appendChild(d); } else if(anchor&&anchor.parentElement){ anchor.parentElement.insertBefore(d, anchor); } else { chat.appendChild(d); }
-  let timer=null, lastN=0, stopped=false, name='', t0=Date.now(), liveTimer=null, lastSig='';
+  let timer=null, lastN=0, stopped=false, name='', t0=Date.now(), liveTimer=null, lastSig='', polling=!opts.push, donePainted=false;
   const fmt=ms=>ms==null?'':(ms<1000?ms+'ms':ms<60000?(ms/1000).toFixed(ms<10000?1:0)+'s':Math.floor(ms/60000)+'m '+Math.round((ms%60000)/1000)+'s');
   const liveRow=()=>{ let l=d.querySelector('.live'); if(!l){ l=document.createElement('div'); l.className='live'; l.innerHTML='<span class="eye">◉</span><span class="lt"></span>'; d.querySelector('.sb').appendChild(l); } return l; };
   liveTimer=setInterval(()=>{ if(stopped) return; const l=d.querySelector('.live .lt'); if(l) l.textContent='Working for '+fmt(Date.now()-t0); }, 1000);
@@ -1487,14 +1487,16 @@ function stepsCard(anchor, opts){
     }
     d.querySelector('.cnt').textContent='';
     if(steps.length!==lastN){ lastN=steps.length; if(!opts.parent) scrollChat(); }
-    if(p.done){ const h=d.querySelector('.sh'); h.querySelector('.ic').style.animation='none'; h.querySelector('.ic').textContent=p.ok_build===false?'⚠️':'✓'; d.classList.add('done');
+    if(p.done){ donePainted=true; const h=d.querySelector('.sh'); h.querySelector('.ic').style.animation='none'; h.querySelector('.ic').textContent=p.ok_build===false?'⚠️':'✓'; d.classList.add('done');
       h.querySelector('b').textContent=(p.ok_build===false?'Stopped':('Worked'))+(p.total_ms?' for '+fmt(p.total_ms):'')+' · '+steps.length+' steps'+(name?' · '+name:'');
       if(p.ok_build===false){ const last=sb.lastElementChild; if(last) last.classList.add('err'); } const l=d.querySelector('.live'); if(l) l.remove(); d.classList.remove('open'); if(liveTimer) clearInterval(liveTimer); }
   };
-  const tick=async()=>{ if(stopped) return; try{ const p=await post('/api/builds/progress',{}); if(p&&p.ok){ const stale=p.done && !lastN && (p.age_ms||0)>8000; /* a previous build's finished record — the new one has not started yet */ if(!stale){ if(p.steps&&p.steps.length) paint(p); if(p.done){ stop(); return; } } } }catch(e){} timer=setTimeout(tick, 900); };
+  const tick=async()=>{ if(stopped||!polling) return; try{ const p=await post('/api/builds/progress',{}); if(p&&p.ok&&polling){ const stale=p.done && !lastN && (p.age_ms||0)>8000; /* a previous build's finished record — the new one has not started yet */ if(!stale){ if(p.steps&&p.steps.length) paint(p); if(p.done){ stop(); return; } } } }catch(e){} if(polling&&!stopped) timer=setTimeout(tick, 900); };
   const stop=()=>{ stopped=true; if(timer) clearTimeout(timer); if(liveTimer) clearInterval(liveTimer); };
-  timer=setTimeout(tick, 600);
-  return {stop, finish:()=>{ stop(); if(!lastN){ d.remove(); return; } (async()=>{ try{ const p=await post('/api/builds/progress',{}); if(p&&p.ok&&p.steps) paint(Object.assign({},p,{done:true})); }catch(e){} })(); }};
+  // patch45: the server streams the feed inside the chat event-stream ("__steps") — push mode needs no polling at all
+  const push=(p)=>{ if(!p||!p.steps) return; polling=false; if(timer){ clearTimeout(timer); timer=null; } if(p.steps.length) paint(p); if(p.done && liveTimer){ clearInterval(liveTimer); liveTimer=null; } };
+  if(polling) timer=setTimeout(tick, 600);
+  return {stop, push, finish:()=>{ stop(); if(!lastN){ d.remove(); return; } if(donePainted) return; (async()=>{ try{ const p=await post('/api/builds/progress',{}); if(p&&p.ok&&p.steps) paint(Object.assign({},p,{done:true})); }catch(e){} })(); }};
 }
 function buildCard(x){
   const d=document.createElement('div'); d.className='msg ai';
@@ -2745,6 +2747,7 @@ async function send(text){
               const j=JSON.parse(data);
               if(j.error){ _streamErr=new Error(String(j.error).slice(0,240)); finished=true; break outer; }
               if(j.__progress && !_steps && session){ try{ _steps=stepsCard(b); }catch(e){} }
+              if(j.__steps){ try{ if(!_steps) _steps=stepsCard(b,{push:true}); _steps.push(j.__steps); }catch(e){} }
               if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build'){ if(x.coins_left!=null){ COINS=COINS||{}; COINS.balance=x.coins_left; renderCoinPill(); } if(x.url){ try{ buildCard(x); }catch(e){ addAI('<b>🏗 '+(x.name||'Your site')+'</b> is built — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the live preview here</a> (auto-saved to your vault).'); } } } if(x.tool==='edit'&&x.url){ try{ buildCard(x); }catch(e){ addAI('<b>✏️ '+(x.name||'Your site')+' updated</b> — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the new preview</a>.'); } } if(x.tool==='publish'){ try{ addAI(x.url?('🌐 Published — live at <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener">'+escapeHtml(x.url)+'</a>'):''); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } }); }
               if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
               if(j.__media && j.__media.length){ streamMedia=streamMedia.concat(j.__media); }
