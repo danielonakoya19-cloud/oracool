@@ -53,13 +53,13 @@
     while (i < n) {
       var l = lines[i];
       // fenced code
-      var f = l.match(/^\s*```\s*([\w+-]*)\s*$/);
+      var f = l.match(/^\s*```\s*([\w+-]*)([ \t][^`]*)?$/);
       if (f) {
         flushPara();
-        var buf = [], lang = f[1]; i++;
+        var buf = [], lang = f[1], info = (f[2] || '').trim(); i++;
         while (i < n && !/^\s*```\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
         i++; // closing fence (or EOF)
-        out.push('<pre class="md-pre"' + (lang ? ' data-lang="' + esc(lang) + '"' : '') + '><code>' + esc(buf.join('\n')) + '</code></pre>');
+        out.push('<pre class="md-pre"' + (lang ? ' data-lang="' + esc(lang) + '"' : '') + (info ? ' data-info="' + esc(info) + '"' : '') + '><code>' + esc(buf.join('\n')) + '</code></pre>');
         continue;
       }
       // table: header row + separator row

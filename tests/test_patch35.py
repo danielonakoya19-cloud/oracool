@@ -44,7 +44,7 @@ class ScrubTests(unittest.TestCase):
 
 class LockWiringTests(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch40-studio"'), 2)
+        self.assertEqual(SRV.count('"patch41-studio"'), 2)
 
     def test_lock_prepended_to_every_provider_call(self):
         self.assertIn('messages = [{"role": "system", "content": _IDENTITY_LOCK}] + messages', SRV)

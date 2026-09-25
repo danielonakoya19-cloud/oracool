@@ -88,7 +88,7 @@ def _load_keys():
                  "ATLOS_MERCHANT_ID", "ATLOS_API_SECRET", "ATLOS_BASE", "CRYPTO_WALLET_EVM",
                  "AGNES_API_KEY", "AGNES_BASE", "AGNES_MODEL", "AGNES_IMAGE_MODEL",
                  "AGNES_VIDEO_MODEL", "HIA_VIDEO_AUDIO_MODEL", "HF_TOKEN",
-                 "PUBLIC_BASE_URL", "COMMUNICATIONS_ENABLED", "SENDGRID_ENABLED", "SENDGRID_API_KEY", "SENDGRID_FROM_EMAIL", "KAIROS_API_KEY", "KAIROS_APP_ID"):
+                 "PUBLIC_BASE_URL", "PEXELS_API_KEY", "COMMUNICATIONS_ENABLED", "SENDGRID_ENABLED", "SENDGRID_API_KEY", "SENDGRID_FROM_EMAIL", "KAIROS_API_KEY", "KAIROS_APP_ID"):
         env = os.environ.get(name)
         if not env:
             continue
@@ -107,8 +107,66 @@ def _load_keys():
         else:
             KEYS[name] = env
 
+# patch41: remote key vault — keys the operator adds from anywhere (Supabase kv row "server_vault")
+# without touching the hosting dashboard. Local keys.json / env vars always win; the vault only fills gaps.
+_VAULT = {}
+_VAULT_TS = [0.0]
+_VAULT_LOCK = threading.Lock()
+
+
+def _vault_refresh(force=False):
+    if not force and time.time() - _VAULT_TS[0] < 300:
+        return False
+    _VAULT_TS[0] = time.time()
+    try:
+        v = supabase_kv_get("server_vault")
+    except Exception:
+        v = None
+    if not isinstance(v, dict):
+        return False
+    fresh = {str(k).strip(): str(x).strip() for k, x in v.items()
+             if isinstance(x, (str, int, float)) and str(x).strip() and re.fullmatch(r"[A-Z0-9_]{3,64}", str(k).strip())}
+    with _VAULT_LOCK:
+        _VAULT.clear()
+        _VAULT.update(fresh)
+    return True
+
+
+def _vault_loop():
+    while True:
+        time.sleep(300)
+        try:
+            _vault_refresh(force=True)
+        except Exception:
+            pass
+
+
+def server_vault_set(updates):
+    """Merge {NAME: value} into the remote vault (empty value deletes). Returns the stored key names."""
+    cur = {}
+    try:
+        cur = supabase_kv_get("server_vault") or {}
+    except Exception:
+        cur = {}
+    if not isinstance(cur, dict):
+        cur = {}
+    for k, v in (updates or {}).items():
+        k = str(k).strip()
+        if not re.fullmatch(r"[A-Z0-9_]{3,64}", k):
+            continue
+        if v is None or not str(v).strip():
+            cur.pop(k, None)
+        else:
+            cur[k] = str(v).strip()
+    supabase_kv_put("server_vault", cur)
+    _vault_refresh(force=True)
+    return sorted(cur.keys())
+
+
 def key(name):
     v = KEYS.get(name, os.environ.get(name))
+    if v is None or (isinstance(v, str) and not v.strip()):
+        v = _VAULT.get(name)
     return (v or "").strip() if isinstance(v, str) else v
 
 # ---------------------------------------------------------------- HTTP helper
@@ -6130,7 +6188,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch40-studio",
+        "build": "patch41-studio",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -7089,7 +7147,49 @@ def _looks_slow_tool(text):
                           r"posters?|banners?|wallpapers?|illustrations?|videos?|clips?|animations?)\b", low))
 
 
-def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto_site=""):
+_MEDIA_KIND_RX = re.compile(r"\b(video|clip|animation|film|movie|reel|footage|image|picture|photo|art|artwork|logo|wallpaper|poster|banner|illustration|drawing)s?\b", re.I)
+_BARE_MEDIA_RX = re.compile(r"^\s*(?:(?:please|pls|hey|ok|okay|now|just|can you|could you|i want you to|i need you to)[\s,]+)*"
+                            r"(?:generate|create|make|produce|render|draw|design)\s+(?:me\s+)?(?:a|an|the|one|some)?\s*"
+                            r"(?:(?:short|quick|small|nice|cool|cinematic|beautiful|realistic|animated|ai(?:-generated)?)\s+){0,3}"
+                            r"(video|clip|animation|film|movie|reel|image|picture|photo|artwork|art)s?"
+                            r"(?:\s+(?:for me|please|now|pls))*\s*[.!?]*\s*$", re.I)
+
+
+def _pending_media_brief(history, current):
+    """patch41: conversation-aware media requests. "generate a video" → OraCool asks what it should show →
+    the user's next message ("a lion in the savannah") is the SUBJECT, not a new command. Returns
+    (kind, subject, style_words) or None. Only fires when the current message carries no other intent."""
+    cur = (current or "").strip()
+    if not history or not cur or len(cur) > 220 or cur.endswith("?"):
+        return None
+    if re.search(r"\b(?:generate|create|make|draw|build|open|weather|price|search|find|send|call|play|remind|translate)\b", cur, re.I):
+        return None
+    turns = [m for m in history if isinstance(m, dict) and m.get("role") in ("user", "assistant")][-8:]
+    # the current message is normally the last user turn in history — drop it
+    if turns and turns[-1].get("role") == "user" and (turns[-1].get("content") or "").strip() == cur:
+        turns = turns[:-1]
+    kind = None; picks = []; asked = False
+    for i in range(len(turns) - 1, -1, -1):
+        m = turns[i]; c = (m.get("content") or "").strip()
+        if m.get("role") == "assistant":
+            if "?" in c and _MEDIA_KIND_RX.search(c):
+                asked = True
+            continue
+        bm = _BARE_MEDIA_RX.match(c)
+        if bm:
+            kind = "video" if bm.group(1).lower().rstrip("s") in ("video", "clip", "animation", "film", "movie", "reel") else "image"
+            break
+        if len(c) <= 60 and not c.endswith("?"):
+            picks.insert(0, c)   # e.g. "Cinematic clip", "Video with voice narration"
+            continue
+        return None              # an unrelated longer message in between → no pending brief
+    if not kind or not asked:
+        return None
+    style = " ".join(p for p in picks if not re.search(r"\bother\b", p, re.I))[:120]
+    return kind, cur.rstrip(".!, "), style
+
+
+def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto_site="", history=None):
     """Detect intent in the user's message and RUN the matching live tool(s)."""
     t = (text or "").strip()
     if not t:
@@ -7124,6 +7224,9 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     # a HOW-TO question with no explicit media noun is conversation, not a render job
     _no_media_ask = _ask and not re.search(r"\b(?:images?|pictures?|photos?|art|artwork|logo|poster|drawing|"
                                            r"wallpaper|render|avatar|mockup|videos?|clips?)\b", low)
+    # patch41: "generate a video" must never be treated as an IMAGE of "a video"
+    _video_words = bool(re.search(r"\b(?:videos?|clips?|animations?|films?|movies?|reels?|footage)\b", low))
+    _image_words = bool(re.search(r"\b(?:images?|pictures?|photos?|art|artwork|logos?|wallpapers?|posters?|banners?|illustrations?|drawings?)\b", low))
     # community chat access (every tier — the AI reads THIS user's own community)
     if any(k in low for k in ("community", "my chats", "my chat", "my messages", "my message",
                               "my dms", "my dm", "direct messages", "check my chat", "check my community",
@@ -7308,7 +7411,8 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         # image creation straight from chat
         im = re.search(r"(?:generate|create|make|draw|imagine|design|show me)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
         if im and any(k in low for k in ("generate", "create", "make", "draw", "imagine", "design")) \
-                and not (_wants and len(t) > 8) and not _no_media_ask:
+                and not (_wants and len(t) > 8) and not _no_media_ask and not (_video_words and not _image_words) \
+                and not _BARE_MEDIA_RX.match(t):
             prompt = im.group(1).strip().rstrip("?!., ")
             if prompt:
                 r = gen_image(prompt)
@@ -7458,10 +7562,42 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 else:
                     out.append({"tool": "oracool_mail_send", "label": "send from OraCool mail",
                                 "result": {"error": "The OraCool Gmail is not connected yet — connect it in Admin → OraCool-owned accounts first."}})
+    # patch41: "generate a video" / "make an image" with no subject → OraCool asks ONE question (with subject options)
+    _bare = _BARE_MEDIA_RX.match(t)
+    if _bare and not _ask:
+        _bk = "video" if _bare.group(1).lower().rstrip("s") in ("video", "clip", "animation", "film", "movie", "reel") else "image"
+        _need = ("ultra" if _bk == "video" else "pro")
+        out.append({"tool": _bk, "label": _bk + " · what should it show?",
+                    "result": {"need_subject": True, "kind": _bk,
+                               "instruction": ("No " + _bk + " was generated because no subject was given. Ask ONE short question: what the " + _bk +
+                                               " should show. Offer 3-4 CONCRETE SUBJECT ideas (not media types) as an ask block, e.g. "
+                                               "{\"app\":\"ask\",\"question\":\"What should the " + _bk + " show?\",\"options\":[\"A Lagos skyline at sunset\","
+                                               "\"A product spinning on a table\",\"A lion walking through the savannah\",\"Other - I will describe it\"]}. "
+                                               "Their answer becomes the subject and the " + _bk + " is generated automatically." +
+                                               ("" if tier_gte(tier, _need) else " NOTE: " + _bk + " creation is on the " + ("Professional" if _bk == "video" else "Pro") +
+                                                " plan - mention that in one sentence."))}})
+    # patch41: the answer to that question ("a lion in the savannah") carries the pending brief
+    _pmb = _pending_media_brief(history, t) if not out else None
+    if _pmb:
+        _pk, _psub, _pstyle = _pmb
+        _pprompt = (_psub + ((" - " + _pstyle) if _pstyle else "")).strip()
+        if _pk == "video":
+            if tier_gte(tier, "ultra"):
+                _want_aud = bool(re.search(r"\b(?:voice|narration|narrated|sound|audio|speech|talking)\b", (_pstyle + " " + _psub), re.I))
+                out.append({"tool": "video", "label": "video · " + _psub[:40], "result": _shrink(gen_video(_pprompt, want_audio=_want_aud), 1200)})
+            else:
+                out.append({"tool": "video", "label": "video · plan", "result": {"locked": True, "plan": "ultra",
+                            "note": "Video creation is on the Professional plan - tell the user in one sentence and offer the upgrade."}})
+        else:
+            if tier_gte(tier, "pro"):
+                out.append({"tool": "image", "label": "image · " + _psub[:40], "result": _shrink(gen_image(_pprompt), 1200)})
+            else:
+                out.append({"tool": "image", "label": "image · plan", "result": {"locked": True, "plan": "pro",
+                            "note": "Image creation is on the Pro plan - tell the user in one sentence and offer the upgrade."}})
     # Ultra-tier tools (video creation + GitHub console)
     if tier_gte(tier, "ultra"):
-        vm = re.search(r"(?:generate|create|make)\s+(?:a\s+)?(?:video|clip|animation|film)\s*(?:of|about|for)?\s*(.{6,200})", low)
-        if vm and any(k in low for k in ("video", "clip", "animation", "film")):
+        vm = re.search(r"(?:generate|create|make|produce|render)\s+(?:me\s+)?(?:a\s+|an\s+)?(?:(?:short|quick|cinematic|realistic|animated|ai)\s+){0,2}(?:video|clip|animation|film|movie|reel)\s*(?:of|about|for|showing|where|with)?\s*(.{4,200})", low)
+        if vm and any(k in low for k in ("video", "clip", "animation", "film", "movie", "reel")) and not _bare and not _pmb:
             prompt = vm.group(1).strip().rstrip("?!., ")
             want_aud = bool(re.search(r"\b(?:with|having|have)\s+(?:sound|audio|voice|speech|voices|talking)\b", low))
             if want_aud:
@@ -7675,7 +7811,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     def _locked(feature, plan):
         out.append({"tool": "locked", "label": feature,
                     "result": json.dumps({"feature": feature, "unlocks_on": plan,
-                                          "note": f"This feature unlocks on the {plan.title()} plan. The user is currently on {tier.title()}."})})
+                                          "note": f"This feature unlocks on the {PLANS.get(plan, {}).get('label', plan.title())} plan. The user is currently on {PLANS.get(tier, {}).get('label', tier.title())}."})})
     if not tier_gte(tier, "starter") and any(k in low for k in ("search for", "search the web", "web search")):
         _locked("web search", "starter")
     if not tier_gte(tier, "starter"):
@@ -7690,10 +7826,10 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             _locked("deep OSINT (Shodan / VirusTotal / AbuseIPDB / URLScan / LeakCheck)", "pro")
         im2 = re.search(r"(?:generate|create|make|draw|imagine|design)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
         if im2 and any(k in low for k in ("generate", "create", "make", "draw", "imagine", "design", "image", "picture")) \
-                and not _wants and not _no_media_ask:
+                and not _wants and not _no_media_ask and not (_video_words and not _image_words):
             _locked("image creation", "pro")
     if not tier_gte(tier, "ultra"):
-        if any(k in low for k in ("video", "clip", "animation", "film")):
+        if _video_words and re.search(r"\b(?:generate|create|make|produce|render|animate)\b", low) and not _wants:
             _locked("video creation", "ultra")
         if "github" in low and any(k in low for k in ("search", "repo", "find", "github")):
             _locked("GitHub console", "ultra")
@@ -7769,9 +7905,52 @@ def _xlsx_text(data):
         return ""
 
 
-def _vision_describe(name, mime, data_b64):
+def _vision_describe_prompt(prompt, mime, data_b64):
+    """Run one vision prompt through the available providers (Gemini → Groq vision → OpenAI)."""
+    if gemini_key() and not _gemini_skipped():
+        try:
+            gt, gerr = _gemini_text(prompt, model="gemini-flash-lite-latest", image_b64=(data_b64 or "")[:1_400_000], mime=mime or "image/jpeg")
+            if gt and len(gt.strip()) > 20:
+                return gt.strip()
+        except Exception:
+            pass
+    tries = []
+    if key("GROQ_API_KEY"):
+        tries.append(("https://api.groq.com/openai/v1/chat/completions", key("GROQ_API_KEY"),
+                      KEYS.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")))
+    if key("OPENAI_API_KEY"):
+        tries.append(("https://api.openai.com/v1/chat/completions", key("OPENAI_API_KEY"), "gpt-4o-mini"))
+    payload_img = {"type": "image_url", "image_url": {"url": "data:" + (mime or "image/jpeg") + ";base64," + (data_b64 or "")[:1_400_000]}}
+    for url, k, model in tries:
+        try:
+            _, raw, _ = http_fetch(url, method="POST", timeout=60,
+                                   headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
+                                   json_body={"model": model, "max_tokens": 420,
+                                              "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, payload_img]}]})
+            c = (json.loads(raw).get("choices") or [{}])[0].get("message", {}).get("content")
+            if c and len(c.strip()) > 20:
+                return c.strip()
+        except Exception:
+            continue
+    return ""
+
+
+_VISION_PROMPTS = {
+    "selfie": ("This is the user's OWN camera photo (a selfie they just took for their assistant). Describe warmly and honestly how they look "
+               "on camera: framing and angle, lighting (too dark / backlit / even), facial expression, outfit and colours, background and anything "
+               "distracting, image sharpness. Then give 3 concrete tips to look better on camera. Never guess identity, age or ethnicity. 4-6 sentences."),
+    "clip": ("These are frames from the user's OWN short video clip, arranged left to right in time order (start, middle, end). Describe warmly and "
+             "honestly how they come across on camera: framing, lighting, expression and energy, movement between frames, outfit, background and "
+             "anything distracting, sharpness. Then give 3 concrete tips to look better on video. Never guess identity, age or ethnicity. 4-6 sentences."),
+}
+
+
+def _vision_describe(name, mime, data_b64, purpose=""):
     """Best-effort image description through any vision-capable provider key.
     Returns "" when nothing can serve it — never a fabricated description."""
+    _vp = _VISION_PROMPTS.get((purpose or "").strip().lower())
+    if _vp:
+        return _vision_describe_prompt(_vp, mime, data_b64)
     if gemini_key() and not _gemini_skipped():
         gt, gerr = _gemini_text("Describe this image factually for an OSINT analyst: objects, text visible, people-count (no names), scene type, likely edit/screenshot evidence. 3 sentences max.",
                                 model="gemini-flash-lite-latest", image_b64=(data_b64 or "")[:1_400_000], mime=mime or "image/jpeg")
@@ -7804,7 +7983,7 @@ def _vision_describe(name, mime, data_b64):
     return ""
 
 
-def analyze_file(name, mime, data_b64):
+def analyze_file(name, mime, data_b64, purpose=""):
     try:
         data = base64.b64decode(data_b64 or "")
     except Exception:
@@ -7833,7 +8012,10 @@ def analyze_file(name, mime, data_b64):
             fore = media_inspect(data_b64=data_b64) or {}
         except Exception:
             pass
-        desc = _vision_describe(name, mime or ("image/" + ("png" if ext == ".png" else "jpeg")), data_b64)
+        desc = _vision_describe(name, mime or ("image/" + ("png" if ext == ".png" else "jpeg")), data_b64, purpose=purpose)
+        if purpose in ("selfie", "clip"):
+            return {"name": name, "type": "image", "chars": 0, "text": desc[:4000], "purpose": purpose,
+                    "note": desc[:600] if desc else "Vision is not configured on this server — the capture is saved on the device only."}
         note = ("Image received. " + (desc + " " if desc else "") +
                 "Fingerprints: SHA-256 " + str(fore.get("sha256") or "?")[:16] + "… · " +
                 str(fore.get("format") or "?").upper() + " " +
@@ -9307,7 +9489,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch40-studio",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch41-studio",
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -9493,6 +9675,15 @@ class Handler(BaseHTTPRequestHandler):
                         _mn = _NAME_RX.search(_bm)
                         _bname = (_mn.group(1).strip(" .") if _mn else "") or "my-site"
                     self._send_json(build_site(body.get("email"), _bname, _bm or _bname))
+            elif path == "/api/admin/vault":
+                _ve = body.get("_verified_email") or request_identity(self, body)
+                if not _ve or not is_admin(_ve):
+                    self._send_json({"error": "Administrator access required."}, 403); return
+                if isinstance(body.get("set"), dict) and body["set"]:
+                    self._send_json({"ok": True, "keys": server_vault_set(body["set"])})
+                else:
+                    _vault_refresh(force=True)
+                    self._send_json({"ok": True, "keys": sorted(_VAULT.keys())})
             elif path == "/api/builds/progress":
                 self._send_json(build_progress(body.get("email")))
             elif path in ("/api/builds/images", "/api/images/search"):
@@ -9531,7 +9722,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self._send_json({"error": "Unknown GitHub action."})
             elif path == "/api/files/analyze":
-                self._send_json(analyze_file(body.get("name"), body.get("mime"), body.get("data_b64")))
+                self._send_json(analyze_file(body.get("name"), body.get("mime"), body.get("data_b64"), purpose=str(body.get("purpose") or "")))
             # ---- link tracker (visitor intelligence) ----
             elif path == "/api/tracker/create":
                 self._send_json(tracker_create(body.get("url"), body.get("email"), body.get("name")))
@@ -10339,7 +10530,7 @@ class Handler(BaseHTTPRequestHandler):
                             try:
                                 _tr["r"] = auto_tools(last_user, tier, ha_url=body.get("ha_url"),
                                                       ha_token=body.get("ha_token"),
-                                                      email=chat_email, crypto_site=_site)
+                                                      email=chat_email, crypto_site=_site, history=messages)
                             except Exception as _e:
                                 _tr["e"] = _e
                         _th = threading.Thread(target=_run_tools, daemon=True)
@@ -10360,7 +10551,7 @@ class Handler(BaseHTTPRequestHandler):
                         tool_runs = auto_tools(last_user, tier,
                                                ha_url=body.get("ha_url"),
                                                ha_token=body.get("ha_token"),
-                                               email=chat_email, crypto_site=_site)
+                                               email=chat_email, crypto_site=_site, history=messages)
                 except Exception as e:
                     tool_runs = [{"tool": "error", "label": "auto-tools", "result": str(e)[:200]}]
         tool_ctx = tool_context(tool_runs)
@@ -12768,6 +12959,11 @@ def voice_transcribe(body, email):
 
 def main():
     _load_keys()
+    try:  # patch41: remote key vault (fills keys missing from env/keys.json; refreshed every 5 min)
+        _vault_refresh(force=True)
+        threading.Thread(target=_vault_loop, daemon=True).start()
+    except Exception:
+        pass
     try:  # background watchlist monitor (continuous dark-web/leak alerts)
         threading.Thread(target=_watch_loop, daemon=True).start()
     except Exception:
