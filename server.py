@@ -47,6 +47,30 @@ UA = "OraCoolAI/1.0 (personal assistant)"
 
 # Groq rotates model names; the default below is verified working (Sep 2026).
 GROQ_DEFAULT_MODEL = "qwen/qwen3.8-27b"
+_GROQ_CHAT_POOL = ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b")
+
+
+def _groq_chat_models():
+    """patch46: every Groq chat model we may answer with — the configured one first, then the pool. Each model has
+    its own daily token allowance, so rotating spreads the free quota instead of failing the user."""
+    out = []
+    for m in (KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), KEYS.get("GROQ_FAST_MODEL", "")) + _GROQ_CHAT_POOL:
+        m = str(m or "").strip()
+        if m and m not in out:
+            out.append(m)
+    return out
+
+
+def _brain_error_text(code, body):
+    """A human sentence for a provider failure (the raw JSON stays for the log)."""
+    low = (body or "").lower()
+    if "insufficient_quota" in low or "no credits" in low or "billing" in low:
+        return "The AI provider account has no credits left — the operator needs to top it up or switch provider."
+    if code == 429 or "rate limit" in low or "rate_limit" in low:
+        return "Every AI brain is rate-limited right now (daily token caps) — please try again in a few minutes."
+    if code in (401, 403):
+        return "The AI provider rejected the server key — the operator needs to check it."
+    return f"AI provider error {code}: {(body or '')[:200]}"
 
 # ------------------------------------------------------------------ key vault
 
@@ -5171,6 +5195,283 @@ def supabase_cases_push(d):
         return False
 
 
+# ------------------------------------------------------------------ patch46: durable state on Render
+# Render's filesystem is wiped on every deploy/restart. Everything OraCool remembers on disk — accounts, coins,
+# vault, skills, trackers, alerts, subscribers, TOTP/passkeys, VAPID keys, build folders, published sites — is
+# mirrored to the Supabase `case_store` kv table (k = "file:<name>" / "build:<slug>" / "site:<slug>") and
+# restored before the server starts serving. Conversations and cases keep their existing cloud mirrors.
+_PERSIST_SKIP = {"conversations.json", "cases.json", "platform.log"}
+_PERSIST_DIRS = ("builds", "sites")
+_PERSIST_TEXT_EXT = (".html", ".htm", ".css", ".js", ".mjs", ".json", ".md", ".txt", ".svg", ".xml", ".csv", ".webmanifest")
+_PERSIST_MAX = 8 * 1024 * 1024
+_PERSIST_SLUG_RX = re.compile(r"^[a-z0-9][a-z0-9._-]{0,80}$")
+_PERSIST = {"enabled": False, "last_sync": 0.0, "synced": {}, "errors": 0, "restored": 0, "pushed": 0, "note": ""}
+_PERSIST_LOCK = threading.Lock()
+
+
+def _persist_enabled():
+    """On by default only on Render (RENDER=true), where the disk is ephemeral. A laptop/dev copy sharing the same
+    Supabase project must NOT push its local test data over production state — set PERSIST_CLOUD=1 to force it on
+    elsewhere, PERSIST_CLOUD=0 to force it off."""
+    flag = str(KEYS.get("PERSIST_CLOUD", os.environ.get("PERSIST_CLOUD", ""))).strip().lower()
+    have_keys = bool(key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY"))
+    if flag in ("0", "false", "off", "no"):
+        return False
+    if flag in ("1", "true", "on", "yes"):
+        return have_keys
+    return have_keys and bool(os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"))
+
+
+def supabase_kv_list(prefix):
+    """All (k, v) rows whose key starts with `prefix` (PostgREST `like`, `*` wildcard)."""
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return []
+    out = []
+    try:
+        q = urllib.parse.quote(prefix + "*", safe="")
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/case_store?select=k,v&k=like." + q,
+                               headers={"apikey": svc, "Authorization": "Bearer " + svc}, timeout=60)
+        for r in json.loads(raw) or []:
+            if not isinstance(r, dict) or not isinstance(r.get("k"), str):
+                continue
+            v = r.get("v")
+            if isinstance(v, str):
+                try:
+                    v = json.loads(v)
+                except Exception:
+                    continue
+            if isinstance(v, dict):
+                out.append((r["k"], v))
+    except Exception:
+        pass
+    return out
+
+
+def _persist_files():
+    """(name, path) for every state file worth keeping: data/*.json|pem|txt plus data/<dir>/*.json indexes."""
+    out = []
+    try:
+        for n in sorted(os.listdir(DATA_DIR)):
+            p = os.path.join(DATA_DIR, n)
+            if os.path.isfile(p) and n not in _PERSIST_SKIP and not n.endswith(".tmp") and n.endswith((".json", ".pem", ".txt")):
+                out.append((n, p))
+        for dn in _PERSIST_DIRS:
+            base = os.path.join(DATA_DIR, dn)
+            if os.path.isdir(base):
+                for n in sorted(os.listdir(base)):
+                    p = os.path.join(base, n)
+                    if os.path.isfile(p) and n.endswith(".json") and not n.endswith(".tmp"):
+                        out.append((dn + "/" + n, p))
+    except Exception:
+        pass
+    return out
+
+
+def _persist_pack_file(p):
+    st = os.stat(p)
+    if st.st_size > _PERSIST_MAX:
+        return None
+    with open(p, "rb") as f:
+        raw = f.read()
+    try:
+        txt = raw.decode("utf-8")
+        if p.endswith(".json"):
+            json.loads(txt)  # never mirror a half-written file
+        return {"text": txt, "mtime": st.st_mtime, "size": st.st_size}
+    except Exception:
+        if p.endswith(".json"):
+            return None
+        return {"b64": base64.b64encode(raw).decode("ascii"), "mtime": st.st_mtime, "size": st.st_size}
+
+
+def _persist_dir_mtime(d):
+    newest = 0.0
+    for root, _dirs, names in os.walk(d):
+        for n in names:
+            if n.lower().endswith(_PERSIST_TEXT_EXT):
+                try:
+                    newest = max(newest, os.stat(os.path.join(root, n)).st_mtime)
+                except OSError:
+                    pass
+    return newest
+
+
+def _persist_pack_dir(d):
+    files, newest, total = {}, 0.0, 0
+    for root, _dirs, names in os.walk(d):
+        for n in sorted(names):
+            if not n.lower().endswith(_PERSIST_TEXT_EXT):
+                continue
+            p = os.path.join(root, n)
+            try:
+                st = os.stat(p)
+                if st.st_size > 2 * 1024 * 1024:
+                    continue
+                with open(p, encoding="utf-8") as f:
+                    files[os.path.relpath(p, d).replace(os.sep, "/")] = f.read()
+                newest = max(newest, st.st_mtime); total += st.st_size
+            except Exception:
+                continue
+            if total > _PERSIST_MAX:
+                break
+    return {"files": files, "mtime": newest, "n": len(files)} if files else None
+
+
+def _persist_dirs():
+    """(key, path) for every build/site folder."""
+    out = []
+    for dn in _PERSIST_DIRS:
+        base = os.path.join(DATA_DIR, dn)
+        if not os.path.isdir(base):
+            continue
+        for slug in sorted(os.listdir(base)):
+            d = os.path.join(base, slug)
+            if os.path.isdir(d) and _PERSIST_SLUG_RX.match(slug):
+                out.append((dn[:-1] + ":" + slug, d))
+    return out
+
+
+def _persist_scan(force=False):
+    """Push every changed state file / folder to Supabase. Returns how many records were written."""
+    if not _persist_enabled():
+        return 0
+    pushed = 0
+    with _PERSIST_LOCK:
+        for name, p in _persist_files():
+            k = "file:" + name
+            try:
+                m = os.stat(p).st_mtime
+                if not force and _PERSIST["synced"].get(k) == m:
+                    continue
+                pack = _persist_pack_file(p)
+                if pack is None:
+                    continue
+                if supabase_kv_put(k, pack):
+                    _PERSIST["synced"][k] = m; pushed += 1
+                else:
+                    _PERSIST["errors"] += 1
+            except Exception:
+                _PERSIST["errors"] += 1
+        for k, d in _persist_dirs():
+            try:
+                newest = _persist_dir_mtime(d)
+                if not newest or (not force and _PERSIST["synced"].get(k) == newest):
+                    continue
+                pack = _persist_pack_dir(d)
+                if pack is None:
+                    _PERSIST["synced"][k] = newest
+                    continue
+                if supabase_kv_put(k, pack):
+                    _PERSIST["synced"][k] = newest; pushed += 1
+                else:
+                    _PERSIST["errors"] += 1
+            except Exception:
+                _PERSIST["errors"] += 1
+    if pushed:
+        _PERSIST["last_sync"] = time.time(); _PERSIST["pushed"] += pushed
+    return pushed
+
+
+def _persist_write(path, raw):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(raw)
+    os.replace(tmp, path)
+
+
+def _persist_restore():
+    """Boot: bring back every state file and build/site folder this (fresh) instance lacks. Local files that are
+    newer than the cloud copy are kept. Returns how many records were restored."""
+    _PERSIST["enabled"] = _persist_enabled()
+    if not _PERSIST["enabled"]:
+        _PERSIST["note"] = "cloud persistence off — no Supabase service key (state lives on this disk only)"
+        return 0
+    n = 0
+    for k, v in supabase_kv_list("file:"):
+        name = k[5:]
+        if not name or ".." in name or name.startswith(("/", ".")) or name.count("/") > 1 or os.path.basename(name) in _PERSIST_SKIP:
+            continue
+        p = os.path.join(DATA_DIR, name)
+        try:
+            rm = float(v.get("mtime") or 0)
+            if os.path.exists(p):
+                lm = os.stat(p).st_mtime
+                if lm >= rm - 1:
+                    _PERSIST["synced"][k] = lm
+                    continue
+            raw = v["text"].encode("utf-8") if isinstance(v.get("text"), str) else base64.b64decode(v.get("b64") or "")
+            if not raw:
+                continue
+            _persist_write(p, raw)
+            if rm:
+                os.utime(p, (rm, rm))
+            _PERSIST["synced"][k] = os.stat(p).st_mtime; n += 1
+        except Exception:
+            _PERSIST["errors"] += 1
+    for dn in _PERSIST_DIRS:
+        for k, v in supabase_kv_list(dn[:-1] + ":"):
+            slug = k.split(":", 1)[1]
+            if not _PERSIST_SLUG_RX.match(slug):
+                continue
+            d = os.path.join(DATA_DIR, dn, slug)
+            try:
+                if os.path.isdir(d) and _persist_dir_mtime(d) >= float(v.get("mtime") or 0) - 1:
+                    _PERSIST["synced"][k] = _persist_dir_mtime(d)
+                    continue
+                files = v.get("files") or {}
+                if not isinstance(files, dict) or not files:
+                    continue
+                rm = float(v.get("mtime") or time.time())
+                for rel, txt in files.items():
+                    if not isinstance(rel, str) or not isinstance(txt, str) or ".." in rel or rel.startswith("/"):
+                        continue
+                    fp = os.path.join(d, rel)
+                    _persist_write(fp, txt.encode("utf-8"))
+                    os.utime(fp, (rm, rm))
+                _PERSIST["synced"][k] = _persist_dir_mtime(d); n += 1
+            except Exception:
+                _PERSIST["errors"] += 1
+    _PERSIST["restored"] = n
+    _PERSIST["note"] = f"restored {n} record(s) from Supabase at boot"
+    return n
+
+
+def _persist_loop():
+    while True:
+        time.sleep(20)
+        try:
+            _persist_scan()
+        except Exception:
+            pass
+
+
+def _persist_flush_and_exit(signum, frame):
+    """Render sends SIGTERM before a deploy/restart: push whatever changed in the last seconds, then leave."""
+    try:
+        _log_line("persist", "SIGTERM — flushing state to Supabase")
+        _persist_scan()
+        try:
+            snapshot = _conv_all()
+            supabase_kv_put("conversations", snapshot)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    os._exit(0)
+
+
+def persist_status():
+    return {"enabled": _PERSIST["enabled"], "restored": _PERSIST["restored"], "pushed": _PERSIST["pushed"],
+            "errors": _PERSIST["errors"], "tracked": len(_PERSIST["synced"]),
+            "last_sync": (_now_from(_PERSIST["last_sync"]) if _PERSIST["last_sync"] else ""), "note": _PERSIST["note"]}
+
+
+def _now_from(ts):
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(ts))
+
+
 def _cases_flush_loop():
     global _cases_dirty
     while True:
@@ -6335,7 +6636,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch45-inline-feed",
+        "build": "patch46-durable",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -9696,7 +9997,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch45-inline-feed",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch46-durable",
+                             "persist": ("cloud" if _PERSIST.get("enabled") else "local"),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -10618,6 +10920,32 @@ class Handler(BaseHTTPRequestHandler):
             body.pop("model", None)
         return body
 
+    def _next_brain(self, provider, base_url, model, tried):
+        """patch46: the next healthy brain after a provider error. Groq models each carry their own daily token
+        cap, so a 429 on one model rotates to the next Groq model before spilling to Agnes and OpenAI. Explicit
+        'groq' requests (Fast mode) rotate too — a rate limit must never surface as a 'no credits' error."""
+        gk = key("GROQ_API_KEY")
+        if gk and provider in ("auto", "groq"):
+            if "groq" in (base_url or ""):
+                for m in _groq_chat_models():
+                    if m not in tried:
+                        tried.add(m)
+                        return gk, "https://api.groq.com/openai/v1", m
+            elif "groq" not in tried:
+                tried.add("groq")
+                m = KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL)
+                tried.add(m)
+                return gk, "https://api.groq.com/openai/v1", m
+        ak = key("AGNES_API_KEY")
+        if ak and provider in ("auto", "groq") and "agnes" not in tried and "agnes-ai" not in (base_url or ""):
+            tried.add("agnes")
+            return ak, AGNES_BASE, KEYS.get("AGNES_MODEL", "agnes-2.5-flash")
+        ok_ = key("OPENAI_API_KEY")
+        if ok_ and provider == "auto" and "openai" not in tried and "api.openai.com" not in (base_url or ""):
+            tried.add("openai")
+            return ok_, "https://api.openai.com/v1", "gpt-4o-mini"
+        return None
+
     def _resolve_provider(self, body):
         """Return (keyv, base_url, model) resolved from body or server vault."""
         self._sanitize_overrides(body)
@@ -11019,6 +11347,7 @@ class Handler(BaseHTTPRequestHandler):
                    "max_tokens": max(16, min(max_tokens, 4096)), "stream": stream}
         if _mode == "expert" and "gpt-oss" in str(model):
             payload["reasoning_effort"] = "high"
+        _tried = {model, ("agnes" if "agnes-ai" in base_url else "openai" if "api.openai.com" in base_url else "groq" if "groq" in base_url else "custom")}
 
         if not stream:
             # Non-streaming path mirrors the streaming fallback: if 'auto' hits a
@@ -11064,26 +11393,21 @@ class Handler(BaseHTTPRequestHandler):
                         payload["max_tokens"] = 700
                         otpm_retry = False
                         continue
-                    if provider == "auto" and key("GROQ_API_KEY") and "groq" not in base_url and not acc_full:
-                        api_key = key("GROQ_API_KEY")
-                        base_url = "https://api.groq.com/openai/v1"
-                        model = KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL)
+                    _nb = self._next_brain(provider, base_url, model, _tried) if not acc_full else None
+                    if _nb:
+                        api_key, base_url, model = _nb
                         url = base_url + "/chat/completions"
                         payload["model"] = model
-                        continue
-                    if provider == "auto" and key("AGNES_API_KEY") and "agnes-ai" not in base_url:
-                        api_key = key("AGNES_API_KEY")
-                        base_url = AGNES_BASE
-                        model = KEYS.get("AGNES_MODEL", "agnes-2.5-flash")
-                        url = base_url + "/chat/completions"
-                        payload["model"] = model
+                        if "gpt-oss" not in model:
+                            payload.pop("reasoning_effort", None)
                         continue
                     if acc_full:
                         self._send_json(chat_finish(acc_full, tool_summary, core_names, chat_media,
                                                     _conv_id, _conv_em,
                                                     "The provider dropped during a continuation segment."))
                     else:
-                        self._send_json({"error": f"AI provider error {e.code}: {err_body[:300]}"}, 502)
+                        _log_line("brain", f"all brains failed {e.code}: {err_body[:160]}")
+                        self._send_json({"error": _brain_error_text(e.code, err_body)}, 502)
                 except Exception as e:
                     if acc_full:
                         self._send_json(chat_finish(acc_full, tool_summary, core_names, chat_media,
@@ -11135,23 +11459,18 @@ class Handler(BaseHTTPRequestHandler):
                         and payload.get("max_tokens", 0) > 700):
                     payload["max_tokens"] = 700
                     continue
-                if provider == "auto" and key("GROQ_API_KEY") and "groq" not in base_url and not acc_stream:
-                    api_key = key("GROQ_API_KEY")
-                    base_url = "https://api.groq.com/openai/v1"
-                    model = KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL)
+                _nb = self._next_brain(provider, base_url, model, _tried) if not acc_stream else None
+                if _nb:
+                    api_key, base_url, model = _nb
                     url = base_url + "/chat/completions"
                     payload["model"] = model
-                    continue
-                if provider == "auto" and key("AGNES_API_KEY") and "agnes-ai" not in base_url and not acc_stream:
-                    api_key = key("AGNES_API_KEY")
-                    base_url = AGNES_BASE
-                    model = KEYS.get("AGNES_MODEL", "agnes-2.5-flash")
-                    url = base_url + "/chat/completions"
-                    payload["model"] = model
+                    if "gpt-oss" not in model:
+                        payload.pop("reasoning_effort", None)
                     continue
                 if not acc_stream:
+                    _log_line("brain", f"all brains failed {e.code}: {_body[:160]}")
                     try:
-                        self.wfile.write(("data: " + json.dumps({"error": f"AI provider error {e.code}: {_body[:240]}"}) + "\n\n").encode())
+                        self.wfile.write(("data: " + json.dumps({"error": _brain_error_text(e.code, _body)}) + "\n\n").encode())
                         self.wfile.write(b"data: [DONE]\n\n")
                         self.wfile.flush()
                     except Exception:
@@ -12201,6 +12520,10 @@ def admin_online_payload(minutes=30):
 def platform_diagnostics():
     out = {"online": True, "time": _now(), "uptime_sec": int(time.time() - _BOOT_TS)}
     try:
+        out["persist"] = persist_status()
+    except Exception:
+        pass
+    try:
         import resource
         out["rss_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1)
     except Exception:
@@ -13214,6 +13537,14 @@ def main():
         threading.Thread(target=_cases_flush_loop, daemon=True).start()
     except Exception:
         pass
+    try:  # patch46: durable state — restore what a fresh Render instance lacks, then mirror every change
+        _n = _persist_restore()
+        _log_line("persist", _PERSIST.get("note") or ("restored %d" % _n))
+        threading.Thread(target=_persist_loop, daemon=True).start()
+        import signal as _signal
+        _signal.signal(_signal.SIGTERM, _persist_flush_and_exit)
+    except Exception as _e:
+        _log_line("persist", "setup failed: %s" % _e)
     try:  # 24/7 alerts platform: outbox delivery, digests, Supabase kv mirror
         threading.Thread(target=_alerts_loops, daemon=True).start()
     except Exception:

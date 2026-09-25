@@ -14,7 +14,7 @@ VOICE = open(os.path.join(ROOT, "voice-reminders.js"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch45-inline-feed"'), 2)
+        self.assertEqual(SRV.count('"patch46-durable"'), 2)
         self.assertNotIn("patch39-arena", SRV)
         self.assertIn('/voice-reminders.js?v=40', APP)
 

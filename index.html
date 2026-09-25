@@ -2784,8 +2784,9 @@ async function send(text){
     if(e.name==='AbortError'){ if(_wd)clearInterval(_wd); body.textContent+=(body.textContent?'\n':'')+( _wdFired?' ⏱ The provider timed out with no answer — send again and I will pick it up.':'Reply interrupted.');}else if(myTurn===CHAT_TURN){
     body.textContent='';
     const m=e.message||String(e);
-    if(/api key|AI provider error 400|no credits|insufficient|429/i.test(m))
-      addErr('⚠️ Brain issue: '+(/no credits|insufficient|429/i.test(m)?'your AI provider has no credits/billing. Add credits or switch provider in Settings.':m));
+    if(/rate-limited|rate limit|429|try again in a few minutes/i.test(m)) addErr('⏳ '+(/rate-limited|try again/i.test(m)?m:'The AI brains are rate-limited for a few minutes (daily token caps) — please send that again shortly.'));
+    else if(/no credits|insufficient_quota|billing/i.test(m)) addErr('⚠️ Brain issue: '+(/operator/i.test(m)?m:'the AI provider account has no credits left — the operator needs to top it up or switch provider.'));
+    else if(/api key|AI provider error 400|rejected the server key/i.test(m)) addErr('⚠️ Brain issue: '+m);
     else addErr('⚠️ '+m);
     }
   }
