@@ -61,6 +61,85 @@ def _groq_chat_models():
     return out
 
 
+_BRAIN_STATS = {}     # brain name -> {"ewma": seconds-to-first-token, "fail_until": ts, "n": count}
+_BRAIN_LOCK = threading.Lock()
+_BRAIN_PRIOR = {"groq": 1.2, "agnes": 2.5, "openai": 2.0}
+_BRAIN_SLOW_S = 8.0   # a brain that takes longer than this to its first token is demoted below the others
+
+
+def _brain_name(base_url):
+    b = str(base_url or "")
+    return "agnes" if "agnes-ai" in b else "openai" if "api.openai.com" in b else "groq" if "groq" in b else "custom"
+
+
+def _brain_note(name, first_token_s=None, failed=False, cooldown=120):
+    """patch47: remember how each brain behaves — first-token latency (EWMA) and failures (cool-down)."""
+    with _BRAIN_LOCK:
+        st = _BRAIN_STATS.setdefault(name, {"ewma": _BRAIN_PRIOR.get(name, 2.0), "fail_until": 0.0, "n": 0})
+        if failed:
+            st["fail_until"] = max(st["fail_until"], time.time() + max(10, min(int(cooldown or 120), 1800)))
+        if first_token_s is not None:
+            st["ewma"] = round(0.6 * st["ewma"] + 0.4 * float(first_token_s), 2) if st["n"] else round(float(first_token_s), 2)
+            st["n"] += 1
+
+
+def _brain_score(name):
+    """Lower is better: measured latency, +preference bonus for the operator's BRAIN_PROVIDER, cool-down penalty."""
+    with _BRAIN_LOCK:
+        st = dict(_BRAIN_STATS.get(name) or {})
+    score = float(st.get("ewma", _BRAIN_PRIOR.get(name, 2.0)))
+    if name == str(KEYS.get("BRAIN_PROVIDER") or ""):
+        score -= 1.5
+    if st.get("fail_until", 0) > time.time():
+        score += 1000.0
+    return score
+
+
+def _brain_order():
+    """Configured brains, fastest healthy first (ties → the operator's preferred provider)."""
+    have = [n for n, k in (("groq", "GROQ_API_KEY"), ("agnes", "AGNES_API_KEY"), ("openai", "OPENAI_API_KEY")) if key(k)]
+    return sorted(have, key=_brain_score)
+
+
+_BRIEF_CACHE = {}
+
+
+def _community_brief_cached(email, ttl=180):
+    """patch47: the community identity line costs two Supabase round-trips — cache it per user for 3 minutes."""
+    em = (email or "").lower()
+    hit = _BRIEF_CACHE.get(em)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    try:
+        line = community_service().brief_for(em)
+    except Exception:
+        line = ""
+    if len(_BRIEF_CACHE) > 5000:
+        _BRIEF_CACHE.clear()
+    _BRIEF_CACHE[em] = (time.time() + ttl, line)
+    return line
+
+
+def brain_status():
+    now = time.time()
+    with _BRAIN_LOCK:
+        return {n: {"first_token_s": v["ewma"], "cooling_s": max(0, int(v["fail_until"] - now)), "samples": v["n"]}
+                for n, v in _BRAIN_STATS.items()}
+
+
+def _retry_after_s(headers, body=""):
+    try:
+        ra = (headers or {}).get("Retry-After") or (headers or {}).get("retry-after")
+        if ra:
+            return int(float(ra))
+    except Exception:
+        pass
+    m = re.search(r"try again in (?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?", str(body or ""))
+    if m and (m.group(1) or m.group(2)):
+        return int(m.group(1) or 0) * 60 + int(float(m.group(2) or 0)) + 1
+    return 0
+
+
 def _brain_error_text(code, body):
     """A human sentence for a provider failure (the raw JSON stays for the log)."""
     low = (body or "").lower()
@@ -589,6 +668,10 @@ def load_subscribers():
         return []
 
 def save_subscriber(rec):
+    try:
+        tier_cache_clear((rec or {}).get("email"))  # patch47: a new plan shows up immediately
+    except Exception:
+        pass
     with _sub_lock:
         subs = load_subscribers()
         subs = [s for s in subs if s.get("email") != rec.get("email")]
@@ -976,11 +1059,37 @@ def auth_resend(email):
     return auth_send_code(email)
 
 
+_TIER_CACHE = {}
+_TIER_CACHE_LOCK = threading.Lock()
+
+
+def tier_cache_clear(email=None):
+    with _TIER_CACHE_LOCK:
+        if email:
+            _TIER_CACHE.pop((email or "").lower().strip(), None)
+        else:
+            _TIER_CACHE.clear()
+
+
 def check_tier(email):
-    """Return the user's plan tier: free|starter|pro|ultra|enterprise."""
+    """Return the user's plan tier: free|starter|pro|ultra|enterprise (patch47: cached 60s per email — the
+    subscribers table was fetched on every chat message)."""
     if not email:
         return "free"
     email = email.lower().strip()
+    with _TIER_CACHE_LOCK:
+        hit = _TIER_CACHE.get(email)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    t = _check_tier_live(email)
+    with _TIER_CACHE_LOCK:
+        if len(_TIER_CACHE) > 5000:
+            _TIER_CACHE.clear()
+        _TIER_CACHE[email] = (time.time() + 60, t)
+    return t
+
+
+def _check_tier_live(email):
     if is_admin(email):
         return "enterprise"
     if is_blocked(email):
@@ -6636,7 +6745,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch46-durable",
+        "build": "patch47-brain",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -9997,9 +10106,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch46-durable",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch47-brain",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
-                             "restored": _PERSIST.get("restored", 0),
+                             "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
         elif path == "/api/config":
             self._send_json(get_config())
@@ -10926,25 +11035,24 @@ class Handler(BaseHTTPRequestHandler):
         cap, so a 429 on one model rotates to the next Groq model before spilling to Agnes and OpenAI. Explicit
         'groq' requests (Fast mode) rotate too — a rate limit must never surface as a 'no credits' error."""
         gk = key("GROQ_API_KEY")
-        if gk and provider in ("auto", "groq"):
-            if "groq" in (base_url or ""):
-                for m in _groq_chat_models():
-                    if m not in tried:
-                        tried.add(m)
-                        return gk, "https://api.groq.com/openai/v1", m
-            elif "groq" not in tried:
+        if gk and provider in ("auto", "groq") and "groq" in (base_url or ""):
+            for m in _groq_chat_models():  # same provider, next model (each has its own daily cap)
+                if m not in tried:
+                    tried.add(m)
+                    return gk, "https://api.groq.com/openai/v1", m
+        # patch47: other brains in measured order (fastest healthy first), never the one we just left
+        for _bn in _brain_order() + [n for n in ("groq", "agnes", "openai") if n not in _brain_order()]:
+            if _bn == "groq" and gk and provider in ("auto", "groq") and "groq" not in tried and "groq" not in (base_url or ""):
                 tried.add("groq")
                 m = KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL)
                 tried.add(m)
                 return gk, "https://api.groq.com/openai/v1", m
-        ak = key("AGNES_API_KEY")
-        if ak and provider in ("auto", "groq") and "agnes" not in tried and "agnes-ai" not in (base_url or ""):
-            tried.add("agnes")
-            return ak, AGNES_BASE, KEYS.get("AGNES_MODEL", "agnes-2.5-flash")
-        ok_ = key("OPENAI_API_KEY")
-        if ok_ and provider == "auto" and "openai" not in tried and "api.openai.com" not in (base_url or ""):
-            tried.add("openai")
-            return ok_, "https://api.openai.com/v1", "gpt-4o-mini"
+            if _bn == "agnes" and key("AGNES_API_KEY") and provider in ("auto", "groq") and "agnes" not in tried and "agnes-ai" not in (base_url or ""):
+                tried.add("agnes")
+                return key("AGNES_API_KEY"), AGNES_BASE, KEYS.get("AGNES_MODEL", "agnes-2.5-flash")
+            if _bn == "openai" and key("OPENAI_API_KEY") and provider == "auto" and "openai" not in tried and "api.openai.com" not in (base_url or ""):
+                tried.add("openai")
+                return key("OPENAI_API_KEY"), "https://api.openai.com/v1", "gpt-4o-mini"
         return None
 
     def _resolve_provider(self, body):
@@ -10967,16 +11075,16 @@ class Handler(BaseHTTPRequestHandler):
         if provider == "openai":
             k = key("OPENAI_API_KEY")
             return k, "https://api.openai.com/v1", model or "gpt-4o-mini", provider
-        # auto: honour BRAIN_PROVIDER (keys.json/env), else prefer Groq (has
-        # working credits); OpenAI is only the fallback so an exhausted OpenAI
-        # key never blocks chat.
-        auto_provider = KEYS.get("BRAIN_PROVIDER", "groq")
-        if auto_provider == "agnes" and key("AGNES_API_KEY"):
-            return key("AGNES_API_KEY"), AGNES_BASE, model or KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), provider
-        if auto_provider == "groq" and key("GROQ_API_KEY"):
-            return key("GROQ_API_KEY"), "https://api.groq.com/openai/v1", model or KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), provider
-        if auto_provider == "openai" and key("OPENAI_API_KEY"):
-            return key("OPENAI_API_KEY"), "https://api.openai.com/v1", model or "gpt-4o-mini", provider
+        # auto (patch47): the fastest HEALTHY brain answers first. BRAIN_PROVIDER (keys.json/env) is a
+        # preference bonus, not a hard order — a brain that has been slow or rate-limited is demoted for a
+        # while so the user is never parked behind a 40-second reply or a 429 when another brain is fine.
+        for _bn in _brain_order():
+            if _bn == "agnes" and key("AGNES_API_KEY"):
+                return key("AGNES_API_KEY"), AGNES_BASE, model or KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), provider
+            if _bn == "groq" and key("GROQ_API_KEY"):
+                return key("GROQ_API_KEY"), "https://api.groq.com/openai/v1", model or KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), provider
+            if _bn == "openai" and key("OPENAI_API_KEY"):
+                return key("OPENAI_API_KEY"), "https://api.openai.com/v1", model or "gpt-4o-mini", provider
         if key("GROQ_API_KEY"):
             return key("GROQ_API_KEY"), "https://api.groq.com/openai/v1", model or KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), provider
         if key("AGNES_API_KEY"):
@@ -11232,7 +11340,7 @@ class Handler(BaseHTTPRequestHandler):
         ] + messages
         # Community identity: the AI knows this user's OraCool number + username.
         try:
-            _brief = community_service().brief_for(chat_email) if chat_email else ""
+            _brief = _community_brief_cached(chat_email) if chat_email else ""
             if _brief:
                 messages = [{"role": "system", "content": _brief}] + messages
         except Exception:
@@ -11454,10 +11562,13 @@ class Handler(BaseHTTPRequestHandler):
             req = urllib.request.Request(url, data=json.dumps(spayload).encode("utf-8"),
                                          headers=headers, method="POST")
             ctx = ssl.create_default_context()
+            _t_req = time.time()
             try:
-                resp = urllib.request.urlopen(req, timeout=180, context=ctx)
+                resp = urllib.request.urlopen(req, timeout=45, context=ctx)  # patch47: a silent brain rotates after 45s, not 180s
             except urllib.error.HTTPError as e:
                 _body = e.read().decode("utf-8", "replace")
+                if e.code == 429 or e.code >= 500:
+                    _brain_note(_brain_name(base_url), failed=True, cooldown=_retry_after_s(getattr(e, "headers", None), _body) or (300 if e.code == 429 else 120))
                 if (e.code == 429 and cont_rounds == 0 and "max_tokens" in _body
                         and payload.get("max_tokens", 0) > 700):
                     payload["max_tokens"] = 700
@@ -11483,9 +11594,21 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 break
             except Exception as e:
+                # patch47: timeouts / dropped connections rotate to the next brain exactly like HTTP errors
+                _brain_note(_brain_name(base_url), failed=True, cooldown=300)
+                _nb = self._next_brain(provider, base_url, model, _tried) if not acc_stream else None
+                if _nb:
+                    api_key, base_url, model = _nb
+                    url = base_url + "/chat/completions"
+                    payload["model"] = model
+                    if "gpt-oss" in model:
+                        payload.setdefault("reasoning_effort", "low")
+                    else:
+                        payload.pop("reasoning_effort", None)
+                    continue
                 if not acc_stream:
                     try:
-                        self.wfile.write(("data: " + json.dumps({"error": str(e)[:240]}) + "\n\n").encode())
+                        self.wfile.write(("data: " + json.dumps({"error": "Every AI brain is unreachable right now (" + str(e)[:80] + ") — please try again in a moment."}) + "\n\n").encode())
                         self.wfile.write(b"data: [DONE]\n\n")
                         self.wfile.flush()
                     except Exception:
@@ -11493,6 +11616,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             fr = None
             round_txt = ""
+            _first_tok = None
             try:
                 for raw_line in resp:
                     line = raw_line.decode("utf-8", "replace").strip()
@@ -11510,6 +11634,9 @@ class Handler(BaseHTTPRequestHandler):
                     if ch0.get("finish_reason"):
                         fr = ch0.get("finish_reason")
                     if dlt:
+                        if _first_tok is None:
+                            _first_tok = time.time() - _t_req
+                            _brain_note(_brain_name(base_url), first_token_s=_first_tok)
                         round_txt += dlt
                         for _piece in _guard.feed(dlt):
                             if not _piece:
@@ -11521,6 +11648,24 @@ class Handler(BaseHTTPRequestHandler):
                                 resp.close()
                                 return
                     first_frame = False
+            except Exception as _rex:
+                # patch47: the brain went quiet mid-stream (socket timeout / reset) — rotate if nothing reached the user yet
+                _brain_note(_brain_name(base_url), failed=True, cooldown=300)
+                if not acc_stream and not round_txt:
+                    _nb = self._next_brain(provider, base_url, model, _tried)
+                    if _nb:
+                        try:
+                            resp.close()
+                        except Exception:
+                            pass
+                        api_key, base_url, model = _nb
+                        url = base_url + "/chat/completions"
+                        payload["model"] = model
+                        if "gpt-oss" in model:
+                            payload.setdefault("reasoning_effort", "low")
+                        else:
+                            payload.pop("reasoning_effort", None)
+                        continue
             finally:
                 try:
                     resp.close()

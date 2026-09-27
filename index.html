@@ -2729,8 +2729,10 @@ async function send(text){
     if(settings.haUrl && settings.haToken){ payload.ha_url=settings.haUrl; payload.ha_token=settings.haToken; }
     if(isAdminSession() && settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
     else if((_mode==='fast' || (settings.brainMode==='fast' && _mode!=='expert')) && srv && srv.brain && srv.brain.fast_model){ payload.provider='groq'; payload.model=srv.brain.fast_model; }
-    const resp=await Promise.race([fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:chatAbort.signal}), new Promise((_,rej)=>setTimeout(()=>rej(new Error('No answer from the brain in 45s — the provider is jammed. Send again.')),45000))]);
-    if(!resp.ok){ let j=null; try{j=await resp.json();}catch(e){} if(resp.status===403 && j && (j.suspended||j.blocked)){ showBlockedScreen(); throw new Error('Account suspended — pay the reinstatement fine to continue.'); } throw new Error((j&&j.error)||('AI provider error '+resp.status)); }
+    const _chatFetch=()=>fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:chatAbort.signal});
+    let resp=await Promise.race([_chatFetch(), new Promise((_,rej)=>setTimeout(()=>rej(new Error('No answer from the brain in 45s — the provider is jammed. Send again.')),45000))]);
+    if(resp.status===429||resp.status===502||resp.status===503||resp.status===504){ body.innerHTML='<span class="dots"></span> <span style="color:var(--dim);font-size:12px">busy — retrying…</span>'; await new Promise(res=>setTimeout(res,1800+Math.random()*900)); resp=await Promise.race([_chatFetch(), new Promise((_,rej)=>setTimeout(()=>rej(new Error('No answer from the brain in 45s — the provider is jammed. Send again.')),45000))]); body.innerHTML='<span class="dots"></span>'; }
+    if(!resp.ok){ let j=null; try{j=await resp.json();}catch(e){} if(resp.status===403 && j && (j.suspended||j.blocked)){ showBlockedScreen(); throw new Error('Account suspended — pay the reinstatement fine to continue.'); } if(resp.status===429) throw new Error('OraCool is busy for a moment (too many requests at once) — please send that again in a few seconds.'); if(resp.status>=502&&resp.status<=504) throw new Error('OraCool is restarting or briefly unavailable — please send that again in a moment.'); throw new Error((j&&j.error)||('AI provider error '+resp.status)); }
     const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf=''; let finished=false; let streamMedia=[]; let _streamErr=null;
     _wd=setInterval(()=>{ if(Date.now()-lastByte>120000){ _wdFired=true; try{chatAbort.abort();}catch(e){} } },4000);
     outer: while(true){
@@ -2966,8 +2968,12 @@ async function post(url, body){
   if(accountCall) await ensureFreshLogin();
   if(!body.access_token && session && session.access_token) body.access_token=session.access_token;
   const send=()=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  // patch47: a busy edge (429) or a restarting server (502/503/504) is retried quietly with backoff — never "Bad response 429"
+  const busy=(st)=>st===429||st===502||st===503||st===504;
+  const friendly=(st)=>st===429?'OraCool is busy for a moment (too many requests at once) — please try again in a few seconds.':'OraCool is restarting or briefly unavailable ('+st+') — please try again in a moment.';
   let r=await send();
-  let j=await r.json().catch(()=>({error:'Bad response '+r.status}));
+  for(let att=0; busy(r.status) && att<2; att++){ const ra=parseFloat(r.headers.get('Retry-After')||'0'); await new Promise(res=>setTimeout(res, Math.min(6000, (ra>0?ra*1000:0) || (1200*(att+1)+Math.random()*600)))); r=await send(); }
+  let j=await r.json().catch(()=>({error: busy(r.status)?friendly(r.status):('Bad response '+r.status), status:r.status}));
   if((r.status===401 || j.status===401 || j.status===403) && url!=='/api/auth/refresh' && (accountCall || url==='/api/auth/me')){
     if(await refreshLogin()){
       body.access_token=session.access_token;
