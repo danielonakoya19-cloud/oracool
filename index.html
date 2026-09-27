@@ -168,6 +168,8 @@
   .edprog{height:6px; border-radius:4px; background:rgba(125,211,252,.12); overflow:hidden; margin-top:8px;} .edprog i{display:block; height:100%; width:0; background:var(--cyan,#22d3ee); transition:width .3s;}
   /* patch40: Arena-style "running steps" card for builds */
   .steps{border:1px solid var(--line); border-radius:12px; background:rgba(3,12,18,.55); margin:6px 0 10px; font-size:12.5px; overflow:hidden;}
+  .gpt-input.big:focus-within{border-color:var(--line) !important; box-shadow:0 8px 30px rgba(0,0,0,.35) !important;}
+  .gpt-input.big .chatinput:focus, .gpt-input.big .chatinput:focus-visible{outline:none !important; box-shadow:none !important; border:none !important;}
   .modebtn{display:inline-flex; align-items:center; gap:6px; height:36px; padding:0 12px 0 10px; margin-left:4px; border-radius:999px; border:1px solid var(--line); background:rgba(0,229,255,.05); color:var(--text); font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; white-space:nowrap;}
   .modebtn:hover{background:rgba(0,229,255,.1);} .modebtn .mi-ch{color:var(--dim); font-size:10px;} .modebtn.build{border-color:rgba(251,191,36,.55); background:rgba(251,191,36,.10);} .modebtn.expert{border-color:rgba(167,139,250,.55);} .modebtn.fast{border-color:rgba(52,211,153,.5);}
   .gpt-input.big{position:relative;}
@@ -3429,24 +3431,26 @@ async function renderCommFriends(){
   const el=$('#commFriends'); if(!el) return;
   const r=await post('/api/community/friends',{});
   const fs=r.friends||[];
-  el.innerHTML=fs.length? fs.map(p=>`<div class="cperson">${avatarHtml(p,'sm')}<div style="min-width:0"><span class="conl ${p.online?'on':''}"></span><b style="color:var(--cyan2)">@${escapeHtml(p.username||'member')}</b>${vBadge(p)} <span class="muted" style="font-size:10px" title="OraCool number">${escapeHtml(String(p.number||''))}</span>${p.admin?' <span class="tag" style="color:var(--gold)">ADMIN</span>':''}</div><div style="display:flex;gap:6px;flex:none"><button class="btn small ghost" data-fdm="${escapeHtml(p.username||'')}">✉ Message</button></div></div>`).join('') : '<div class="muted">No friends yet — add one by their OraCool number below.</div>';
+  el.innerHTML=fs.length? fs.map(p=>`<div class="cperson">${avatarHtml(p,'sm')}<div style="min-width:0"><span class="conl ${p.online?'on':''}"></span>${p.nickname?`<b style="color:var(--text)">${escapeHtml(p.nickname)}</b> <span class="muted" style="font-size:11px">@${escapeHtml(p.username||'member')}</span>`:`<b style="color:var(--cyan2)">@${escapeHtml(p.username||'member')}</b>`}${vBadge(p)} <span class="muted" style="font-size:10px" title="OraCool number">${escapeHtml(String(p.number||''))}</span>${p.admin?' <span class="tag" style="color:var(--gold)">ADMIN</span>':''}</div><div style="display:flex;gap:6px;flex:none"><button class="btn small ghost" data-fname="${escapeHtml(String(p.number||''))}" data-cur="${escapeHtml(p.nickname||'')}" title="Save this friend under your own name">✎</button><button class="btn small ghost" data-fdm="${escapeHtml(p.username||'')}">✉ Message</button></div></div>`).join('') : '<div class="muted">No friends yet — add one by their OraCool number below.</div>';
   el.querySelectorAll('[data-fdm]').forEach(b=>{ b.onclick=()=>{ COMM.view='dms'; COMM.peer=b.dataset.fdm; COMM.lastDmId=null; renderCommunity(); }; });
+  el.querySelectorAll('[data-fname]').forEach(b=>{ b.onclick=async()=>{ const name=prompt('Save this friend as (leave empty to remove the name):', b.dataset.cur||''); if(name===null) return; const r=await post('/api/community/friend/name',{number:b.dataset.fname, name}); if(r.error) addErr(r.error); else renderCommFriends(); }; });
 }
 async function commAddFriend(){
   const inp=$('#friendNum'); const out=$('#friendOut'); if(!inp||!out) return;
   const num=(inp.value||'').trim();
   if(!/^\d{6,12}$/.test(num)){ out.innerHTML='<span style="color:var(--danger)">Enter their OraCool number (digits only).</span>'; return; }
   out.innerHTML='<span class="muted">Looking up…</span>';
-  const r=await post('/api/community/friend/add',{number:num});
+  const nmEl=$('#friendName'); const name=nmEl?(nmEl.value||'').trim():'';
+  const r=await post('/api/community/friend/add',{number:num, name});
   if(r.error){ out.innerHTML='<span style="color:var(--danger)">'+escapeHtml(r.error)+'</span>'; return; }
-  inp.value=''; out.innerHTML='<span style="color:var(--ok)">✓ Added @'+escapeHtml(r.profile.username)+' — say hi!</span>';
+  inp.value=''; if(nmEl) nmEl.value=''; out.innerHTML='<span style="color:var(--ok)">✓ Added '+(name?escapeHtml(name)+' (@'+escapeHtml(r.profile.username)+')':'@'+escapeHtml(r.profile.username))+' — say hi!</span>';
   renderCommFriends();
   addSystemNote('👥 You added <b>@'+escapeHtml(r.profile.username)+'</b> as a friend.');
 }
 async function renderCommPeople(q){
   const body=$('#commBody'); if(!body) return;
   if(q===undefined){ body.innerHTML=`<div class="tag" style="margin-top:2px">Friends</div><div id="commFriends"><div class="muted">Loading…</div></div>
-      <div class="commcompose" style="margin:8px 0"><input type="text" id="friendNum" placeholder="Add a friend by their OraCool number (e.g. 2000123456)" autocomplete="off" inputmode="numeric"><button class="btn primary" id="friendGo">Add</button></div>
+      <div class="commcompose" style="margin:8px 0"><input type="text" id="friendNum" placeholder="Their OraCool number (e.g. 2000123456)" autocomplete="off" inputmode="numeric"><input type="text" id="friendName" placeholder="Save as… (optional, e.g. Mum)" autocomplete="off" maxlength="40" style="max-width:180px"><button class="btn primary" id="friendGo">Add</button></div>
       <div class="muted" id="friendOut" style="font-size:11px;margin:-4px 0 10px"></div>
       <div class="tag">All members</div>
       <div class="commcompose" style="margin:8px 0"><input type="text" id="commQ" placeholder="Search by username, name, bio or number…" autocomplete="off"><button class="btn ghost" id="commQGo">Search</button></div>
@@ -3595,7 +3599,33 @@ async function roomVoiceToggle(btn){
 
 /* ---------- community calls: audio & video (P2P WebRTC, OraCool signals) ---------- */
 const CALL={pc:null, stream:null, callId:null, peer:null, kind:'audio', active:false, ringing:null, tick:null, secs:0, beepTimer:null};
+let _iceFromServer=null;
+async function callLoadIce(){ try{ const r=await post('/api/community/call/servers',{}); if(r&&r.ice_servers&&r.ice_servers.length) _iceFromServer=r.ice_servers; }catch(e){} }
+function callWirePc(pc){
+  // patch48: the remote stream was never attached (srcObject was set to the peer connection) — every call looked/heard blank
+  CALL.remote=CALL.remote||new MediaStream(); CALL.pendingIce=CALL.pendingIce||[];
+  pc.ontrack=e=>{ const st=(e.streams&&e.streams[0])||null; if(st){ CALL.remote=st; } else { try{ CALL.remote.addTrack(e.track); }catch(err){} } callAttachRemote(); };
+  pc.onconnectionstatechange=()=>{ const cs=pc.connectionState; const sub=document.getElementById('callSub');
+    if(cs==='connected'){ if(sub){ sub.textContent='Connected'; delete sub.dataset.waiting; } if(CALL.watchdog){ clearTimeout(CALL.watchdog); CALL.watchdog=null; } callAttachRemote(); }
+    if(cs==='failed'){ callTeardown(); addErr('Call failed — no route between the two networks (try Wi-Fi or mobile data).'); }
+    if(cs==='disconnected'){ if(sub) sub.textContent='Reconnecting…'; setTimeout(()=>{ if(CALL.pc===pc && pc.connectionState==='disconnected'){ callTeardown(); addSystemNote('📵 Call dropped — the other side lost connection.'); } }, 12000); } };
+}
+function callAttachRemote(){
+  if(!CALL.remote) return;
+  const rv=document.getElementById('remoteVid');
+  if(rv){ if(rv.srcObject!==CALL.remote){ rv.srcObject=CALL.remote; } rv.muted=false; rv.play&&rv.play().catch(()=>{}); }
+  let ra=document.getElementById('remoteAud');
+  if(!ra){ ra=document.createElement('audio'); ra.id='remoteAud'; ra.autoplay=true; ra.setAttribute('playsinline',''); ra.style.display='none'; document.body.appendChild(ra); }
+  if(!rv){ if(ra.srcObject!==CALL.remote) ra.srcObject=CALL.remote; ra.play&&ra.play().catch(()=>{}); } else { ra.srcObject=null; }
+  const lv=document.getElementById('localVid'); if(lv && CALL.stream && lv.srcObject!==CALL.stream){ lv.srcObject=CALL.stream; lv.play&&lv.play().catch(()=>{}); }
+}
+async function callFlushIce(){
+  if(!CALL.pc || !CALL.pc.remoteDescription) return;
+  const q=CALL.pendingIce||[]; CALL.pendingIce=[];
+  for(const cd of q){ try{ await CALL.pc.addIceCandidate(cd); }catch(e){} }
+}
 function callIceServers(){
+  if(_iceFromServer) return _iceFromServer;
   // STUN first, then the free public TURN (TCP 443/UDP) so calls work when
   // BOTH sides sit behind restrictive NATs (mobile networks, CGNAT, campus Wi-Fi).
   return [
@@ -3626,6 +3656,7 @@ function showCallUi(sub, who){
     </div></div>`;
   ov.classList.add('open');
   if(isVideo && CALL.stream){ const lv=document.getElementById('localVid'); if(lv) lv.srcObject=CALL.stream; }
+  try{ callAttachRemote(); }catch(e){}
   document.getElementById('callMic').onclick=()=>{ const t=CALL.stream.getAudioTracks(); if(!t.length) return; t.forEach(x=>x.enabled=!x.enabled); document.getElementById('callMic').textContent=t[0].enabled?'🎙️':'🔇'; };
   const cam=document.getElementById('callCam'); if(cam) cam.onclick=()=>{ const t=CALL.stream.getVideoTracks(); if(!t.length) return; t.forEach(x=>x.enabled=!x.enabled); cam.textContent=t[0].enabled?'📷':'🚫'; };
   document.getElementById('callEnd').onclick=()=>{ post('/api/community/call/hangup',{call_id:CALL.callId}).catch(()=>null); callTeardown(); addSystemNote('📵 Call ended.'); };
@@ -3636,6 +3667,7 @@ function callTeardown(){
   if(CALL.beepTimer){ clearInterval(CALL.beepTimer); CALL.beepTimer=null; }
   if(CALL.pc){ try{ CALL.pc.close(); }catch(e){} CALL.pc=null; }
   if(CALL.stream){ CALL.stream.getTracks().forEach(t=>t.stop()); CALL.stream=null; }
+  CALL.remote=null; CALL.pendingIce=[]; const _ra=document.getElementById('remoteAud'); if(_ra){ try{ _ra.srcObject=null; }catch(e){} _ra.remove(); }
   const ov=document.getElementById('callOverlay'); if(ov) ov.classList.remove('open');
   const ic=document.getElementById('incomingCall'); if(ic) ic.remove();
   if(CALL.watchdog){ clearTimeout(CALL.watchdog); CALL.watchdog=null; }
@@ -3652,10 +3684,12 @@ async function callStart(peerUsername, video){
     CALL.callId=r.call_id;
   }catch(e){ callTeardown(); return addErr('Call: '+(e.message||e)); }
   try{
+    if(!_iceFromServer) await callLoadIce();
+    CALL.remote=null; CALL.pendingIce=[];
     CALL.pc=new RTCPeerConnection({iceServers:callIceServers()});
+    callWirePc(CALL.pc);
     CALL.stream.getTracks().forEach(t=>CALL.pc.addTrack(t, CALL.stream));
     CALL.pc.onicecandidate=e=>{ if(e.candidate) post('/api/community/call/ice',{call_id:CALL.callId, candidate:e.candidate}).catch(()=>null); };
-    CALL.pc.onconnectionstatechange=()=>{ if(CALL.pc && CALL.pc.connectionState==='failed'){ callTeardown(); addErr('Call failed — no connection could be established.'); } };
     const offer=await CALL.pc.createOffer(); await CALL.pc.setLocalDescription(offer);
     await post('/api/community/call/sdp',{call_id:CALL.callId, sdp:JSON.stringify(offer)});
     showCallUi('Calling…', '@'+peerUsername);
@@ -3666,15 +3700,18 @@ async function callSetRemote(sd){
   try{
     const d=(typeof sd==='string')?JSON.parse(sd):sd;
     if(d.type==='offer'){
+      if(!_iceFromServer) await callLoadIce();
+      CALL.remote=null; CALL.pendingIce=CALL.pendingIce||[];
       CALL.pc=new RTCPeerConnection({iceServers:callIceServers()});
+      callWirePc(CALL.pc);
       if(CALL.stream) CALL.stream.getTracks().forEach(t=>CALL.pc.addTrack(t, CALL.stream));
       CALL.pc.onicecandidate=e=>{ if(e.candidate) post('/api/community/call/ice',{call_id:CALL.callId, candidate:e.candidate}).catch(()=>null); };
-      CALL.pc.onconnectionstatechange=()=>{ if(CALL.pc && CALL.pc.connectionState==='failed'){ callTeardown(); addErr('Call failed — no connection could be established.'); } };
       await CALL.pc.setRemoteDescription(d);
+      await callFlushIce();
       const ans=await CALL.pc.createAnswer(); await CALL.pc.setLocalDescription(ans);
       await post('/api/community/call/sdp',{call_id:CALL.callId, sdp:JSON.stringify(ans)});
-    } else if(CALL.pc){ await CALL.pc.setRemoteDescription(d); }
-    const rv=document.getElementById('remoteVid'); if(rv) rv.srcObject=CALL.pc;
+    } else if(CALL.pc){ await CALL.pc.setRemoteDescription(d); await callFlushIce(); }
+    callAttachRemote();
     const sub=document.getElementById('callSub'); if(sub) delete sub.dataset.waiting;
   }catch(e){ console.warn('call sdp', e); }
 }
@@ -3721,7 +3758,7 @@ async function callPollTick(){
       }
       if(u.call_id!==CALL.callId) return;
       if(u.event==='answer'){ callSetRemote(u.sdp); if(CALL.watchdog){ clearTimeout(CALL.watchdog); CALL.watchdog=null; } }
-      if(u.event==='ice'){ (u.candidates||[]).forEach(cd=>{ try{ if(CALL.pc) CALL.pc.addIceCandidate(cd); }catch(e){} }); }
+      if(u.event==='ice'){ (u.candidates||[]).forEach(cd=>{ if(CALL.pc && CALL.pc.remoteDescription){ CALL.pc.addIceCandidate(cd).catch(()=>{}); } else { CALL.pendingIce=CALL.pendingIce||[]; CALL.pendingIce.push(cd); } }); }
     });
   }catch(e){}
 }
@@ -5873,8 +5910,11 @@ async function renderPlans(){
     ['Team members','1','1','5','20','Unlimited'],
     ['Support','Community','Email','Priority','Premium','24/7 + SLA'],
   ];
-  const hdr=['','Free','Starter','PRO','Ultra','Enterprise'];
-  const rows=matrix.map(m=>`<tr><td class="fm">${m[0]}</td>${m.slice(1).map(c=>`<td class="${c==='❌'?'no':(c==='✅'?'yes':'')}">${escapeHtml(c)}</td>`).join('')}</tr>`).join('');
+  const fmx=(srv&&srv.feature_matrix&&srv.feature_matrix.sections)?srv.feature_matrix:null;
+  const hdr=fmx?['',...fmx.tiers]:['','Free','Starter','PRO','Ultra','Enterprise'];
+  const cell=c=>`<td class="${c==='❌'?'no':(String(c).startsWith('✅')?'yes':'')}">${escapeHtml(c)}</td>`;
+  const rows=fmx? fmx.sections.map(sec=>`<tr class="fsec"><td colspan="6" style="color:var(--cyan2);font-weight:700;background:rgba(0,229,255,.06)">${escapeHtml(sec.title)}</td></tr>`+sec.rows.map(m=>`<tr><td class="fm">${escapeHtml(m[0])}</td>${m.slice(1).map(cell).join('')}</tr>`).join('')).join('')
+    : matrix.map(m=>`<tr><td class="fm">${m[0]}</td>${m.slice(1).map(cell).join('')}</tr>`).join('');
   $('#p-plans').innerHTML=`<h3 class="ptitle">💳 Pricing Plans</h3>
     <div class="muted">Current plan: <b style="color:var(--cyan2)">${escapeHtml(myTier.toUpperCase())}</b>${r.email?' · '+escapeHtml(r.email):''}</div>
     ${r.coins&&r.coins.state?`<div class="coin-strip">◈ Your wallet right now: <b>${r.coins.state.unlimited?'UNLIMITED':Number(r.coins.state.balance).toLocaleString()+' coins'}</b>${r.coins.state.unlimited?'':(r.coins.state.one_time?' of your one-time Free grant of '+Number(r.coins.state.grant).toLocaleString()+' · no refill until you upgrade':' of '+Number(r.coins.state.grant).toLocaleString()+' this week · resets in '+r.coins.state.reset_in_days+' day(s)')} · each site = ${Number(r.coins.state.cost_build).toLocaleString()} coins · <b>~${r.coins.state.sites_left>999999?'∞':Number(r.coins.state.sites_left).toLocaleString()}</b> builds left</div>`:''}
@@ -5884,6 +5924,7 @@ async function renderPlans(){
       <thead><tr>${hdr.map(x=>`<th style="padding:6px 4px;border-bottom:1px solid var(--line);text-align:center;color:var(--cyan2)">${x}</th>`).join('')}</tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
+    ${srv&&srv.creator?`<div class="hint" style="margin:8px 0 2px">OraCool AI is created and owned by <b>${escapeHtml(srv.creator.name)}</b> — ${escapeHtml(srv.creator.title)}, ${escapeHtml(srv.creator.location)}. <a href="/#creator" target="_blank" rel="noopener" style="color:var(--cyan2)">About the creator ↗</a></div>`:''}
     ${(()=>{ const LADDER=[
         ['Chat · voice · PWA · smart home','free'],
         ['Core intel: IP · domain · email · username · phone · weather','free'],
@@ -5924,8 +5965,37 @@ function showGate(){
   renderGate(); g.classList.add('open');
 }
 function hideGate(){ const g=$('#authGate'); if(g) g.classList.remove('open'); }
+let gateReset=null; // patch48: {access_token, refresh_token, user} from a password-reset link
 function renderGate(){
   const card = $('#gateCard'); if(!card) return;
+  if(gateReset){
+    card.innerHTML = `
+      <div style="text-align:center; margin-bottom:6px"><div id="gateReactor" style="display:flex;justify-content:center"></div></div>
+      <div class="gatebrand">ORA-COOL AI</div>
+      <div class="gatesub">Choose a new password${gateReset.user&&gateReset.user.email?' for <b>'+escapeHtml(gateReset.user.email)+'</b>':''}</div>
+      <label class="lbl">New password</label>
+      <div style="position:relative"><input type="password" id="rPass" placeholder="••••••••" autocomplete="new-password" style="padding-right:38px"><button type="button" id="rPassEye" aria-label="Show or hide password" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;color:var(--dim);cursor:pointer;font-size:16px">👁</button></div>
+      <label class="lbl">Repeat it</label>
+      <input type="password" id="rPass2" placeholder="••••••••" autocomplete="new-password">
+      <div class="hint">8+ characters with uppercase, lowercase & a number.</div>
+      <button class="btn primary" style="width:100%; justify-content:center; margin-top:16px" id="rGo">Save new password & enter</button>
+      <button class="btn ghost" style="width:100%; justify-content:center; margin-top:8px" id="rCancel">Cancel</button>
+      <div class="result" id="gOut" style="margin-top:10px"></div>`;
+    $('#gateReactor').innerHTML = orbCore(56);
+    $('#rPassEye').onclick=()=>{ const i=$('#rPass'); i.type=i.type==='password'?'text':'password'; };
+    $('#rCancel').onclick=()=>{ gateReset=null; renderGate(); };
+    const go=async()=>{ const out=$('#gOut'); const p1=$('#rPass').value, p2=$('#rPass2').value;
+      if(p1!==p2){ out.innerHTML='<div class="errbox">The two passwords do not match.</div>'; return; }
+      out.innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span></div>';
+      const r=await post('/api/auth/password',{access_token:gateReset.access_token, password:p1});
+      if(!r.ok){ out.innerHTML='<div class="errbox">'+escapeHtml(r.error||'Could not change the password.')+'</div>'; return; }
+      const tok=gateReset; gateReset=null;
+      const me=await post('/api/auth/me',{access_token:tok.access_token});
+      if(me.status===200 && me.data){ setSession({user:me.data, access_token:tok.access_token, refresh_token:tok.refresh_token, pro_token:me.pro_token||null, admin:me.admin, blocked:me.blocked}); finishAuth(); addSystemNote('🔐 Password changed. You are signed in.'); }
+      else { gateMode='signin'; renderGate(); const o=$('#gOut'); if(o) o.innerHTML='<div class="okbox">Password changed — sign in with it now.</div>'; } };
+    $('#rGo').onclick=go; $('#rPass2').addEventListener('keydown', e=>{ if(e.key==='Enter') go(); });
+    return;
+  }
   if(gate2fa){
     card.innerHTML = `
       <div style="text-align:center; margin-bottom:6px"><div id="gateReactor" style="display:flex;justify-content:center"></div></div>
@@ -5964,7 +6034,7 @@ function renderGate(){
     <label class="lbl">Password</label>
     <div style="position:relative"><input type="password" id="gPass" placeholder="••••••••" autocomplete="new-password" style="padding-right:38px"><button type="button" id="gPassEye" aria-label="Show or hide password" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;cursor:pointer;font-size:15px;padding:8px;line-height:1">👁</button></div>
     <div class="strength" id="gStrength"><i></i></div>
-    <div class="hint" id="gHint">Password: 8+ characters with uppercase, lowercase & a number.</div>
+    <div class="hint" id="gHint">Password: 8+ characters with uppercase, lowercase & a number.${gateMode==='signup'?'':' <a href="#" id="gForgot" style="color:var(--cyan2);float:right">Forgot password?</a>'}</div>
     <button class="btn primary" style="width:100%; justify-content:center; margin-top:16px" id="gGo">${gateMode==='signup'?'Create account & enter':'Enter OraCool'}</button>
     <div style="display:flex; gap:8px; margin-top:10px">
       <button class="btn ghost" style="flex:1; justify-content:center" id="gGoogle">Google</button>
@@ -5982,6 +6052,11 @@ function renderGate(){
   $('#gFace').onclick = ()=>faceLogin($('#gOut'));
   $('#gInstall').onclick = ()=>{ if (window.openInstallHelp) window.openInstallHelp(); };
   $('#gEmail').addEventListener('input', ()=>{ $('#gOut').innerHTML=''; });
+  const gF=$('#gForgot'); if(gF) gF.onclick=async(e)=>{ e.preventDefault(); const out=$('#gOut'); const email=($('#gEmail').value||'').trim();
+    if(!email){ out.innerHTML='<div class="errbox">Type your email above first, then tap "Forgot password?".</div>'; $('#gEmail').focus(); return; }
+    out.innerHTML='<div style="text-align:center;padding:10px"><span class="spinner"></span></div>';
+    const r=await post('/api/auth/recover',{email, redirect_to:location.origin+'/app'});
+    out.innerHTML=r.ok?'<div class="okbox">📬 '+escapeHtml(r.message||'Reset link sent — check your inbox and spam.')+'</div>':'<div class="errbox">'+escapeHtml(r.error||'Could not send the reset email.')+'</div>'; };
   $('#gPass').addEventListener('input', ()=>{
     const pw = $('#gPass').value, s = strengthScore(pw);
     const colors = ['#ff5f6d','#ff5f6d','#ffc24b','#ffc24b','#3dffa5'];
@@ -6031,6 +6106,22 @@ async function init(){
   try{ srv=await fetch('/api/config').then(r=>r.json()); }catch(e){}
   // Email verification: if the Supabase confirmation link landed us here with a
   // token_hash, confirm it and log the user straight in.
+  // patch48: password-reset links (Supabase) land here with tokens in the hash or a token_hash in the query
+  try{
+    const hp=new URLSearchParams((location.hash||'').replace(/^#/,''));
+    const qp=new URLSearchParams(location.search);
+    if(hp.get('type')==='recovery' && hp.get('access_token')){
+      gateReset={access_token:hp.get('access_token'), refresh_token:hp.get('refresh_token')||'', user:null};
+      try{ const me=await post('/api/auth/me',{access_token:gateReset.access_token}); if(me.status===200&&me.data) gateReset.user=me.data; }catch(e){}
+      history.replaceState({},'',location.pathname); clearSession(); showGate(); renderGate(); return;
+    }
+    if(qp.get('token_hash') && (qp.get('type')==='recovery' || hp.get('type')==='recovery')){
+      const r=await post('/api/auth/recovery/verify',{token_hash:qp.get('token_hash')});
+      history.replaceState({},'',location.pathname);
+      if(r.status===200 && r.data && r.data.access_token){ gateReset={access_token:r.data.access_token, refresh_token:r.data.refresh_token||'', user:r.data.user||null}; clearSession(); showGate(); renderGate(); return; }
+      sessionStorage.setItem('oracool_verify_err', r.error||'This reset link is invalid or expired — request a new one.');
+    }
+  }catch(e){}
   try{
     const q=new URLSearchParams(location.search); const th=q.get('token_hash');
     if(th){

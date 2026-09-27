@@ -20,7 +20,7 @@ NAME = "Daniel " + "Onakoya"  # split so this test file itself never carries the
 
 class CreatorPrivacy(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch47-brain"'), 2)
+        self.assertEqual(SRV.count('"patch48-people"'), 2)
 
     def test_client_source_has_no_creator_identity(self):
         # anyone can read index.html — the creator's name/birthday must not be in it
@@ -33,36 +33,28 @@ class CreatorPrivacy(unittest.TestCase):
         # the admin-board rule no longer lists admin addresses
         self.assertIn("this session is NOT an administrator", APP)
 
-    def test_identity_lock_names_no_person(self):
-        self.assertNotIn("Onakoya", s._IDENTITY_LOCK)
-        self.assertIn("CREATOR PRIVACY (absolute)", s._IDENTITY_LOCK)
-        self.assertIn("the OraCool team", s._IDENTITY_LOCK)
+    def test_identity_lock_names_the_public_creator(self):
+        # patch48: the creator chose to be public; the model/provider stays private
+        self.assertIn("Daniel Onakoya Adebayo", s._IDENTITY_LOCK)
+        self.assertIn("never name, hint at or speculate about the underlying model", s._IDENTITY_LOCK)
 
-    def test_pii_scrub_outside_creator_session(self):
+    def test_pii_scrub_keeps_birthday_private_only(self):
         with mock.patch.object(s, "admin_emails", lambda: ["creator@x.com", "other@x.com"]):
             t = "I'm OraCool AI, created by " + NAME + " Adebayo. Email danielonakoya19@gmail.com, born 19 June 2009."
             out = s._pii_scrub(t, "visitor@x.com")
-            self.assertNotIn("Onakoya", out); self.assertNotIn("gmail", out); self.assertNotIn("2009", out)
-            self.assertIn("created by the OraCool team.", out)
-            # other admins are NOT the creator either
-            self.assertNotIn("Onakoya", s._pii_scrub(t, "other@x.com"))
-            # the creator's own session is untouched
+            self.assertIn("Onakoya", out); self.assertNotIn("2009", out)  # name public, birthday never
             self.assertEqual(s._pii_scrub(t, "creator@x.com"), t)
-            self.assertEqual(s._pii_scrub(t, "CREATOR@x.com"), t)
 
     def test_prompt_messages_are_sanitized(self):
         with mock.patch.object(s, "admin_emails", lambda: ["creator@x.com"]):
-            msgs = [{"role": "system", "content": "CREATOR: owner is " + NAME.upper() + " ADEBAYO, email danielonakoya19@gmail.com."},
+            msgs = [{"role": "system", "content": "CREATOR: owner is " + NAME.upper() + " ADEBAYO, born 19 June 2009, alt thinkglobal1000@gmail.com."},
                     {"role": "assistant", "content": "I was created by " + NAME + "."},
                     {"role": "user", "content": "who is Onakoya?"}]
             out = s._pii_scrub_messages(msgs, "visitor@x.com")
-            self.assertNotIn("ONAKOYA", out[0]["content"].upper()); self.assertNotIn("gmail", out[0]["content"])
-            self.assertNotIn("Onakoya", out[1]["content"])
+            self.assertNotIn("2009", out[0]["content"]); self.assertNotIn("thinkglobal1000", out[0]["content"])
+            self.assertIn("Onakoya", out[1]["content"])  # the public name stays
             self.assertEqual(out[2]["content"], "who is Onakoya?")  # user text is never rewritten
             self.assertIs(s._pii_scrub_messages(msgs, "creator@x.com"), msgs)
-        self.assertIn("messages = _pii_scrub_messages(messages, chat_email)", SRV)
-        self.assertIn("_pii_scrub(_identity_scrub(_final_txt), chat_email)", SRV)
-        self.assertIn("_pii_scrub(_identity_scrub(_strip_agent_markup(text)), conv_em)", SRV)
 
 
 class ArenaStyleUX(unittest.TestCase):

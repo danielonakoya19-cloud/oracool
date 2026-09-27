@@ -63,17 +63,18 @@ class CreatorIdentityTests(unittest.TestCase):
         self.assertIn("DANIEL ONAKOYA ADEBAYO", head)
         self.assertIn("CREATOR", head)
 
-    def test_other_admin_ai_never_sees_creator_identity(self):
+    def test_other_admin_ai_sees_public_creator_only(self):
+        # patch48: the creator asked to be public — name/role/contact are shared, the birthday never is
         head = self.s.identity_prompt_head(OTHER_ADMIN)
-        for needle in ("danielonakoya19", "DANIEL ONAKOYA", "19 June 2009"):
+        self.assertIn("Daniel Onakoya Adebayo", head)
+        for needle in ("19 June 2009", "2009", "birthday:"):
             self.assertNotIn(needle, head)
-        self.assertIn("confidential", head)
         self.assertIn("private", head)
 
-    def test_random_user_never_sees_creator_identity(self):
+    def test_random_user_sees_public_creator_only(self):
         head = self.s.identity_prompt_head("random@example.com")
-        for needle in ("danielonakoya19", "DANIEL ONAKOYA"):
-            self.assertNotIn(needle, head)
+        self.assertIn("Daniel Onakoya Adebayo", head)
+        self.assertNotIn("2009", head)
 
     def test_admin_board_masks_creator_for_other_admins(self):
         s = self.s

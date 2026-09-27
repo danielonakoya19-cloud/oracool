@@ -386,7 +386,131 @@ def admin_emails():
 def is_admin(email):
     return bool(email) and (email or "").strip().lower() in admin_emails()
 
-def identity_prompt_head(chat_email=""):
+def creator_profile():
+    """patch48: the PUBLIC creator profile — shown on the landing page, the app's About card and known to the AI.
+    Editable without code: CREATOR_NAME / CREATOR_TITLE / CREATOR_BIO / CREATOR_LOCATION / CREATOR_EMAIL /
+    CREATOR_PHOTO / CREATOR_LINKS (comma-separated "Label|https://…") in keys.json, env or the server vault.
+    Birth date and age are deliberately never part of this profile."""
+    def _g(name, default):
+        v = key(name)
+        return v.strip() if isinstance(v, str) and v.strip() else default
+    links = []
+    for part in _g("CREATOR_LINKS", "GitHub|https://github.com/danielonakoya19-cloud,TAIEF|https://taief.com.ng").split(","):
+        if "|" in part:
+            lab, url = part.split("|", 1)
+            if lab.strip() and url.strip().startswith("http"):
+                links.append({"label": lab.strip(), "url": url.strip()})
+    return {"name": _g("CREATOR_NAME", "Daniel Onakoya Adebayo"),
+            "title": _g("CREATOR_TITLE", "Founder & Creator of OraCool AI"),
+            "location": _g("CREATOR_LOCATION", "Lagos, Nigeria"),
+            "bio": _g("CREATOR_BIO", "Daniel designed and built OraCool AI end to end — the voice-first assistant, the website "
+                                     "builder, the community and its tools — to give everyone a personal AI that actually gets things done."),
+            "email": _g("CREATOR_EMAIL", "danielonakoya19@gmail.com"),
+            "photo": _g("CREATOR_PHOTO", ""),
+            "links": links}
+
+
+def creator_brief():
+    c = creator_profile()
+    return ("Creator (public, server-authoritative): OraCool AI was created and is owned by %s — %s, based in %s. %s "
+            "Contact: %s. Links: %s. Share these facts freely when anyone asks who made or owns OraCool; never invent "
+            "other personal details (age, birthday, address, family) — those are private." % (
+                c["name"], c["title"], c["location"], c["bio"], c["email"],
+                ", ".join(l["label"] + " " + l["url"] for l in c["links"]) or "—"))
+
+
+# Every OraCool feature by plan — ONE source of truth for the Plans panel, the landing pricing table and the AI.
+FEATURE_MATRIX = [
+    ("Chat & intelligence", [
+        ("Unlimited messages · 5-core AI (JARVIS · KIMI · GO · OMNI · GROK)", "✅", "✅", "✅", "✅", "✅"),
+        ("Chat modes: Auto · Fast · Build · Expert (deep reasoning)", "✅", "✅", "✅", "✅", "✅"),
+        ("Voice conversation with human-style barge-in · wake word", "✅", "✅ + wake word", "✅ + wake word", "✅ + wake word", "✅ + wake word"),
+        ("Conversation memory & saved chats (cloud-durable)", "20 messages", "100 messages", "Unlimited", "Unlimited", "Unlimited"),
+        ("Live web search & research", "Basic", "✅", "✅", "✅", "✅"),
+        ("Weather · news · markets · NASA APOD/EPIC/asteroids", "✅", "✅", "✅", "✅", "✅"),
+        ("Direct answers, no lectures (safety lines only)", "✅", "✅", "✅", "✅", "✅"),
+    ]),
+    ("Create & visualise", [
+        ("Charts · plots · comparisons · timelines · flow diagrams · tables · countdowns", "✅", "✅", "✅", "✅", "✅"),
+        ("Games in chat: chess (AI opponent) · Ludo", "✅", "✅", "✅", "✅", "✅"),
+        ("Code runner: Python · JavaScript · HTML live previews (autorun)", "✅", "✅", "✅", "✅", "✅"),
+        ("Documents: PDF · Word · Excel · CSV · code analysis", "✅", "✅", "✅", "✅", "✅"),
+        ("Photo understanding (attach any picture, ask anything)", "✅", "✅", "✅", "✅", "✅"),
+        ("Camera: selfie & clip report, on-device photo/video editor", "✅", "✅", "✅", "✅", "✅"),
+        ("AI image generation", "❌", "❌", "✅", "Unlimited", "Unlimited"),
+        ("AI video generation", "❌", "❌", "❌", "✅", "✅"),
+        ("Licensed stock photos in builds (Pexels · Openverse · Wikimedia)", "✅", "✅", "✅", "✅", "✅"),
+    ]),
+    ("Website & app builder", [
+        ("Build coins", "1,000,000 one-time", "3,000,000 / week", "8,000,000 / week", "25,000,000 / week", "Unlimited"),
+        ("≈ Websites (10,000 coins each)", "100 total", "300 / week", "800 / week", "2,500 / week", "No cap"),
+        ("Live step-by-step build feed (section by section)", "✅", "✅", "✅", "✅", "✅"),
+        ("Free in-place edits ('make the hero gold')", "60 / day", "60 / day", "60 / day", "60 / day", "Unlimited"),
+        ("1-click publish on oracoolai.com · own domain · views counter", "✅", "✅", "✅", "✅", "✅"),
+        ("Weekly coin refill", "❌ one-time only", "✅", "✅", "✅", "Never needed"),
+        ("GitHub console (push your builds)", "❌", "❌", "❌", "✅", "✅"),
+    ]),
+    ("Community", [
+        ("Unique username + 10-digit OraCool number", "✅", "✅", "✅", "✅", "✅"),
+        ("Private DMs · groups · channels · friends saved with your own names", "✅", "✅", "✅", "✅", "✅"),
+        ("Voice notes · voice & video calls", "✅", "✅", "✅", "✅", "✅"),
+        ("AI moderator · reports · verified badge", "✅", "✅", "✅", "✅", "✅"),
+    ]),
+    ("Investigation (OSINT)", [
+        ("Core OSINT: IP · domain · email · username · phone", "❌", "✅", "✅", "✅", "✅"),
+        ("Email breach (HIBP + infostealer) · dark-web index", "❌", "✅", "✅", "✅", "✅"),
+        ("Deep OSINT: Shodan · VirusTotal · AbuseIPDB · URLScan · LeakCheck", "❌", "❌", "✅", "✅", "✅"),
+        ("Dark-web monitoring · cases & evidence vault", "❌", "❌", "Basic", "Full", "Full"),
+    ]),
+    ("Markets & trading", [
+        ("Stocks / crypto data", "❌", "5+5", "100+", "Unlimited", "Unlimited"),
+        ("Paper trading desk", "✅", "✅", "✅", "✅", "✅"),
+        ("Trading automation", "❌", "❌", "Basic", "Full", "Custom"),
+    ]),
+    ("Devices, security & account", [
+        ("Smart-home / device control", "Basic", "Full", "Full", "Full", "Full"),
+        ("Reminders & proactive briefings", "✅", "✅", "✅", "✅", "✅"),
+        ("Face-ID / fingerprint login · 2FA · password reset", "✅", "✅", "✅", "✅", "✅"),
+        ("Encrypted vault", "❌", "❌", "✅", "✅", "✅"),
+        ("Email communications (send from OraCool)", "❌", "❌", "❌", "❌", "✅"),
+        ("API access · white-label · custom AI models · SSO", "❌", "❌", "❌", "API", "✅ all"),
+        ("Team members", "1", "1", "5", "20", "Unlimited"),
+        ("Support", "Community", "Email", "Priority", "Premium", "24/7 + SLA"),
+    ]),
+]
+FEATURE_TIERS = ["Free", "Starter", "Pro", "Professional", "Enterprise"]
+
+
+def feature_matrix_public():
+    return {"tiers": FEATURE_TIERS, "sections": [{"title": t, "rows": [list(r) for r in rows]} for t, rows in FEATURE_MATRIX]}
+
+
+def features_brief():
+    """Compact plan/feature facts for the AI (so it can explain exactly what each plan includes)."""
+    out = ["OraCool plans: Free $0 · Starter $29/mo (₦45,000) · Pro $49/mo (₦75,000) · Professional $149/mo (₦230,000) · Enterprise $500/mo (₦750,000). Feature availability (Free | Starter | Pro | Professional | Enterprise):"]
+    for title, rows in FEATURE_MATRIX:
+        out.append(title + ": " + "; ".join(r[0] + " = " + " | ".join(r[1:]) for r in rows))
+    return "\n".join(out)
+
+
+def feature_matrix_html():
+    """The landing-page pricing table, rendered server-side from the same matrix."""
+    h = ['<div class="fm-wrap"><table class="fmatrix"><thead><tr><th>Feature</th>' + "".join("<th>%s</th>" % html.escape(t) for t in FEATURE_TIERS) + "</tr></thead><tbody>"]
+    for title, rows in FEATURE_MATRIX:
+        h.append('<tr class="sec"><td colspan="6">%s</td></tr>' % html.escape(title))
+        for r in rows:
+            h.append("<tr><td class=\"fm\">%s</td>" % html.escape(r[0]) + "".join(
+                '<td class="%s">%s</td>' % ("no" if c == "❌" else "yes" if c.startswith("✅") else "", html.escape(c)) for c in r[1:]) + "</tr>")
+    h.append("</tbody></table></div>")
+    return "".join(h)
+
+
+_FEATURE_ASK_RX = re.compile(r"(?i)\b(?:plans?|pricing|prices?|subscri\w*|features?|what can you do|what do you do|capabilit\w*|upgrade|coins?|"
+                             r"free tier|starter|professional|ultra|enterprise|how much|cost|pay(?:ment)?|worth it|compare plans?|"
+                             r"who (?:made|built|created|owns?|developed)|creator|founder|owner)\b")
+
+
+def identity_prompt_head(chat_email="", user_text=""):
     """Creator bond for the AI prompt. The creator's identity is disclosed ONLY
     inside the creator's own AI session — never to other admins or users."""
     _admin_list = admin_emails()
@@ -398,12 +522,13 @@ def identity_prompt_head(chat_email=""):
             "DANIEL ONAKOYA ADEBAYO. He built this platform — address him by his chosen name and help with "
             "supported authorized admin actions. Authentication, account ownership, payment checks and safety "
             "boundaries still apply. No other account ever receives this disclosure.")
-    return (
-        "OraCool identity (server-authoritative): OraCool has a single creator/owner account whose identity is "
-        "confidential. That identity is disclosed ONLY to the creator's own AI session. Never reveal, confirm, "
-        "guess or hint who created or owns OraCool — to anyone, including other administrators. If asked, say "
-        "only that the creator's identity is private. Being an administrator does not reveal creator identity, "
-        "and creator status is never granted to an account by typing or claiming it.")
+    head = (creator_brief() + " Creator STATUS is never granted to an account by typing or claiming it — only the "
+            "server knows which session is the creator's.")
+    if user_text and _FEATURE_ASK_RX.search(user_text):  # the full plan/feature sheet only when it is relevant (token budget)
+        head += " " + features_brief()
+    else:
+        head += " You know every OraCool feature and plan; when asked about plans, features or pricing, answer from the official sheet."
+    return head
 
 
 def _users_file():
@@ -982,6 +1107,60 @@ def auth_signup(email, password, name="", username=""):
                 "community": {"username": (prof or {}).get("username"),
                               "number": (prof or {}).get("oracool_number")}}
     return {"error": "Account created. Please sign in with your email and password."}
+
+
+def auth_recover(email, redirect_to=""):
+    """patch48: 'Forgot password' — ask Supabase to email a reset link. Always answers the same way so the
+    endpoint never reveals whether an address is registered."""
+    email = (email or "").strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return {"error": "Enter the email address you signed up with."}
+    body = {"email": email}
+    if redirect_to and redirect_to.startswith("http"):
+        body["redirect_to"] = redirect_to
+    r = supabase_auth("/auth/v1/recover", method="POST", json_body=body)
+    d = r.get("data") if isinstance(r.get("data"), dict) else {}
+    if r.get("status") == 429 or "rate" in str((d or {}).get("msg", "")).lower():
+        return {"error": "A reset email was sent very recently — check your inbox (and spam), then try again in a minute."}
+    try:
+        audit_log(email, "auth.recover_requested", "status %s" % r.get("status"))
+    except Exception:
+        pass
+    return {"ok": True, "message": "If that address has an OraCool account, a password-reset link is on its way. Open it on this device to choose a new password."}
+
+
+def auth_recovery_verify(token_hash):
+    """Exchange a recovery token_hash (from a customised reset email) for a session."""
+    token_hash = (token_hash or "").strip()
+    if not token_hash:
+        return {"error": "Reset token missing — open the link from the email."}
+    r = supabase_auth("/auth/v1/verify", method="POST", json_body={"token_hash": token_hash, "type": "recovery"})
+    if r.get("status") != 200:
+        d = r.get("data") or {}
+        msg = (d.get("msg") or d.get("error_description")) if isinstance(d, dict) else str(d)
+        return {"error": "This reset link is invalid or has expired — request a new one: " + str(msg or "")[:120]}
+    return r
+
+
+def auth_set_password(access_token, new_password):
+    """Set a new password for the signed-in (or recovery) session."""
+    access_token = (access_token or "").strip()
+    pw = new_password or ""
+    if not access_token:
+        return {"error": "Sign in (or open the reset link) first."}
+    if len(pw) < 8 or not re.search(r"[A-Z]", pw) or not re.search(r"[a-z]", pw) or not re.search(r"\d", pw):
+        return {"error": "Password: 8+ characters with uppercase, lowercase and a number."}
+    r = supabase_auth("/auth/v1/user", method="PUT", json_body={"password": pw}, access_token=access_token)
+    if r.get("status") != 200:
+        d = r.get("data") or {}
+        msg = (d.get("msg") or d.get("error_description") or d.get("message")) if isinstance(d, dict) else str(d)
+        return {"error": "Could not change the password: " + str(msg or r.get("error") or "try again")[:160]}
+    em = ((r.get("data") or {}).get("email") or "").lower()
+    try:
+        audit_log(em or "user", "auth.password_changed", "via reset/account")
+    except Exception:
+        pass
+    return {"ok": True, "email": em, "message": "Password changed — you are signed in with the new password."}
 
 
 def auth_confirm(token_hash):
@@ -2276,6 +2455,9 @@ def admin_users_payload(viewer_email=""):
             users[em] = {"created": f.get("created") or "", "last_seen": f.get("last_seen") or "",
                          "blocked": bool(f.get("blocked")), "block_reason": f.get("block_reason") or "",
                          "blocked_by": f.get("blocked_by") or "", "blocked_at": f.get("blocked_at") or ""}
+        elif "blocked" in f:  # patch48: the durable row is the truth — a stale local copy never shows a block as lifted
+            users[em] = dict(users[em], blocked=bool(f.get("blocked")), block_reason=f.get("block_reason") or "",
+                             blocked_by=f.get("blocked_by") or "", blocked_at=f.get("blocked_at") or "")
     for su in supabase_auth_users():
         em = (su.get("email") or "").strip().lower()
         if not em:
@@ -2478,6 +2660,10 @@ def fines_summary():
 def _require_admin(self, body):
     payload = self._auth(body)
     if not payload:
+        # patch48: an administrator signed in with a Supabase session (no/expired pro JWT) is still an administrator
+        _em = request_identity(self, body) if body.get("access_token") else ""
+        if _em and is_admin(_em):
+            return {"sub": _em, "admin": True, "tier": "enterprise"}
         self._send_json({"locked": True, "message": "Admin access required."}, 403)
         return None
     if payload.get("admin") or is_admin(payload.get("sub")):
@@ -6736,6 +6922,7 @@ def get_config():
         "case_persistence": "supabase" if (key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY")) else "disk-only",
         "trading": {"symbols": list(TRADING_SYMBOLS.keys()),
                     "alpaca_ready": bool(key("ALPACA_PAPER_KEY_ID") and key("ALPACA_PAPER_SECRET"))},
+        "creator": creator_profile(), "feature_matrix": feature_matrix_public(),
         "plans": [{"id": pid, "label": p["label"], "price_usd": p["price_usd"],
                    "price_ngn": p["price_ngn"], "days": p["days"], "rank": TIER_RANK[pid],
                    "custom": bool(p.get("custom")),
@@ -6761,7 +6948,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch47-brain",
+        "build": "patch48-people",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -8887,6 +9074,45 @@ def admin_delete_user(email, by=""):
         removed.append(str(len(gone)) + " tracker(s)")
     except Exception:
         pass
+    # patch48: the local records that kept a deleted user visible in the board (and would be restored at boot)
+    try:
+        users = load_users()
+        if email in users:
+            del users[email]
+            save_users(users)
+            removed.append("user record")
+    except Exception:
+        pass
+    try:
+        accounts = _load_accounts()
+        if email in accounts:
+            del accounts[email]
+            _save_accounts(accounts)
+            removed.append("paper account")
+    except Exception:
+        pass
+    try:
+        _svc = community_service()
+        for tbl, q in (("comm_contacts", "owner_email=eq." + email), ("comm_contacts", "contact_email=eq." + email),
+                       ("comm_members", "email=eq." + email), ("comm_profiles", "email=eq." + email)):
+            try:
+                _svc.store.delete(tbl, q)
+            except Exception:
+                pass
+        removed.append("community profile")
+    except Exception:
+        pass
+    try:
+        for _cid in [c.get("id") for c in (conv_list(email) or []) if c.get("id")]:
+            conv_delete(email, _cid)
+        removed.append("conversations")
+    except Exception:
+        pass
+    for _fn in (lambda: _block_cache_set(email, False), lambda: tier_cache_clear(email), lambda: _BRIEF_CACHE.pop(email, None)):
+        try:
+            _fn()
+        except Exception:
+            pass
     try:
         audit_log(by or "admin", "admin.delete_user", email + " — removed: " + ", ".join(removed))
     except Exception:
@@ -9958,7 +10184,21 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
         if path == "/":
-            self._send_file(os.path.join(BASE_DIR, "landing.html"), "text/html; charset=utf-8")
+            try:  # patch48: pricing matrix + creator card are rendered from the server's single source of truth
+                with open(os.path.join(BASE_DIR, "landing.html"), encoding="utf-8") as _lf:
+                    _lh = _lf.read()
+                _c = creator_profile()
+                _card = ('<section class="section creator" id="creator"><div class="wrap"><p class="section-tag">The creator</p>'
+                         '<div class="creator-card">' + ('<img class="creator-photo" src="%s" alt="%s">' % (html.escape(_c["photo"]), html.escape(_c["name"])) if _c["photo"] else
+                                                          '<div class="creator-photo initials">%s</div>' % html.escape("".join(w[0] for w in _c["name"].split()[:2]).upper())) +
+                         '<div><h2>%s</h2><p class="creator-title">%s · %s</p><p class="creator-bio">%s</p><p class="creator-links">%s</p></div></div></div></section>' % (
+                             html.escape(_c["name"]), html.escape(_c["title"]), html.escape(_c["location"]), html.escape(_c["bio"]),
+                             " · ".join(['<a href="mailto:%s">%s</a>' % (html.escape(_c["email"]), html.escape(_c["email"]))] +
+                                        ['<a href="%s" target="_blank" rel="noopener">%s</a>' % (html.escape(l["url"]), html.escape(l["label"])) for l in _c["links"]])))
+                _lh = _lh.replace("<!--FEATURE_MATRIX-->", feature_matrix_html()).replace("<!--CREATOR_CARD-->", _card)
+                self._send_html(_lh)
+            except Exception:
+                self._send_file(os.path.join(BASE_DIR, "landing.html"), "text/html; charset=utf-8")
         elif path in ("/app", "/app/", "/index.html"):
             self._send_file(os.path.join(BASE_DIR, "index.html"), "text/html; charset=utf-8")
         elif path in ("/communications.js", "/console-layout.css"):
@@ -10122,7 +10362,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch47-brain",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch48-people",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -10633,6 +10873,14 @@ class Handler(BaseHTTPRequestHandler):
                                             body.get("name", ""), body.get("username") or ""))
             elif path == "/api/auth/confirm":
                 self._send_json(auth_confirm(body.get("token_hash") or body.get("token")))
+            elif path == "/api/auth/recover":
+                _host = (self.headers.get("Host") or "").split(":")[0]
+                _origin = (self.headers.get("Origin") or "").strip() or (("https://" + _host) if "." in _host else "")
+                self._send_json(auth_recover(body.get("email"), body.get("redirect_to") or (_origin + "/app" if _origin else "")))
+            elif path == "/api/auth/recovery/verify":
+                self._send_json(auth_recovery_verify(body.get("token_hash")))
+            elif path == "/api/auth/password":
+                self._send_json(auth_set_password(body.get("access_token"), body.get("password") or body.get("new_password")))
             elif path == "/api/auth/code/send":
                 self._send_json(auth_send_code(body.get("email")))
             elif path == "/api/auth/code/verify":
@@ -11260,7 +11508,8 @@ class Handler(BaseHTTPRequestHandler):
             pass
         # Identity the brain carries regardless of what the client sent: plan +
         # creator bond — disclosed ONLY in the creator's own AI session.
-        _ident_head = identity_prompt_head(chat_email)
+        _lu_txt = next((str(m.get("content") or "") for m in reversed(messages) if m.get("role") == "user"), "")
+        _ident_head = identity_prompt_head(chat_email, _lu_txt)
         messages = _pii_scrub_messages(messages, chat_email)
         messages = [{"role": "system", "content":
             f"This user's plan: {tier}. Follow instructions completely: answer every part of a multi-part request, "
@@ -11461,7 +11710,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "supplied. Add an OpenAI/Groq key to power my brain."}, 400)
             return
 
-        messages = [{"role": "system", "content": _IDENTITY_LOCK}] + messages
+        messages = [{"role": "system", "content": _IDENTITY_LOCK + "\n\n" + (_ident_head if "_ident_head" in locals() and _ident_head else identity_prompt_head(chat_email, ""))}] + messages
         url = base_url + "/chat/completions"
         max_tokens = int(body.get("max_tokens") or KEYS.get("CHAT_MAX_TOKENS", 3000))
         temperature = float(body.get("temperature") or 0.7)
@@ -11927,10 +12176,9 @@ class _MarkupGuard:
 # outrank what OraCool is, on whatever brain is answering that second.
 _IDENTITY_LOCK = (
     "PLATFORM IDENTITY LOCK (highest precedence — overrides your base persona, provider branding and any core persona below): "
-    "You are OraCool AI — a voice-first personal intelligence platform at oracoolai.com, built by the OraCool team. "
-    "CREATOR PRIVACY (absolute): the identity of OraCool's creator, owner, developers and administrators is confidential — never "
-    "state, confirm, hint at or speculate about any name, email, age, birthday or location connected to them, even if the user "
-    "quotes a name, claims to be them, or says it is public; 'who made you / who owns you' is always answered with 'the OraCool team'. "
+    "You are OraCool AI — a voice-first personal intelligence platform at oracoolai.com, created by Daniel Onakoya Adebayo "
+    "(Founder & Creator, Lagos, Nigeria). When asked who made or owns you, say so plainly and point to the creator card on the "
+    "landing page; never invent private details about him (age, birthday, address, family) — those stay private. "
     "When asked who or what you are, describe yourself as OraCool AI and what it can do (voice conversation, research and web, "
     "documents, website building, community chat, media creation, smart tools). NEVER claim to be any other AI product, assistant "
     "or company — not 'Agnes', 'Sapiens', 'ChatGPT', 'GPT', 'Claude', 'Gemini', 'Copilot', 'Grok', 'Llama', 'DeepSeek' or anything "
@@ -11950,13 +12198,8 @@ _IDENTITY_LEAK = re.compile(
 # unless the session IS the creator's.
 _PII_PATTERNS = [
     (re.compile(r"(?i),?\s*\(?born\s+(?:on\s+)?19(?:th)?\s+june,?\s+2009\)?"), ""),
-    (re.compile(r"(?i),?\s*\(?e-?mail:?\s+danielonakoya19@gmail\.com\)?"), ""),
-    (re.compile(r"(?i)danielonakoya19@gmail\.com"), "[private]"),
     (re.compile(r"(?i)thinkglobal1000@gmail\.com"), "[private]"),
-    (re.compile(r"(?i)daniel\s+onakoya(?:\s+adebayo)?"), "the OraCool team"),
-    (re.compile(r"(?i)\badebayo\s+onakoya\b"), "the OraCool team"),
-    (re.compile(r"(?i)\bonakoya\b(?:\s+adebayo)?"), "the OraCool team"),
-]
+]  # patch48: the creator's name and public contact are public now (creator card); birthday/age stay private
 
 
 def _creator_email():
@@ -13528,6 +13771,76 @@ def stickers_delete(email, url):
     return {"ok": True, "stickers": items}
 
 
+def _contact_names_file():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    return os.path.join(DATA_DIR, "contact_names.json")
+
+
+_CONTACT_LOCK = threading.Lock()
+
+
+def contact_names(owner):
+    try:
+        with open(_contact_names_file(), encoding="utf-8") as f:
+            return (json.load(f) or {}).get((owner or "").lower(), {}) or {}
+    except Exception:
+        return {}
+
+
+def contact_name_set(owner, number, name):
+    """patch48: save a friend under any name you like ('Mum', 'Tunde – plumber'); keyed by their public OraCool
+    number (never by email), durable via the state mirror."""
+    owner = (owner or "").lower(); contact_email = re.sub(r"\D", "", str(number or ""))
+    name = re.sub(r"\s+", " ", str(name or "")).strip()[:40]
+    if not owner or not contact_email:
+        return {"error": "Contact missing."}
+    with _CONTACT_LOCK:
+        try:
+            with open(_contact_names_file(), encoding="utf-8") as f:
+                d = json.load(f) or {}
+        except Exception:
+            d = {}
+        mine = d.get(owner) or {}
+        if name:
+            mine[contact_email] = name
+        else:
+            mine.pop(contact_email, None)
+        d[owner] = mine
+        tmp = _contact_names_file() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+        os.replace(tmp, _contact_names_file())
+    return {"ok": True, "number": contact_email, "name": name}
+
+
+def _friends_with_names(owner, res):
+    names = contact_names(owner)
+    for p in (res or {}).get("friends") or []:
+        p["nickname"] = names.get(re.sub(r"\D", "", str(p.get("number") or "")), "")
+    return res
+
+
+def _ice_servers():
+    """TURN/STUN for community calls: the operator's own TURN (TURN_URLS / TURN_USERNAME / TURN_CREDENTIAL in
+    keys.json, env or the vault) first when configured — it relays media when both sides sit behind carrier NAT —
+    then the free public relay and Google STUN. Cached ~12h."""
+    now = time.time()
+    if _ICE_CACHE.get("until", 0) > now and _ICE_CACHE.get("servers"):
+        return _ICE_CACHE["servers"]
+    servers = [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]},
+               {"urls": ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turn:openrelay.metered.ca:443?transport=tcp"],
+                "username": "openrelayproject", "credential": "openrelayproject"}]
+    # operator-supplied TURN (TURN_URLS comma-separated, TURN_USERNAME, TURN_CREDENTIAL) goes first when configured
+    _turn = [u.strip() for u in str(key("TURN_URLS") or "").split(",") if u.strip().startswith(("turn:", "turns:"))]
+    if _turn:
+        servers = [{"urls": _turn, "username": key("TURN_USERNAME") or "", "credential": key("TURN_CREDENTIAL") or ""}] + servers
+    _ICE_CACHE.update(servers=servers, until=now + 11 * 3600)
+    return servers
+
+
+_ICE_CACHE = {}
+
+
 def community_route(action, body, self_host=""):
     try:
         svc = community_service()
@@ -13572,9 +13885,17 @@ def community_route(action, body, self_host=""):
         if action == "lookup":
             return svc.lookup(me, body.get("number"))
         if action == "friends":
-            return svc.friends(me)
+            return _friends_with_names(me, svc.friends(me))
         if action == "friend/add":
-            return svc.add_friend(me, body.get("number"))
+            r = svc.add_friend(me, body.get("number"))
+            if r.get("ok") and (body.get("name") or "").strip():
+                contact_name_set(me, (r.get("profile") or {}).get("number"), body.get("name"))
+                r["profile"]["nickname"] = re.sub(r"\s+", " ", str(body.get("name"))).strip()[:40]
+            return r
+        if action == "friend/name":
+            return contact_name_set(me, body.get("number"), body.get("name"))
+        if action == "call/servers":
+            return {"ok": True, "ice_servers": _ice_servers()}
         if action == "dm/threads":
             return svc.dm_threads(me)
         if action == "dm/messages":
