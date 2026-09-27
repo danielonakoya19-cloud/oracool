@@ -60,7 +60,7 @@ class CreatorIdentityTests(unittest.TestCase):
 
     def test_creator_session_is_told_creator_identity(self):
         head = self.s.identity_prompt_head(CREATOR)
-        self.assertIn("DANIEL ONAKOYA ADEBAYO", head)
+        self.assertIn("daniel onakoya adebayo", head.lower())
         self.assertIn("CREATOR", head)
 
     def test_other_admin_ai_sees_public_creator_only(self):
@@ -97,7 +97,7 @@ class CreatorIdentityTests(unittest.TestCase):
 
     def test_identity_never_claimable(self):
         head = self.s.identity_prompt_head(CREATOR)
-        self.assertIn("No other account ever receives this disclosure", head)
+        self.assertIn("never receive this owner bond", head)
         head2 = self.s.identity_prompt_head(OTHER_ADMIN)
         self.assertIn("never granted to an account by typing or claiming it", head2)
 

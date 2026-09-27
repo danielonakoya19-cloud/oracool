@@ -15,8 +15,8 @@ LAND = open(os.path.join(ROOT, "landing.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch48-people"'), 2)
-        self.assertNotIn("patch47-brain", SRV)
+        self.assertEqual(SRV.count('"patch48b-creator"'), 2)
+        self.assertNotIn("patch48-people", SRV)
 
 
 class Creator(unittest.TestCase):
@@ -142,3 +142,30 @@ class Composer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RightfulCreator(unittest.TestCase):
+    """patch48b: the creator is an explicit identity, not 'whichever admin the env lists first'."""
+    def test_creator_email_is_explicit(self):
+        with mock.patch.object(s, "admin_emails", lambda: ["someone.else@example.com", "danielonakoya19@gmail.com"]), \
+             mock.patch.object(s, "key", lambda n, d="": ""):
+            self.assertEqual(s._creator_email(), "danielonakoya19@gmail.com")
+            self.assertTrue(s.is_admin("danielonakoya19@gmail.com"))
+            self.assertTrue(s._is_creator_session("DanielOnakoya19@gmail.com"))
+            self.assertFalse(s._is_creator_session("someone.else@example.com"))
+        with mock.patch.object(s, "key", lambda n, d="": "owner@custom.tld" if n == "CREATOR_EMAIL" else ""):
+            self.assertEqual(s._creator_email(), "owner@custom.tld")
+            self.assertTrue(s.is_admin("owner@custom.tld"))
+
+    def test_owner_bond_only_for_the_creator(self):
+        with mock.patch.object(s, "admin_emails", lambda: ["other.admin@example.com", "danielonakoya19@gmail.com"]), \
+             mock.patch.object(s, "key", lambda n, d="": ""):
+            mine = s.identity_prompt_head("danielonakoya19@gmail.com", "hello")
+            self.assertIn("RIGHTFUL CREATOR", mine); self.assertIn("Daniel Onakoya Adebayo", mine); self.assertIn("never question", mine)
+            other = s.identity_prompt_head("other.admin@example.com", "hello")
+            self.assertNotIn("RIGHTFUL CREATOR", other); self.assertIn("never granted to an account by typing", other)
+
+    def test_session_flag_and_badge(self):
+        self.assertIn('r["creator"] = _is_creator_session(uemail)', SRV)
+        self.assertIn('"creator": _is_creator_session(email)', SRV)
+        self.assertIn("✦ Creator", APP); self.assertIn("session.creator=!!r.creator", APP)

@@ -44,13 +44,13 @@ class ScrubTests(unittest.TestCase):
 
 class LockWiringTests(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch48-people"'), 2)
+        self.assertEqual(SRV.count('"patch48b-creator"'), 2)
 
     def test_lock_prepended_to_every_provider_call(self):
-        self.assertIn('messages = [{"role": "system", "content": _IDENTITY_LOCK}] + messages', SRV)
+        self.assertIn('messages = [{"role": "system", "content": _IDENTITY_LOCK + "\\n\\n" + (_ident_head', SRV)  # patch48: lock + creator/feature head
         # and it sits right before payload construction, i.e. after all other injections
         i_payload = SRV.index('url = base_url + "/chat/completions"\n        max_tokens')
-        i_lock = SRV.index('_IDENTITY_LOCK}] + messages')
+        i_lock = SRV.index('"content": _IDENTITY_LOCK + "\\n\\n"')
         self.assertTrue(0 < i_lock - i_payload < 200 or -200 < i_lock - i_payload < 200)
         self.assertLess(abs(i_lock - i_payload), 200)
 
