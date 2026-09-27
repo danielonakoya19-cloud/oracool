@@ -81,6 +81,8 @@ def _brain_note(name, first_token_s=None, failed=False, cooldown=120):
         if first_token_s is not None:
             st["ewma"] = round(0.6 * st["ewma"] + 0.4 * float(first_token_s), 2) if st["n"] else round(float(first_token_s), 2)
             st["n"] += 1
+            if float(first_token_s) > _BRAIN_SLOW_S:  # one crawl is enough — bench it for 10 minutes right away
+                st["fail_until"] = max(st["fail_until"], time.time() + 600)
 
 
 def _brain_score(name):
@@ -125,6 +127,20 @@ def brain_status():
     with _BRAIN_LOCK:
         return {n: {"first_token_s": v["ewma"], "cooling_s": max(0, int(v["fail_until"] - now)), "samples": v["n"]}
                 for n, v in _BRAIN_STATS.items()}
+
+
+def _relax_timeout(resp, secs):
+    """After the first token arrives, give the stream a longer per-read timeout (the short one only guards silence)."""
+    try:
+        sock = getattr(getattr(resp, "fp", None), "raw", None)
+        sock = getattr(sock, "_sock", None)
+        if sock is not None:
+            sock.settimeout(secs)
+    except Exception:
+        pass
+
+
+_FIRST_TOKEN_S = 15   # a chat brain that sends nothing at all for this long is abandoned for the next brain
 
 
 def _retry_after_s(headers, body=""):
@@ -11564,7 +11580,7 @@ class Handler(BaseHTTPRequestHandler):
             ctx = ssl.create_default_context()
             _t_req = time.time()
             try:
-                resp = urllib.request.urlopen(req, timeout=45, context=ctx)  # patch47: a silent brain rotates after 45s, not 180s
+                resp = urllib.request.urlopen(req, timeout=_FIRST_TOKEN_S, context=ctx)  # patch47: silence → next brain in 15s, not 180s
             except urllib.error.HTTPError as e:
                 _body = e.read().decode("utf-8", "replace")
                 if e.code == 429 or e.code >= 500:
@@ -11637,6 +11653,7 @@ class Handler(BaseHTTPRequestHandler):
                         if _first_tok is None:
                             _first_tok = time.time() - _t_req
                             _brain_note(_brain_name(base_url), first_token_s=_first_tok)
+                            _relax_timeout(resp, 90)
                         round_txt += dlt
                         for _piece in _guard.feed(dlt):
                             if not _piece:

@@ -59,6 +59,8 @@ class BrainHealth(unittest.TestCase):
             self.assertEqual(s._brain_order()[0], "agnes")          # preference bonus
             s._brain_note("agnes", first_token_s=38.0)               # one 38-second first token
             self.assertEqual(s._brain_order()[0], "groq")           # …and Groq answers first from now on
+            self.assertGreater(s.brain_status()["agnes"]["cooling_s"], 500)  # benched for ~10 minutes at once
+            s._BRAIN_STATS["agnes"]["fail_until"] = 0
             for _ in range(6):
                 s._brain_note("agnes", first_token_s=0.9)            # it recovers as it speeds up again
             self.assertEqual(s._brain_order()[0], "agnes")
@@ -105,7 +107,7 @@ class RotationOnSilence(unittest.TestCase):
         out = h.wfile.getvalue().decode()
         self.assertIn("Hello", out); self.assertIn("Groq", out)
         self.assertTrue(seen and "agnes-ai" in seen[0][0] and any("groq" in u for u, _ in seen[1:]))
-        self.assertLessEqual(seen[0][1], 60, "a silent brain is abandoned within a minute, not 180s")
+        self.assertLessEqual(seen[0][1], 15, "a silent brain is abandoned in 15s, not 180s")
         self.assertGreater(s.brain_status()["agnes"]["cooling_s"], 0)
         self.assertGreater(s.brain_status()["groq"]["samples"], 0)
 
