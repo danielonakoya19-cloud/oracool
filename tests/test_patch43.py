@@ -13,7 +13,7 @@ APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch48b-creator"'), 2)
+        self.assertEqual(SRV.count('"patch49-clock"'), 2)
         self.assertNotIn("patch42-feed", SRV)
 
 
@@ -69,7 +69,7 @@ class Client(unittest.TestCase):
                        "const MODES={auto:", "function setMode(m)", "chatMode:'auto'",
                        "if(session && (_mode==='build' || wantsBuild(text)||wantsEdit(text))) _steps=stepsCard(b);",
                        "if(j.__progress && !_steps && session){ try{ _steps=stepsCard(b); }catch(e){} }",
-                       "mode:_mode};", "(_mode==='expert'?2200:900)"):
+                       "mode:_mode, tz:_tz, local_time:_lt};", "(_mode==='expert'?2200:900)"):
             self.assertIn(needle, APP, needle)
 
 

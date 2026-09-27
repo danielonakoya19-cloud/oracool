@@ -506,6 +506,35 @@ def feature_matrix_html():
     return "".join(h)
 
 
+def time_context(tz="", local_time=""):
+    """patch49: the model has no clock — give it the real date & time in the user's timezone (and UTC) so it never
+    answers 'today' from training data or invents 'updates'."""
+    from datetime import datetime, timezone as _tzmod
+    now_utc = datetime.now(_tzmod.utc)
+    tz = str(tz or "").strip()
+    local = None
+    if tz:
+        try:
+            from zoneinfo import ZoneInfo
+            local = now_utc.astimezone(ZoneInfo(tz))
+        except Exception:
+            local = None
+    if local is None and local_time:
+        try:
+            local = datetime.fromisoformat(str(local_time).replace("Z", "+00:00"))
+        except Exception:
+            local = None
+    line = "CURRENT DATE & TIME (authoritative, from the server clock): "
+    if local is not None:
+        off = local.strftime("%z"); off = (off[:3] + ":" + off[3:]) if off else ""
+        line += local.strftime("%A %d %B %Y, %H:%M") + " in the user's timezone " + (tz or "(device)") + (" (UTC" + off + ")" if off else "") + "; "
+    line += "UTC now " + now_utc.strftime("%Y-%m-%d %H:%M") + ". "
+    line += ("Use this for anything about today, now, dates, deadlines, ages or 'latest'. Never state a date from memory, never say "
+             "'as of my last update', and never invent news or updates: when live search/tool results are in your context, "
+             "answer from them and cite them; when they are not, say plainly that you have no live data on that yet.")
+    return line
+
+
 _FEATURE_ASK_RX = re.compile(r"(?i)\b(?:plans?|pricing|prices?|subscri\w*|features?|what can you do|what do you do|capabilit\w*|upgrade|coins?|"
                              r"free tier|starter|professional|ultra|enterprise|how much|cost|pay(?:ment)?|worth it|compare plans?|"
                              r"who (?:made|built|created|owns?|developed)|creator|founder|owner)\b")
@@ -6951,7 +6980,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch48b-creator",
+        "build": "patch49-clock",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -10146,10 +10175,12 @@ class Handler(BaseHTTPRequestHandler):
         tier = None
         if payload:
             tier = payload.get("tier") or "pro"
-            if payload.get("admin"):
+            if payload.get("admin") or is_admin(payload.get("sub")):
                 tier = "enterprise"
         else:
-            email = (body.get("email") or "").strip()
+            # patch49: no pro JWT in the request — resolve the plan from the signed-in Supabase session
+            # (Enterprise/admin/creator accounts were being told "you are on Free" on every OSINT tool)
+            email = (request_identity(self, body) if body.get("access_token") else "") or (body.get("email") or "").strip()
             tier = check_tier(email) if email else "free"
         if tier_gte(tier, required):
             return tier
@@ -10365,7 +10396,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch48b-creator",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch49-clock",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -11514,7 +11545,7 @@ class Handler(BaseHTTPRequestHandler):
         # Identity the brain carries regardless of what the client sent: plan +
         # creator bond — disclosed ONLY in the creator's own AI session.
         _lu_txt = next((str(m.get("content") or "") for m in reversed(messages) if m.get("role") == "user"), "")
-        _ident_head = identity_prompt_head(chat_email, _lu_txt)
+        _ident_head = identity_prompt_head(chat_email, _lu_txt) + "\n\n" + time_context(body.get("tz"), body.get("local_time"))
         messages = _pii_scrub_messages(messages, chat_email)
         messages = [{"role": "system", "content":
             f"This user's plan: {tier}. Follow instructions completely: answer every part of a multi-part request, "
