@@ -35,6 +35,11 @@ class Adapter(unittest.TestCase):
         body = json.loads(req.data.decode())
         self.assertEqual(body["system"], "S"); self.assertEqual(body["max_tokens"], 900); self.assertEqual(body["temperature"], 1.0); self.assertTrue(body["stream"])
         self.assertNotIn("reasoning_effort", body)
+        self.assertIsNone(req.get_header("Anthropic-workspace-id"))
+        with mock.patch.object(s, "key", lambda n, d="": "wrkspc_01abc" if n == "ANTHROPIC_WORKSPACE_ID" else ""):
+            req2 = s._anthropic_request("sk-ant-test", {"messages": [{"role": "user", "content": "q"}]})
+        self.assertEqual(req2.get_header("Anthropic-workspace-id"), "wrkspc_01abc")
+        self.assertIn("ANTHROPIC_WORKSPACE_ID", s._brain_error_text(400, '{"error":{"message":"this request must include the anthropic-workspace-id header"}}'))
 
     def test_stream_translation(self):
         frames = [{"type": "message_start"}, {"type": "content_block_start"},

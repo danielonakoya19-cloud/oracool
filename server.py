@@ -204,6 +204,9 @@ def _anthropic_request(api_key, payload, stream=True):
         pass
     headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json",
                "Accept": "text/event-stream" if stream else "application/json", "User-Agent": UA}
+    _ws = str(key("ANTHROPIC_WORKSPACE_ID") or "").strip()
+    if _ws:  # org-wide keys ("works across workspaces") must name the workspace on every request
+        headers["anthropic-workspace-id"] = _ws
     return urllib.request.Request(ANTHROPIC_BASE + "/messages", data=json.dumps(body).encode("utf-8"), headers=headers, method="POST")
 
 
@@ -255,6 +258,8 @@ def _brain_error_text(code, body):
         return "The AI provider account has no credits left — the operator needs to top it up or switch provider."
     if code == 429 or "rate limit" in low or "rate_limit" in low:
         return "Every AI brain is rate-limited right now (daily token caps) — please try again in a few minutes."
+    if "anthropic-workspace-id" in low:
+        return "Claude's key is organisation-wide — an admin must also save ANTHROPIC_WORKSPACE_ID (wrkspc_…) under Admin → Server keys."
     if code in (401, 403):
         return "The AI provider rejected the server key — the operator needs to check it."
     return f"AI provider error {code}: {(body or '')[:200]}"
