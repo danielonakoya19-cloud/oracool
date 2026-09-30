@@ -27,7 +27,7 @@ def _sse(pieces, finish="stop"):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch52-sqlmap-osint"'), 2)
+        self.assertEqual(SRV.count('"patch53-tools-ui-adminfix"'), 2)
         self.assertNotIn("patch41-studio", SRV)
 
 

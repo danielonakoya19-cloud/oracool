@@ -15,7 +15,7 @@ MD = open(os.path.join(ROOT, "md.js"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch52-sqlmap-osint"'), 2)
+        self.assertEqual(SRV.count('"patch53-tools-ui-adminfix"'), 2)
         self.assertNotIn("patch40-studio", SRV)
         self.assertIn('/md.js?v=41', APP)
 

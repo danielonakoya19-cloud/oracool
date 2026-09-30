@@ -985,19 +985,43 @@ def _supabase_headers():
     return {"apikey": svc, "Authorization": "Bearer " + svc}
 
 
+_SUPABASE_AUTH_USERS_LAST = {"ok": False, "count": 0, "error": "not called"}
+
+
 def supabase_auth_users():
     """All registered users from Supabase Auth (persistent). Requires the
-    SUPABASE_SERVICE_KEY. Returns [] if Supabase is not wired or unreachable."""
+    SUPABASE_SERVICE_KEY. Returns [] if Supabase is not wired or unreachable.
+    patch53: keep a source-status record and paginate, so the Admin board can
+    tell the operator when Supabase Auth could not be read instead of silently
+    showing only the current local user."""
+    global _SUPABASE_AUTH_USERS_LAST
     url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
     if not url or not svc:
+        _SUPABASE_AUTH_USERS_LAST = {"ok": False, "count": 0, "error": "SUPABASE_URL or SUPABASE_SERVICE_KEY missing on the server"}
         return []
+    out = []
     try:
-        _, raw, _ = http_fetch(url.rstrip("/") + "/auth/v1/admin/users?per_page=1000",
-                               headers={"apikey": svc, "Authorization": "Bearer " + svc},
-                               timeout=20)
-        return (json.loads(raw).get("users") or []) if raw else []
-    except Exception:
-        return []
+        for page in range(1, 11):
+            _, raw, _ = http_fetch(url.rstrip("/") + f"/auth/v1/admin/users?page={page}&per_page=1000",
+                                   headers={"apikey": svc, "Authorization": "Bearer " + svc},
+                                   timeout=25)
+            d = json.loads(raw) if raw else {}
+            chunk = d.get("users") or []
+            out.extend(chunk)
+            if len(chunk) < 1000:
+                break
+        _SUPABASE_AUTH_USERS_LAST = {"ok": True, "count": len(out), "error": ""}
+        return out
+    except urllib.error.HTTPError as e:
+        try:
+            msg = e.read().decode("utf-8", "replace")[:220]
+        except Exception:
+            msg = str(e)[:220]
+        _SUPABASE_AUTH_USERS_LAST = {"ok": False, "count": len(out), "error": f"HTTP {e.code}: {msg}"}
+        return out
+    except Exception as e:
+        _SUPABASE_AUTH_USERS_LAST = {"ok": False, "count": len(out), "error": str(e)[:220]}
+        return out
 
 
 def supabase_all_flags():
@@ -2592,7 +2616,8 @@ def admin_users_payload(viewer_email=""):
         elif "blocked" in f:  # patch48: the durable row is the truth — a stale local copy never shows a block as lifted
             users[em] = dict(users[em], blocked=bool(f.get("blocked")), block_reason=f.get("block_reason") or "",
                              blocked_by=f.get("blocked_by") or "", blocked_at=f.get("blocked_at") or "")
-    for su in supabase_auth_users():
+    auth_users = supabase_auth_users()
+    for su in auth_users:
         em = (su.get("email") or "").strip().lower()
         if not em:
             continue
@@ -2627,6 +2652,9 @@ def admin_users_payload(viewer_email=""):
                     "plan": plan, "verified": rec.get("verified") if rec.get("verified") is not None else None,
                     "equity": equity, "pnl": pnl})
     out.sort(key=lambda x: (x.get("pnl") is None, -(x.get("pnl") or 0)))
+    sources = {"local_users": len(load_users()), "user_flags": len(flags), "auth_users": len(auth_users),
+               "auth_ok": bool(_SUPABASE_AUTH_USERS_LAST.get("ok")),
+               "auth_error": _SUPABASE_AUTH_USERS_LAST.get("error", "")}
     stats = {"users": len(out),
              "blocked": sum(1 for u in out if u["blocked"]),
              "pro": sum(1 for u in out if u["pro"]),
@@ -2634,7 +2662,8 @@ def admin_users_payload(viewer_email=""):
              "unverified": sum(1 for u in out if u.get("verified") is False),
              "active24h": sum(1 for u in out if _recent(u.get("last_seen"), 86400)),
              "new24h": sum(1 for u in out if _recent(u.get("created"), 86400)),
-             "total_pnl": round(sum(u.get("pnl") or 0 for u in out), 2)}
+             "total_pnl": round(sum(u.get("pnl") or 0 for u in out), 2),
+             "sources": sources}
     # Creator-identity confidentiality: nobody except the creator's own AI/panel
     # may see the creator's email or know which account is the creator.
     _alist = admin_emails()
@@ -2650,9 +2679,43 @@ def admin_users_payload(viewer_email=""):
                 u["plan"] = "enterprise"
                 u["pro"] = True
         out = sorted(out, key=lambda x: (x.get("pnl") is None, -(x.get("pnl") or 0)))
-        return {"stats": stats, "users": out, "admins": admins}
-    return {"stats": stats, "users": out, "admins": _alist}
+        return {"stats": stats, "users": out, "admins": admins, "sources": sources}
+    return {"stats": stats, "users": out, "admins": _alist, "sources": sources}
 
+
+
+def admin_users_resync(by=""):
+    """Admin repair button: hydrate the durable user_flags table from Supabase Auth
+    so the Admin board never collapses to only the current local user after a
+    Render disk reset or a local cache wipe."""
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return {"error": "SUPABASE_SERVICE_KEY is missing on the server. Add it in Render env/Admin → Server keys, then refresh."}
+    auth_users = supabase_auth_users()
+    if not auth_users and not _SUPABASE_AUTH_USERS_LAST.get("ok"):
+        return {"error": "Could not read Supabase Auth users: " + str(_SUPABASE_AUTH_USERS_LAST.get("error") or "unknown")[:220]}
+    touched = 0
+    for su in auth_users:
+        em = (su.get("email") or "").strip().lower()
+        if not em:
+            continue
+        cur = supabase_get_flag(em) or {}
+        rec = dict(cur, email=em, created=(cur.get("created") or (su.get("created_at") or "")[:19].replace("T", " ")),
+                   last_seen=(cur.get("last_seen") or ""), verified=bool(su.get("email_confirmed_at") or su.get("confirmed_at")))
+        if supabase_upsert_flag(rec, block_fields=("blocked" in cur)):
+            touched += 1
+        try:
+            users = load_users()
+            if em not in users:
+                users[em] = {"email": em, "created": rec.get("created") or "", "last_seen": rec.get("last_seen") or ""}
+                save_users(users)
+        except Exception:
+            pass
+    audit_log(by or "admin", "admin.users_resync", f"{touched}/{len(auth_users)} auth users")
+    payload = admin_users_payload(by)
+    return {"ok": True, "synced": touched, "auth_users": len(auth_users), "sources": payload.get("sources") or payload.get("stats", {}).get("sources"),
+            "stats": payload.get("stats"), "users": payload.get("users"),
+            "note": "User list re-synced from Supabase Auth + user_flags."}
 
 def _recent(ts, max_age_s):
     """True if a '%Y-%m-%d %H:%M:%S' timestamp is within max_age_s of now."""
@@ -7627,7 +7690,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch52-sqlmap-osint",
+        "build": "patch53-tools-ui-adminfix",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -11133,7 +11196,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch52-sqlmap-osint",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch53-tools-ui-adminfix",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -11497,6 +11560,10 @@ class Handler(BaseHTTPRequestHandler):
                 _adp = _require_admin(self, body)
                 if _adp:
                     self._send_json(admin_users_payload((_adp.get("sub") or "").lower()))
+            elif path == "/api/admin/users/resync":
+                _adp = _require_admin(self, body)
+                if _adp:
+                    self._send_json(admin_users_resync((_adp.get("sub") or "").lower()))
             elif path == "/api/admin/revenue":
                 if _require_admin(self, body):
                     self._send_json(admin_revenue_payload())

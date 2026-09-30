@@ -11,7 +11,7 @@ JS = open(ROOT / 'apps.js', encoding='utf-8').read()
 
 class StaticWiring(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch52-sqlmap-osint"'), 2)
+        self.assertEqual(SRV.count('"patch53-tools-ui-adminfix"'), 2)
 
     def test_server_serves_apps_js(self):
         self.assertIn('elif path == "/apps.js":', SRV)

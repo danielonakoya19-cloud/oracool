@@ -37,7 +37,7 @@ def read(name):
 # ---------------------------------------------------------------- markers
 
 def test_build_marker_patch25():
-    assert read("server.py").count('"build": "patch52-sqlmap-osint"') == 2
+    assert read("server.py").count('"build": "patch53-tools-ui-adminfix"') == 2
 
 
 # ---------------------------------------------------------------- voice notes
