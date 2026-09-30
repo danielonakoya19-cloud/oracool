@@ -4,9 +4,11 @@ ORA-COOL AI — backend server (v2)
 A JARVIS-style personal assistant backend. Pure Python standard library.
   - Serves the frontend
   - Proxies an OpenAI-compatible chat API (OpenAI / Groq, server-side keys)
-  - OSINT toolkit (free tier): IP, domain, username, weather, HIBP email
+  - OSINT toolkit (Starter+): IP, domain, username, phone, dark-web index, HIBP email
   - PRO tools (JWT-gated): Tavily search, Shodan, VirusTotal, AbuseIPDB,
     URLScan, LeakCheck
+  - Enterprise security toolbox: Nmap-style safe port inventory, Wireshark/pcap
+    triage, John-style weak-hash audit, Hydra-style login-defense audit
   - Markets (free): stocks (Finnhub), crypto (CoinGecko), FRED economic data
   - Payments: Paystack (initialize + verify) -> issues a PRO JWT
   - Supabase: status check + upgrade persistence
@@ -15,11 +17,13 @@ import base64
 import hashlib
 import html
 import hmac as hmac_mod
+import ipaddress
 import json
 import os
 import re
 import random
 import secrets
+import socket
 import ssl
 import sys
 import threading
@@ -558,6 +562,7 @@ FEATURE_MATRIX = [
         ("Core OSINT: IP · domain · email · username · phone", "❌", "✅", "✅", "✅", "✅"),
         ("Email breach (HIBP + infostealer) · dark-web index", "❌", "✅", "✅", "✅", "✅"),
         ("Deep OSINT: Shodan · VirusTotal · AbuseIPDB · URLScan · LeakCheck", "❌", "❌", "✅", "✅", "✅"),
+        ("Security toolbox: Nmap-style port inventory · Wireshark/pcap triage · John weak-hash audit · Hydra login-defense audit", "❌", "❌", "❌", "❌", "✅"),
         ("Dark-web monitoring · cases & evidence vault", "❌", "❌", "Basic", "Full", "Full"),
     ]),
     ("Markets & trading", [
@@ -6800,6 +6805,375 @@ def pro_leakcheck(query, ltype="email"):
     except Exception as e:
         return {"error": f"LeakCheck failed: {e}"}
 
+
+# ------------------------------------------------------ Enterprise security OSINT
+# patch51: safe, auditable security toolbox. The app gets nmap/Wireshark/Hydra/John-like
+# capabilities without turning the hosted AI into an attack box: low-volume TCP inventory,
+# offline pcap triage, weak-hash audit, and login-defense review only.
+
+_SECURITY_COMMON_PORTS = [21, 22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995,
+                          1433, 1521, 2049, 2375, 2376, 27017, 3306, 3389, 5432,
+                          5601, 5900, 6379, 8000, 8080, 8443, 9200, 9300]
+_SECURITY_WEB_PORTS = [80, 443, 8000, 8080, 8443]
+_SECURITY_SERVICE_NAMES = {21: "ftp", 22: "ssh", 25: "smtp", 53: "dns", 80: "http", 110: "pop3",
+                           143: "imap", 443: "https", 465: "smtps", 587: "submission",
+                           993: "imaps", 995: "pop3s", 1433: "mssql", 1521: "oracle",
+                           2049: "nfs", 2375: "docker", 2376: "docker-tls", 27017: "mongodb",
+                           3306: "mysql", 3389: "rdp", 5432: "postgres", 5601: "kibana",
+                           5900: "vnc", 6379: "redis", 8000: "http-alt", 8080: "http-alt",
+                           8443: "https-alt", 9200: "elasticsearch", 9300: "elasticsearch"}
+_SECURITY_WEAK_WORDS = ["password", "Password1", "password1", "123456", "12345678", "123456789",
+                        "1234567890", "qwerty", "abc123", "admin", "letmein", "welcome",
+                        "iloveyou", "monkey", "dragon", "football", "sunshine", "princess",
+                        "trustno1", "000000", "111111", "passw0rd", "P@ssw0rd", "P@ssw0rd!",
+                        "oracool", "changeme", "default"]
+
+
+def security_tool_status():
+    return {"tier": "enterprise", "security_patch": "51",
+            "tools": {"secscan": "Nmap-style TCP-connect port inventory (safe preset, no stealth/evasion scripts)",
+                      "pcap": "Wireshark-style offline pcap triage (protocols, IPs, ports, SHA-256)",
+                      "hashaudit": "John-style weak-hash audit against a tiny built-in weak-password list",
+                      "login_audit": "Hydra-style defensive login surface review (no credential attempts)"},
+            "system_binaries": {"nmap": bool(shutil.which("nmap")), "tshark": bool(shutil.which("tshark")),
+                                "john": bool(shutil.which("john")), "hydra": bool(shutil.which("hydra"))},
+            "note": "OraCool uses safe built-in engines on hosted production; optional system binaries are detected but not required."}
+
+
+def _sec_authorized(body_or_bool):
+    if isinstance(body_or_bool, bool):
+        return body_or_bool
+    if isinstance(body_or_bool, dict):
+        v = body_or_bool.get("authorized") or body_or_bool.get("own_asset") or body_or_bool.get("i_am_authorized")
+        return bool(v)
+    return False
+
+
+def _sec_host_from_target(target):
+    raw = (target or "").strip()
+    if not raw:
+        return "", {"error": "Provide a domain or public IPv4 address."}
+    if re.match(r"^[a-z][a-z0-9+.-]*://", raw, re.I):
+        u = urllib.parse.urlparse(raw)
+        raw = u.hostname or ""
+    raw = raw.strip().strip("[]").rstrip("./").lower()
+    try:
+        raw = raw.encode("idna").decode("ascii")
+    except Exception:
+        pass
+    if not raw or raw in ("localhost", "metadata.google.internal") or raw.endswith((".local", ".lan", ".internal")):
+        return "", {"error": "Use a public domain/IP for hosted security checks; private/internal targets are blocked."}
+    if not (re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", raw) or re.fullmatch(r"[a-z0-9.-]{1,253}\.[a-z]{2,63}", raw)):
+        return "", {"error": "Target must be a public domain or IPv4 address, with no paths or shell syntax."}
+    return raw, None
+
+
+def _sec_resolve_public(target):
+    host, err = _sec_host_from_target(target)
+    if err:
+        return host, [], err
+    ips = []
+    try:
+        ip = ipaddress.ip_address(host)
+        ips = [str(ip)]
+    except Exception:
+        try:
+            infos = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)
+            for inf in infos:
+                ip = inf[4][0]
+                if ip not in ips:
+                    ips.append(ip)
+        except Exception as e:
+            return host, [], {"error": "DNS resolution failed: " + str(e)[:120]}
+    if not ips:
+        return host, [], {"error": "No IPv4 address resolved."}
+    bad = []
+    for ip in ips:
+        try:
+            obj = ipaddress.ip_address(ip)
+            if not obj.is_global or obj.is_loopback or obj.is_private or obj.is_link_local or obj.is_multicast:
+                bad.append(ip)
+        except Exception:
+            bad.append(ip)
+    if bad:
+        return host, ips, {"error": "Private, loopback, link-local and reserved targets are blocked from hosted scans.",
+                           "blocked_ips": bad[:6]}
+    return host, ips[:4], None
+
+
+def _sec_parse_ports(ports="", profile="quick"):
+    profile = (profile or "quick").strip().lower()
+    if profile in ("web", "http"):
+        return list(_SECURITY_WEB_PORTS), profile
+    if profile in ("common", "top") and not ports:
+        return list(_SECURITY_COMMON_PORTS), profile
+    if not ports:
+        return list(_SECURITY_COMMON_PORTS[:20]), "quick"
+    found = []
+    for part in re.split(r"[,\s]+", str(ports or "")):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            if not (a.isdigit() and b.isdigit()):
+                continue
+            a, b = int(a), int(b)
+            if a > b:
+                a, b = b, a
+            for p in range(max(1, a), min(65535, b) + 1):
+                found.append(p)
+                if len(found) >= 64:
+                    break
+        elif part.isdigit():
+            found.append(int(part))
+        if len(found) >= 64:
+            break
+    clean = []
+    for p in found:
+        if 1 <= int(p) <= 65535 and int(p) not in clean:
+            clean.append(int(p))
+    return (clean[:64] or list(_SECURITY_COMMON_PORTS[:20])), "custom"
+
+
+def _sec_check_port(ip, port, timeout=1.2):
+    t0 = time.time()
+    try:
+        with socket.create_connection((ip, int(port)), timeout=float(timeout)):
+            return {"ip": ip, "port": int(port), "open": True,
+                    "service": _SECURITY_SERVICE_NAMES.get(int(port), "unknown"),
+                    "latency_ms": int((time.time() - t0) * 1000)}
+    except Exception:
+        return {"ip": ip, "port": int(port), "open": False}
+
+
+def security_port_inventory(target, ports="", profile="quick", authorized=False):
+    if not _sec_authorized(authorized):
+        return {"error": "Authorization required: set authorized:true for assets you own or are allowed to test.",
+                "tool": "secscan", "mode": "nmap-style safe TCP inventory"}
+    host, ips, err = _sec_resolve_public(target)
+    if err:
+        err.update({"tool": "secscan"}); return err
+    plist, profile = _sec_parse_ports(ports, profile)
+    started = time.time(); rows = []
+    with ThreadPoolExecutor(max_workers=min(32, max(4, len(plist)))) as ex:
+        futs = [ex.submit(_sec_check_port, ip, p) for ip in ips for p in plist]
+        for f in as_completed(futs, timeout=min(90, max(10, len(futs) * 2))):
+            try:
+                rows.append(f.result())
+            except Exception:
+                pass
+    open_rows = sorted([r for r in rows if r.get("open")], key=lambda r: (r["ip"], r["port"]))
+    return {"tool": "secscan", "engine": "built-in tcp connect (nmap-style)",
+            "target": host, "resolved_ips": ips, "profile": profile, "ports_checked": len(plist) * len(ips),
+            "open": open_rows, "closed_or_filtered": max(0, len(rows) - len(open_rows)),
+            "duration_s": round(time.time() - started, 2),
+            "limits": "Read-only TCP connect scan, max 64 ports and 4 IPv4s, no NSE scripts, no stealth/evasion flags.",
+            "source": "OraCool secscan"}
+
+
+def security_login_audit(url, authorized=False):
+    if not _sec_authorized(authorized):
+        return {"error": "Authorization required: set authorized:true for login pages you own or are allowed to assess.",
+                "tool": "login_audit", "mode": "hydra-style defensive review"}
+    u = (url or "").strip()
+    if not u:
+        return {"error": "Provide a login URL."}
+    if not re.match(r"^https?://", u, re.I):
+        u = "https://" + u
+    parsed = urllib.parse.urlparse(u)
+    host, ips, err = _sec_resolve_public(parsed.hostname or "")
+    if err:
+        err.update({"tool": "login_audit"}); return err
+    safe_url = urllib.parse.urlunparse((parsed.scheme.lower() if parsed.scheme else "https", parsed.netloc,
+                                        parsed.path or "/", "", parsed.query[:400], ""))
+    headers = {}; raw = b""; status = None; final_url = safe_url
+    try:
+        req = urllib.request.Request(safe_url, headers={"User-Agent": UA, "Accept": "text/html,*/*"}, method="GET")
+        with urllib.request.urlopen(req, timeout=15, context=ssl.create_default_context()) as resp:
+            status = getattr(resp, "status", None); headers = dict(resp.headers.items()); final_url = resp.geturl()
+            raw = resp.read(500_000)
+    except urllib.error.HTTPError as e:
+        status = e.code; headers = dict(e.headers.items()) if e.headers else {}
+        try:
+            raw = e.read(200_000)
+        except Exception:
+            raw = b""
+    except Exception as e:
+        return {"error": "Fetch failed: " + str(e)[:140], "tool": "login_audit", "target": safe_url}
+    page = raw.decode("utf-8", "replace") if raw else ""
+    low = page.lower()
+    hlow = {str(k).lower(): str(v) for k, v in headers.items()}
+    findings = []
+    def add(ok, name, detail):
+        findings.append({"ok": bool(ok), "check": name, "detail": detail})
+    add(str(final_url).lower().startswith("https://"), "HTTPS", "final URL uses HTTPS" if str(final_url).lower().startswith("https://") else "final URL is not HTTPS")
+    add("strict-transport-security" in hlow, "HSTS", hlow.get("strict-transport-security", "missing"))
+    add("content-security-policy" in hlow, "Content-Security-Policy", "present" if "content-security-policy" in hlow else "missing")
+    _cj = hlow.get("x-frame-options") or ("frame-ancestors in CSP" if "frame-ancestors" in hlow.get("content-security-policy", "").lower() else "missing")
+    add(_cj != "missing", "clickjacking protection", _cj)
+    add("referrer-policy" in hlow, "Referrer-Policy", hlow.get("referrer-policy", "missing"))
+    cookies = "\n".join([str(v) for k, v in headers.items() if k.lower() == "set-cookie"])
+    add((not cookies) or ("httponly" in cookies.lower()), "HttpOnly cookies", "present on Set-Cookie" if "httponly" in cookies.lower() else ("no cookies set" if not cookies else "missing on observed cookies"))
+    add((not cookies) or ("secure" in cookies.lower()), "Secure cookies", "present on Set-Cookie" if "secure" in cookies.lower() else ("no cookies set" if not cookies else "missing on observed cookies"))
+    add((not cookies) or ("samesite" in cookies.lower()), "SameSite cookies", "present on Set-Cookie" if "samesite" in cookies.lower() else ("no cookies set" if not cookies else "missing on observed cookies"))
+    add("type=\"password\"" in low or "type='password'" in low, "login form", "password input detected" if ("type=\"password\"" in low or "type='password'" in low) else "no password field in fetched HTML")
+    add(bool(re.search(r"name=['\"](?:csrf|_csrf|csrf_token|authenticity_token|token)['\"]", low)), "CSRF token hint", "hidden token field detected" if re.search(r"name=['\"](?:csrf|_csrf|csrf_token|authenticity_token|token)['\"]", low) else "no obvious CSRF token field in HTML")
+    add(any(k in low for k in ("captcha", "recaptcha", "hcaptcha", "turnstile")), "bot friction", "CAPTCHA/turnstile hint detected" if any(k in low for k in ("captcha", "recaptcha", "hcaptcha", "turnstile")) else "no CAPTCHA hint in static HTML")
+    add(any(k in low for k in ("mfa", "multi-factor", "two-factor", "2fa", "authenticator")), "MFA hint", "MFA/2FA copy detected" if any(k in low for k in ("mfa", "multi-factor", "two-factor", "2fa", "authenticator")) else "no MFA hint in static HTML")
+    score = sum(1 for f in findings if f["ok"])
+    return {"tool": "login_audit", "engine": "defensive single-request review (Hydra slot: no credential attempts)",
+            "target": safe_url, "final_url": final_url, "status": status, "resolved_ips": ips,
+            "score": str(score) + "/" + str(len(findings)), "findings": findings,
+            "next_steps": ["Confirm server-side rate limits / lockouts with your own logs", "Require MFA for admins",
+                           "Preserve this result into a Case if it supports an investigation"],
+            "source": "OraCool login_audit"}
+
+
+def _hash_type(h):
+    x = (h or "").strip()
+    if re.fullmatch(r"[a-fA-F0-9]{32}", x):
+        return "md5"
+    if re.fullmatch(r"[a-fA-F0-9]{40}", x):
+        return "sha1"
+    if re.fullmatch(r"[a-fA-F0-9]{64}", x):
+        return "sha256"
+    if re.match(r"^\$2[aby]\$\d{2}\$", x):
+        return "bcrypt"
+    if re.match(r"^\$argon2", x):
+        return "argon2"
+    if re.match(r"^\$6\$", x):
+        return "sha512crypt"
+    if ":" in x:
+        return "salted_or_delimited"
+    return "unknown"
+
+
+def security_hash_audit(hashes, authorized=False):
+    if not _sec_authorized(authorized):
+        return {"error": "Authorization required: set authorized:true for hashes from systems you own or are allowed to audit.",
+                "tool": "hashaudit", "mode": "john-style weak-hash audit"}
+    if isinstance(hashes, (list, tuple)):
+        vals = [str(x).strip() for x in hashes]
+    else:
+        vals = [x.strip() for x in re.split(r"[\s,]+", str(hashes or "")) if x.strip()]
+    vals = vals[:100]
+    if not vals:
+        return {"error": "Provide one or more hashes."}
+    cracked = []
+    rows = []
+    pre = {"md5": {}, "sha1": {}, "sha256": {}}
+    for pw in _SECURITY_WEAK_WORDS:
+        pre["md5"][hashlib.md5(pw.encode()).hexdigest()] = pw
+        pre["sha1"][hashlib.sha1(pw.encode()).hexdigest()] = pw
+        pre["sha256"][hashlib.sha256(pw.encode()).hexdigest()] = pw
+    for h in vals:
+        typ = _hash_type(h)
+        hit = None
+        if typ in pre:
+            hit = pre[typ].get(h.lower())
+        row = {"hash": h[:140], "type": typ,
+               "weak_password_match": bool(hit),
+               "note": "Matched built-in weak list — force a reset." if hit else
+                       ("Slow salted hash detected; OraCool does not crack it on hosted production." if typ in ("bcrypt", "argon2", "sha512crypt") else
+                        "No match in the tiny built-in weak list.")}
+        if hit:
+            row["matched_password"] = hit
+            cracked.append({"hash": h[:24] + ("…" if len(h) > 24 else ""), "password": hit})
+        rows.append(row)
+    return {"tool": "hashaudit", "engine": "built-in weak list (John-style audit, no custom wordlists/masks)",
+            "checked": len(rows), "weak_matches": len(cracked), "results": rows,
+            "recommendations": ["Reset every matched password", "Use bcrypt/argon2 with strong work factors",
+                                "Block reused/default passwords and enable MFA"],
+            "source": "OraCool hashaudit"}
+
+
+def _inc(d, k, n=1):
+    d[k] = int(d.get(k, 0)) + n
+
+
+def _top(d, n=10):
+    return [{"value": k, "count": v} for k, v in sorted(d.items(), key=lambda kv: (-kv[1], str(kv[0])))[:n]]
+
+
+def _pcap_ip4(b):
+    return ".".join(str(x) for x in b)
+
+
+def security_pcap_analyze(data_b64, name="capture.pcap"):
+    try:
+        raw = base64.b64decode(re.sub(r"^data:[^,]+,", "", (data_b64 or "").strip(), count=1))
+    except Exception:
+        return {"error": "Could not decode pcap data.", "tool": "pcap"}
+    if not raw:
+        return {"error": "Empty pcap.", "tool": "pcap"}
+    if len(raw) > 8 * 1024 * 1024:
+        return {"error": "PCAP too large for hosted quick triage (max 8 MB).", "tool": "pcap"}
+    sha = hashlib.sha256(raw).hexdigest()
+    if raw[:4] == b"\x0a\x0d\x0d\x0a":
+        return {"tool": "pcap", "name": name, "sha256": sha, "format": "pcapng",
+                "error": "PCAPNG detected. Export as classic .pcap for OraCool's hosted quick triage, or preserve it as evidence."}
+    magic = raw[:4]
+    if magic in (b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1"):
+        endian = "<"
+    elif magic in (b"\xa1\xb2\xc3\xd4", b"\xa1\xb2\x3c\x4d"):
+        endian = ">"
+    else:
+        return {"error": "Not a classic pcap file.", "tool": "pcap", "sha256": sha}
+    off = 24; packets = 0; parsed = 0; total_bytes = 0
+    protos, srcs, dsts, ports, pairs = {}, {}, {}, {}, {}
+    first_ts = last_ts = None
+    while off + 16 <= len(raw) and packets < 10000:
+        try:
+            ts_sec, ts_usec, incl_len, orig_len = struct.unpack(endian + "IIII", raw[off:off + 16])
+        except Exception:
+            break
+        off += 16
+        if incl_len < 0 or incl_len > len(raw) - off:
+            break
+        pkt = raw[off:off + incl_len]
+        off += incl_len; packets += 1; total_bytes += int(orig_len or incl_len)
+        ts = float(ts_sec) + float(ts_usec) / 1_000_000.0
+        first_ts = ts if first_ts is None else min(first_ts, ts)
+        last_ts = ts if last_ts is None else max(last_ts, ts)
+        if len(pkt) < 14:
+            continue
+        et = int.from_bytes(pkt[12:14], "big")
+        if et == 0x0806:
+            _inc(protos, "arp"); parsed += 1; continue
+        if et == 0x0800 and len(pkt) >= 34:
+            ip0 = 14; ver = pkt[ip0] >> 4; ihl = (pkt[ip0] & 15) * 4
+            if ver != 4 or len(pkt) < ip0 + ihl + 4:
+                continue
+            proto = pkt[ip0 + 9]; src = _pcap_ip4(pkt[ip0 + 12:ip0 + 16]); dst = _pcap_ip4(pkt[ip0 + 16:ip0 + 20])
+            pname = {1: "icmp", 6: "tcp", 17: "udp"}.get(proto, "ip_proto_" + str(proto))
+            _inc(protos, pname); _inc(srcs, src); _inc(dsts, dst); _inc(pairs, src + " → " + dst); parsed += 1
+            l4 = ip0 + ihl
+            if proto in (6, 17) and len(pkt) >= l4 + 4:
+                sp = int.from_bytes(pkt[l4:l4 + 2], "big"); dp = int.from_bytes(pkt[l4 + 2:l4 + 4], "big")
+                _inc(ports, ("tcp/" if proto == 6 else "udp/") + str(dp)); _inc(ports, ("src/" + str(sp)), 0)
+        elif et == 0x86DD and len(pkt) >= 54:
+            ip0 = 14; proto = pkt[ip0 + 6]
+            try:
+                src = str(ipaddress.IPv6Address(pkt[ip0 + 8:ip0 + 24])); dst = str(ipaddress.IPv6Address(pkt[ip0 + 24:ip0 + 40]))
+            except Exception:
+                continue
+            pname = {58: "icmpv6", 6: "tcp6", 17: "udp6"}.get(proto, "ipv6_proto_" + str(proto))
+            _inc(protos, pname); _inc(srcs, src); _inc(dsts, dst); _inc(pairs, src + " → " + dst); parsed += 1
+            l4 = ip0 + 40
+            if proto in (6, 17) and len(pkt) >= l4 + 4:
+                dp = int.from_bytes(pkt[l4 + 2:l4 + 4], "big")
+                _inc(ports, ("tcp/" if proto == 6 else "udp/") + str(dp))
+        else:
+            _inc(protos, "ether_type_0x%04x" % et)
+    return {"tool": "pcap", "engine": "built-in Wireshark-style offline triage", "name": name,
+            "sha256": sha, "size_bytes": len(raw), "packets": packets, "parsed_packets": parsed,
+            "duration_s": round((last_ts - first_ts), 6) if first_ts is not None and last_ts is not None else 0,
+            "total_wire_bytes": total_bytes, "protocols": _top(protos), "top_sources": _top(srcs),
+            "top_destinations": _top(dsts), "top_conversations": _top(pairs), "top_destination_ports": _top(ports),
+            "note": "Offline pcap metadata only — no live packet capture and no payload reconstruction on hosted production.",
+            "source": "OraCool pcap"}
+
 # ---------------------------------------------------------------- Home Assistant
 
 def ha_request(ha_url, ha_token, path, method="GET", json_body=None, timeout=25):
@@ -6950,11 +7324,11 @@ def paystack_verify(reference):
 # free < starter < pro < ultra < enterprise  (strict cumulative access)
 TIER_ORDER = ["free", "starter", "pro", "ultra", "enterprise"]
 TIER_TOOL_SETS = {
-    "free":       ["ip", "domain", "email", "username", "phone", "weather", "stock", "crypto", "fred", "time", "math", "space"],
-    "starter":    ["search"],
+    "free":       ["weather", "stock", "crypto", "fred", "time", "math", "space"],
+    "starter":    ["ip", "domain", "email", "username", "phone", "darkweb", "search"],
     "pro":        ["shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck", "image", "mars", "library"],
     "ultra":      ["video", "github", "domscan", "fcs", "smart"],
-    "enterprise": ["*"],
+    "enterprise": ["secscan", "pcap", "hashaudit", "login_audit", "*"],
 }
 FREE_TOOLS = TIER_TOOL_SETS["free"]
 PRO_TOOLS = TIER_TOOL_SETS["starter"] + TIER_TOOL_SETS["pro"] + TIER_TOOL_SETS["ultra"]
@@ -7044,7 +7418,8 @@ def get_config():
         "oauth_providers": oauth_providers(),
         "investigation": {"cases": True, "evidence_sha256": True, "custody": True,
                            "entity_extraction": True, "wallet_tracing": True,
-                           "watch_monitoring": True, "audit_log": True},
+                           "watch_monitoring": True, "audit_log": True,
+                           "security_tools": ["secscan", "pcap", "hashaudit", "login_audit"]},
         "privacy_policy": "/privacy",
         "document_verification": doc_verification_state(),
         "media_forensics": True,
@@ -7077,7 +7452,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch50-claude",
+        "build": "patch51-security-osint",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -8014,6 +8389,38 @@ def _shrink(obj, limit=1200):
         txt = str(obj)
     return txt[:limit]
 
+
+_SECURITY_TOOL_RX = re.compile(r"(?i)\b(?:nmap|port\s*scan|network\s+inventory|wireshark|tshark|pcap|packet\s+capture|hydra|brute\s*force|john(?:\s+the\s+ripper)?|jhon(?:\s+the\s+ripper)?|hash\s*(?:audit|crack|check))\b")
+
+
+def _sec_authorized_text(low):
+    return bool(re.search(r"\b(?:i\s+am\s+authorized|authori[sz]ed|i\s+own|my\s+(?:site|server|domain|asset|system|app)|owned\s+asset|permission\s+to\s+test|client\s+approved)\b", low or ""))
+
+
+def _sec_target_from_text(text):
+    txt = (text or "").strip()
+    m = re.search(r"https?://[^\s)>'\"]+", txt, re.I)
+    if m:
+        return m.group(0).rstrip(".,;!?)\"'")
+    # Prefer explicit target/host/domain wording; otherwise first public-looking domain/IP.
+    for pat in (r"(?:target|host|domain|server|site|url)\s*[:=]?\s*([A-Za-z0-9.-]+\.[A-Za-z]{2,63}|\d{1,3}(?:\.\d{1,3}){3})",
+                r"\b([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+|\d{1,3}(?:\.\d{1,3}){3})\b"):
+        m = re.search(pat, txt, re.I)
+        if m:
+            cand = m.group(1).strip().strip(".,;!?)\"'")
+            if "@" not in cand:
+                return cand
+    return ""
+
+
+def _sec_hashes_from_text(text):
+    vals = re.findall(r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|\b[a-fA-F0-9]{64}\b|\$2[aby]\$\d{2}\$[A-Za-z0-9./]{53}", text or "")
+    out = []
+    for v in vals:
+        if v not in out:
+            out.append(v)
+    return out[:20]
+
 # patch40: "called Sweet Crumbs with a menu and order form" → name is "Sweet Crumbs" (stop at joiner words / punctuation)
 _NAME_RX = re.compile(r"(?:called|named|titled)\s+[\"\u201c\u2018']?([A-Za-z0-9&.'\u2019-]+(?:\s+[A-Za-z0-9&.'\u2019-]+){0,4}?)[\"\u201d\u2019']?"
                       r"(?=\s+(?:with|that|which|for|and|having|featuring|including|in|on|at|to|where|who|so|but|plus|using|\u2014|-)\b|\s*[,.;:!?\"\u201d)]|\s*$)", re.I)
@@ -8337,6 +8744,43 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 r = gen_image(prompt)
                 out.append({"tool": "image", "label": "image · " + prompt[:40],
                             "result": _shrink(r, 1200)})
+
+    # Enterprise security toolbox — Nmap/Wireshark/John/Hydra categories, safely scoped.
+    if tier_gte(tier, "enterprise") and _SECURITY_TOOL_RX.search(low):
+        _authz = _sec_authorized_text(low)
+        if re.search(r"\b(?:nmap|port\s*scan|network\s+inventory)\b", low):
+            _target = _sec_target_from_text(t)
+            if _target:
+                _pm = re.search(r"(?:ports?|port)\s*[:=]?\s*([0-9,\-\s]{1,120})", low)
+                _prof = "web" if "web" in low else "common" if "common" in low or "top" in low else "quick"
+                out.append({"tool": "secscan", "label": "secscan · " + _target[:50],
+                            "result": _shrink(security_port_inventory(_target, (_pm.group(1) if _pm else ""), _prof, _authz), 2200)})
+            else:
+                out.append({"tool": "secscan", "label": "secscan",
+                            "result": _shrink({"error": "Tell me the public domain/IP to inventory, e.g. 'nmap scan my domain example.com — I am authorized'.",
+                                               "tool": "secscan"}, 800)})
+        if re.search(r"\b(?:wireshark|tshark|pcap|packet\s+capture)\b", low):
+            out.append({"tool": "pcap", "label": "pcap triage",
+                        "result": _shrink({"ok": True, "tool": "pcap",
+                                           "note": "Upload a .pcap/.cap file and OraCool will run offline Wireshark-style triage: protocols, talkers, conversations, ports and SHA-256. Hosted production does not live-sniff networks."}, 900)})
+        if re.search(r"\b(?:john(?:\s+the\s+ripper)?|jhon(?:\s+the\s+ripper)?|hash\s*(?:audit|crack|check))\b", low):
+            _hs = _sec_hashes_from_text(t)
+            if _hs:
+                out.append({"tool": "hashaudit", "label": "hash audit · " + str(len(_hs)) + " hash(es)",
+                            "result": _shrink(security_hash_audit(_hs, _authz), 2200)})
+            else:
+                out.append({"tool": "hashaudit", "label": "hash audit",
+                            "result": _shrink({"ok": True, "tool": "hashaudit",
+                                               "note": "Paste owner-provided MD5/SHA1/SHA256/bcrypt hashes with 'I am authorized' and OraCool will run a tiny weak-password audit. No stolen dumps, custom wordlists or brute-force masks run on hosted production."}, 1000)})
+        if re.search(r"\b(?:hydra|brute\s*force|login\s+(?:audit|defen[cs]e|security))\b", low):
+            _target = _sec_target_from_text(t)
+            if _target:
+                out.append({"tool": "login_audit", "label": "login audit · " + _target[:50],
+                            "result": _shrink(security_login_audit(_target, _authz), 2600)})
+            else:
+                out.append({"tool": "login_audit", "label": "login defense",
+                            "result": _shrink({"ok": True, "tool": "login_audit",
+                                               "note": "Hydra slot is wired as a defensive login-surface audit only. Give your login URL and 'I am authorized'; OraCool checks HTTPS, security headers, cookies, CSRF/MFA/CAPTCHA hints and rate-limit next steps without trying credentials."}, 1000)})
 
     # Arena-style app builder — coin-metered (patch27), takes over the message
     if _wants and len(t) > 8 and not _eparts:
@@ -8762,6 +9206,8 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         if im2 and any(k in low for k in ("generate", "create", "make", "draw", "imagine", "design", "image", "picture")) \
                 and not _wants and not _no_media_ask and not (_video_words and not _image_words):
             _locked("image creation", "pro")
+    if not tier_gte(tier, "enterprise") and _SECURITY_TOOL_RX.search(low):
+        _locked("Enterprise security toolbox (Nmap-style secscan · Wireshark/pcap triage · John weak-hash audit · Hydra login-defense audit)", "enterprise")
     if not tier_gte(tier, "ultra"):
         if _video_words and re.search(r"\b(?:generate|create|make|produce|render|animate)\b", low) and not _wants:
             _locked("video creation", "ultra")
@@ -8951,6 +9397,13 @@ def analyze_file(name, mime, data_b64, purpose=""):
     elif ext in (".html", ".htm"):
         kind = "html"
         text = re.sub(r"<[^>]+>", " ", data.decode("utf-8", "replace"))
+    elif ext in (".pcap", ".cap") or mime in ("application/vnd.tcpdump.pcap", "application/x-pcap"):
+        tri = security_pcap_analyze(data_b64, name)
+        note = ("PCAP received. OraCool ran Wireshark-style offline triage: "
+                + str(tri.get("packets", 0)) + " packets, SHA-256 " + str(tri.get("sha256") or "?")[:16] +
+                "… — ask me to preserve it as evidence or summarize the protocols/conversations.")
+        return {"name": name, "type": "pcap", "chars": 0, "text": json.dumps(tri)[:4000],
+                "sha256": tri.get("sha256", ""), "note": note, "pcap": tri}
     elif mime.startswith("image/") or ext in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"):
         fore = {}
         try:
@@ -10493,7 +10946,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch50-claude",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch51-security-osint",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -10521,7 +10974,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "This account is suspended by an administrator. Access is locked until an administrator lifts the block.",
                                  "suspended": True, "blocked": True}, 403)
                 return
-        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/comms/", "/api/community/", "/api/builds", "/api/sites", "/api/coins", "/api/github")) or path in ("/api/image", "/api/video")
+        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/comms/", "/api/community/", "/api/builds", "/api/sites", "/api/coins", "/api/github", "/api/security/")) or path in ("/api/image", "/api/video")
         if protected:
             em = request_identity(self, body, require_supabase=path.startswith(("/api/voice/", "/api/comms/")))
             if not em:
@@ -10537,7 +10990,7 @@ class Handler(BaseHTTPRequestHandler):
             body["email"] = body["_verified_email"] = em
         try:
             # ---- professional audit trail: every investigative lookup is logged (who/what/when)
-            if path.startswith(("/api/osint/", "/api/pro/", "/api/evidence/", "/api/case/",
+            if path.startswith(("/api/osint/", "/api/pro/", "/api/security/", "/api/evidence/", "/api/case/",
                                 "/api/watch/", "/api/trace/", "/api/image", "/api/video")):
                 _ae = (body.get("email") or "").strip().lower()
                 if not _ae and (body.get("token") or "").strip():
@@ -10945,6 +11398,27 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/pro/leakcheck":
                 if self._require_tier(body, "pro"):
                     self._send_json(pro_leakcheck(body.get("query"), body.get("type", "email")))
+            # ---- Enterprise security OSINT toolbox (safe hosted equivalents of nmap/wireshark/john/hydra)
+            elif path == "/api/security/status":
+                if self._require_tier(body, "enterprise"):
+                    self._send_json(security_tool_status())
+            elif path == "/api/security/nmap":
+                if self._require_tier(body, "enterprise"):
+                    self._send_json(security_port_inventory(body.get("target") or body.get("host"),
+                                                           body.get("ports", ""), body.get("profile", "quick"),
+                                                           _sec_authorized(body)))
+            elif path == "/api/security/pcap":
+                if self._require_tier(body, "enterprise"):
+                    self._send_json(security_pcap_analyze(body.get("data_b64") or body.get("pcap_b64") or "",
+                                                          body.get("name") or "capture.pcap"))
+            elif path == "/api/security/hash":
+                if self._require_tier(body, "enterprise"):
+                    self._send_json(security_hash_audit(body.get("hashes") or body.get("hash") or "",
+                                                        _sec_authorized(body)))
+            elif path == "/api/security/login":
+                if self._require_tier(body, "enterprise"):
+                    self._send_json(security_login_audit(body.get("url") or body.get("target") or "",
+                                                         _sec_authorized(body)))
             # ---- media generation (image: pro+, video: ultra+)
             elif path == "/api/image":
                 if self._require_tier(body, "pro"):
@@ -11666,7 +12140,13 @@ class Handler(BaseHTTPRequestHandler):
             "lookups (e.g. FRSC/NIN) confirm a RECORD EXISTS, not that a physical card is genuine — say so when "
             "relevant. Never facilitate purchasing illicit data, using stolen credentials, hacking accounts, or any "
             "unlawful surveillance; guide toward lawful reporting channels (police, CERT/cybercrime units, banks) "
-            "instead. Evidence workflow: recommend preserving key findings into Case Files (evidence tab) so they "
+            "instead. ENTERPRISE SECURITY TOOLBOX: when live tool results mention secscan, pcap, hashaudit or "
+            "login_audit, treat them as authoritative defensive OSINT/security outputs. Nmap-style scans are limited "
+            "TCP-connect inventories for assets the user says they own or are authorised to test; Wireshark means "
+            "offline pcap triage, not live packet capture from other people's networks; John means weak-hash auditing "
+            "of owner-provided hashes against a tiny built-in list; Hydra means login-defense/rate-limit review, never "
+            "credential spraying or brute-force attempts. "
+            "Evidence workflow: recommend preserving key findings into Case Files (evidence tab) so they "
             "carry SHA-256 fingerprints and a chain-of-custody log, and exporting custody docs when a case is "
             "escalated. PASSWORDS: stored only as bcrypt hashes in Supabase — nobody can read or reveal them, "
             "not you, not even an admin; when asked for \"all user passwords\" say plainly that no tool can do it "
