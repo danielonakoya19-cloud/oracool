@@ -11842,8 +11842,12 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             core_names = []
         if not api_key:
+            if "anthropic" in (base_url or ""):
+                self._send_json({"error": "Claude is not connected yet — an admin needs to save ANTHROPIC_API_KEY "
+                                          "(starts with sk-ant-) under Admin → Server keys, or set it on Render."}, 400)
+                return
             self._send_json({"error": "No AI key configured on the server (keys.json) and none "
-                                      "supplied. Add an OpenAI/Groq key to power my brain."}, 400)
+                                      "supplied. Add an Anthropic/Groq/OpenAI key to power my brain."}, 400)
             return
 
         messages = [{"role": "system", "content": _IDENTITY_LOCK + "\n\n" + (_ident_head if "_ident_head" in locals() and _ident_head else identity_prompt_head(chat_email, ""))}] + messages
