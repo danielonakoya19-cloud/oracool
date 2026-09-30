@@ -7,8 +7,8 @@ A JARVIS-style personal assistant backend. Pure Python standard library.
   - OSINT toolkit (Starter+): IP, domain, username, phone, dark-web index, HIBP email
   - PRO tools (JWT-gated): Tavily search, Shodan, VirusTotal, AbuseIPDB,
     URLScan, LeakCheck
-  - Enterprise security toolbox: Nmap-style safe port inventory, Wireshark/pcap
-    triage, John-style weak-hash audit, Hydra-style login-defense audit
+  - Enterprise security toolbox: Nmap-style safe port inventory, SQLMap-style
+    SQLi audit, Wireshark/pcap triage, John-style weak-hash audit, Hydra-style login-defense audit
   - Markets (free): stocks (Finnhub), crypto (CoinGecko), FRED economic data
   - Payments: Paystack (initialize + verify) -> issues a PRO JWT
   - Supabase: status check + upgrade persistence
@@ -562,7 +562,7 @@ FEATURE_MATRIX = [
         ("Core OSINT: IP · domain · email · username · phone", "❌", "✅", "✅", "✅", "✅"),
         ("Email breach (HIBP + infostealer) · dark-web index", "❌", "✅", "✅", "✅", "✅"),
         ("Deep OSINT: Shodan · VirusTotal · AbuseIPDB · URLScan · LeakCheck", "❌", "❌", "✅", "✅", "✅"),
-        ("Security toolbox: Nmap-style port inventory · Wireshark/pcap triage · John weak-hash audit · Hydra login-defense audit", "❌", "❌", "❌", "❌", "✅"),
+        ("Security toolbox: Nmap-style port inventory · SQLMap-style SQLi audit · Wireshark/pcap triage · John weak-hash audit · Hydra login-defense audit", "❌", "❌", "❌", "❌", "✅"),
         ("Dark-web monitoring · cases & evidence vault", "❌", "❌", "Basic", "Full", "Full"),
     ]),
     ("Markets & trading", [
@@ -6830,8 +6830,9 @@ _SECURITY_WEAK_WORDS = ["password", "Password1", "password1", "123456", "1234567
 
 
 def security_tool_status():
-    return {"tier": "enterprise", "security_patch": "51",
+    return {"tier": "enterprise", "security_patch": "52",
             "tools": {"secscan": "Nmap-style TCP-connect port inventory (safe preset, no stealth/evasion scripts)",
+                      "sqlmap": "SQLMap-style low-impact SQL injection indicator audit (no dumping/enumeration)",
                       "pcap": "Wireshark-style offline pcap triage (protocols, IPs, ports, SHA-256)",
                       "hashaudit": "John-style weak-hash audit against a tiny built-in weak-password list",
                       "login_audit": "Hydra-style defensive login surface review (no credential attempts)"},
@@ -7028,6 +7029,180 @@ def security_login_audit(url, authorized=False):
             "next_steps": ["Confirm server-side rate limits / lockouts with your own logs", "Require MFA for admins",
                            "Preserve this result into a Case if it supports an investigation"],
             "source": "OraCool login_audit"}
+
+
+_SQLI_ERRORS = (
+    "you have an error in your sql syntax", "warning: mysql", "mysql_fetch", "mysqli_",
+    "postgresql", "pg_query", "unterminated quoted string", "syntax error at or near",
+    "ora-01756", "ora-00933", "oracle error", "sqlite error", "sqliteexception",
+    "microsoft ole db", "odbc sql server driver", "unclosed quotation mark", "sqlstate",
+    "jdbc exception", "db2 sql error", "native client", "pdoexception"
+)
+_SQLMAP_SAFE_PAYLOADS = ("'", "\"")
+
+
+def _sqlmap_error_hits(text):
+    low = (text or "").lower()
+    return [e for e in _SQLI_ERRORS if e in low][:5]
+
+
+def _sqlmap_safe_url(raw):
+    u = (raw or "").strip()
+    if not u:
+        return "", None, {"error": "Provide a URL with query parameters, e.g. https://example.com/item?id=1"}
+    if not re.match(r"^https?://", u, re.I):
+        u = "https://" + u
+    pr = urllib.parse.urlparse(u)
+    if pr.scheme not in ("http", "https") or not pr.hostname:
+        return "", None, {"error": "Target must be an http(s) URL."}
+    host, ips, err = _sec_resolve_public(pr.hostname)
+    if err:
+        err.update({"tool": "sqlmap"}); return "", None, err
+    # Strip fragments and keep query/path only; no shell syntax ever leaves this function.
+    safe = urllib.parse.urlunparse((pr.scheme.lower(), pr.netloc, pr.path or "/", "", pr.query[:1500], ""))
+    return safe, ips, None
+
+
+def _sqlmap_fetch(url, method="GET", data=None):
+    headers = {"User-Agent": UA, "Accept": "text/html,application/json,*/*"}
+    body = None
+    if method == "POST" and isinstance(data, dict):
+        body = urllib.parse.urlencode(data).encode("utf-8")
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=12, context=ssl.create_default_context()) as resp:
+            raw = resp.read(350_000)
+            return {"status": getattr(resp, "status", None), "url": resp.geturl(),
+                    "length": len(raw), "text": raw.decode("utf-8", "replace")[:120_000]}
+    except urllib.error.HTTPError as e:
+        try:
+            raw = e.read(180_000)
+        except Exception:
+            raw = b""
+        return {"status": e.code, "url": url, "length": len(raw),
+                "text": raw.decode("utf-8", "replace")[:120_000], "http_error": True}
+    except Exception as e:
+        return {"error": str(e)[:160], "url": url}
+
+
+def security_sqlmap_audit(url, method="GET", data=None, authorized=False):
+    """SQLMap-style defensive SQL injection indicator audit.
+    Hosted mode deliberately avoids sqlmap's dangerous behaviours: no crawling,
+    no table enumeration, no dumping, no auth bypass, no write/destructive payloads.
+    It sends a tiny number of quote probes to authorised/staging URLs and reports
+    indicators only."""
+    if not _sec_authorized(authorized):
+        return {"error": "Authorization required: set authorized:true for URLs you own or are allowed to test.",
+                "tool": "sqlmap", "mode": "low-impact SQLi indicator audit"}
+    safe_url, ips, err = _sqlmap_safe_url(url)
+    if err:
+        return err
+    pr = urllib.parse.urlparse(safe_url)
+    qs = urllib.parse.parse_qs(pr.query, keep_blank_values=True)
+    method = (method or "GET").upper()
+    if method != "GET":
+        # POST fuzzing can create side effects (login attempts, orders, writes). Keep hosted production passive.
+        return {"tool": "sqlmap", "target": safe_url, "resolved_ips": ips, "method": method,
+                "error": "Hosted SQLMap mode only actively probes GET query parameters. Test POST/form flows in a staging environment with your own controls.",
+                "source": "OraCool sqlmap"}
+    forms = []
+    indicators = []
+    if not qs:
+        base = _sqlmap_fetch(safe_url)
+        txt = base.get("text") or ""
+        for fm in re.findall(r"<form\b.*?</form>", txt, flags=re.I | re.S)[:6]:
+            names = re.findall(r"\bname=[\"']?([A-Za-z0-9_.:-]{1,80})", fm, flags=re.I)
+            action = re.search(r"\baction=[\"']([^\"']+)", fm, flags=re.I)
+            forms.append({"method": (re.search(r"\bmethod=[\"']?([A-Za-z]+)", fm, flags=re.I).group(1).upper()
+                                      if re.search(r"\bmethod=[\"']?([A-Za-z]+)", fm, flags=re.I) else "GET"),
+                          "action": urllib.parse.urljoin(safe_url, action.group(1)) if action else safe_url,
+                          "parameters": names[:12]})
+        return {"tool": "sqlmap", "engine": "built-in low-impact SQLi indicator audit (SQLMap-style)",
+                "target": safe_url, "resolved_ips": ips, "parameters_tested": [], "forms_detected": forms,
+                "indicators": [], "risk": "no_query_parameters",
+                "note": "No query string parameters were present. Add a staging URL like /item?id=1 for active probes, or review detected forms manually.",
+                "source": "OraCool sqlmap"}
+    base = _sqlmap_fetch(safe_url)
+    if base.get("error"):
+        return {"tool": "sqlmap", "target": safe_url, "resolved_ips": ips, "error": base.get("error"), "source": "OraCool sqlmap"}
+    base_text = base.get("text") or ""
+    base_hits = set(_sqlmap_error_hits(base_text))
+    params = list(qs.keys())[:5]
+    requests = 1
+    for name in params:
+        original_vals = qs.get(name) or [""]
+        original = str(original_vals[0])[:160]
+        pres = {"parameter": name, "payloads": [], "indicator": False, "severity": "none"}
+        for payload in _SQLMAP_SAFE_PAYLOADS:
+            if requests >= 11:
+                break
+            q2 = {k: list(v) for k, v in qs.items()}
+            q2[name] = [original + payload]
+            probe_q = urllib.parse.urlencode(q2, doseq=True)
+            probe_url = urllib.parse.urlunparse((pr.scheme, pr.netloc, pr.path or "/", "", probe_q, ""))
+            probe = _sqlmap_fetch(probe_url)
+            requests += 1
+            if probe.get("error"):
+                pres["payloads"].append({"payload": payload, "error": probe.get("error")})
+                continue
+            text = probe.get("text") or ""
+            hits = [h for h in _sqlmap_error_hits(text) if h not in base_hits]
+            blen = max(1, int(base.get("length") or 1)); plen = int(probe.get("length") or 0)
+            diff = abs(plen - blen) / blen
+            status_changed = probe.get("status") != base.get("status")
+            item = {"payload": payload, "status": probe.get("status"), "length": plen,
+                    "new_sql_error_signatures": hits, "status_changed": bool(status_changed),
+                    "length_delta_pct": round(diff * 100, 1)}
+            if hits:
+                pres["indicator"] = True; pres["severity"] = "high"
+                item["finding"] = "SQL error signature appeared after a quote probe."
+            elif status_changed or diff > 0.35:
+                pres["indicator"] = True
+                pres["severity"] = "medium" if pres["severity"] == "none" else pres["severity"]
+                item["finding"] = "Response changed materially after a quote probe; review server-side handling."
+            pres["payloads"].append(item)
+        if pres["indicator"]:
+            indicators.append(pres)
+        else:
+            pres["payloads"] = pres["payloads"][:1]
+        # keep all parameter summaries, but full detail only for indicators
+        if not pres["indicator"]:
+            indicators.append({"parameter": name, "indicator": False, "severity": "none",
+                               "sample": pres["payloads"][0] if pres["payloads"] else {}})
+    flagged = [x for x in indicators if x.get("indicator")]
+    risk = "high" if any(x.get("severity") == "high" for x in flagged) else "medium" if flagged else "low"
+    return {"tool": "sqlmap", "engine": "built-in low-impact SQLi indicator audit (SQLMap-style)",
+            "target": safe_url, "resolved_ips": ips, "baseline_status": base.get("status"),
+            "parameters_tested": params, "requests_sent": requests, "risk": risk,
+            "indicators": indicators, "flagged_parameters": [x.get("parameter") for x in flagged],
+            "limits": "No crawling, no DB enumeration, no dumping, no auth bypass, no time-delay payloads, no writes/destructive payloads.",
+            "next_steps": ["Re-test on staging with server logs", "Use parameterized queries/prepared statements", "Add input validation and WAF/rate limits", "Preserve this result into a Case if it supports an investigation"],
+            "source": "OraCool sqlmap"}
+
+
+def security_run_store(actor, tool, target, authorized, result):
+    """Optional durable run log in Supabase. If the SQL migration hasn't been run yet, fail silently; the normal audit log still records the endpoint."""
+    try:
+        audit_log(actor or "security", "security." + str(tool or "run"), str(target or "")[:160])
+    except Exception:
+        pass
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return False
+    try:
+        payload = {"actor_email": (actor or "").strip().lower(), "tool": str(tool or "")[:40],
+                   "target": str(target or "")[:500], "authorized": bool(authorized),
+                   "status": ("error" if isinstance(result, dict) and result.get("error") else "ok"),
+                   "result": result if isinstance(result, dict) else {"value": str(result)[:4000]},
+                   "result_sha256": hashlib.sha256(json.dumps(result, sort_keys=True, default=str).encode()).hexdigest()}
+        http_fetch(url.rstrip("/") + "/rest/v1/security_tool_runs", method="POST",
+                   headers={"apikey": svc, "Authorization": "Bearer " + svc,
+                            "Content-Type": "application/json", "Prefer": "return=minimal"},
+                   json_body=payload, timeout=12)
+        return True
+    except Exception:
+        return False
 
 
 def _hash_type(h):
@@ -7328,7 +7503,7 @@ TIER_TOOL_SETS = {
     "starter":    ["ip", "domain", "email", "username", "phone", "darkweb", "search"],
     "pro":        ["shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck", "image", "mars", "library"],
     "ultra":      ["video", "github", "domscan", "fcs", "smart"],
-    "enterprise": ["secscan", "pcap", "hashaudit", "login_audit", "*"],
+    "enterprise": ["secscan", "sqlmap", "pcap", "hashaudit", "login_audit", "*"],
 }
 FREE_TOOLS = TIER_TOOL_SETS["free"]
 PRO_TOOLS = TIER_TOOL_SETS["starter"] + TIER_TOOL_SETS["pro"] + TIER_TOOL_SETS["ultra"]
@@ -7419,7 +7594,7 @@ def get_config():
         "investigation": {"cases": True, "evidence_sha256": True, "custody": True,
                            "entity_extraction": True, "wallet_tracing": True,
                            "watch_monitoring": True, "audit_log": True,
-                           "security_tools": ["secscan", "pcap", "hashaudit", "login_audit"]},
+                           "security_tools": ["secscan", "sqlmap", "pcap", "hashaudit", "login_audit"]},
         "privacy_policy": "/privacy",
         "document_verification": doc_verification_state(),
         "media_forensics": True,
@@ -7452,7 +7627,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch51-security-osint",
+        "build": "patch52-sqlmap-osint",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -8390,7 +8565,7 @@ def _shrink(obj, limit=1200):
     return txt[:limit]
 
 
-_SECURITY_TOOL_RX = re.compile(r"(?i)\b(?:nmap|port\s*scan|network\s+inventory|wireshark|tshark|pcap|packet\s+capture|hydra|brute\s*force|john(?:\s+the\s+ripper)?|jhon(?:\s+the\s+ripper)?|hash\s*(?:audit|crack|check))\b")
+_SECURITY_TOOL_RX = re.compile(r"(?i)\b(?:nmap|port\s*scan|network\s+inventory|sql\s*map|sqlmap|sqli|sql\s+injection|wireshark|tshark|pcap|packet\s+capture|hydra|brute\s*force|john(?:\s+the\s+ripper)?|jhon(?:\s+the\s+ripper)?|hash\s*(?:audit|crack|check))\b")
 
 
 def _sec_authorized_text(low):
@@ -8402,6 +8577,9 @@ def _sec_target_from_text(text):
     m = re.search(r"https?://[^\s)>'\"]+", txt, re.I)
     if m:
         return m.group(0).rstrip(".,;!?)\"'")
+    m = re.search(r"\b([A-Za-z0-9.-]+\.[A-Za-z]{2,63}/[^\s)>'\"]*)", txt, re.I)
+    if m:
+        return ("https://" + m.group(1).rstrip(".,;!?)\"'"))
     # Prefer explicit target/host/domain wording; otherwise first public-looking domain/IP.
     for pat in (r"(?:target|host|domain|server|site|url)\s*[:=]?\s*([A-Za-z0-9.-]+\.[A-Za-z]{2,63}|\d{1,3}(?:\.\d{1,3}){3})",
                 r"\b([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+|\d{1,3}(?:\.\d{1,3}){3})\b"):
@@ -8745,9 +8923,18 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 out.append({"tool": "image", "label": "image · " + prompt[:40],
                             "result": _shrink(r, 1200)})
 
-    # Enterprise security toolbox — Nmap/Wireshark/John/Hydra categories, safely scoped.
+    # Enterprise security toolbox — Nmap/SQLMap/Wireshark/John/Hydra categories, safely scoped.
     if tier_gte(tier, "enterprise") and _SECURITY_TOOL_RX.search(low):
         _authz = _sec_authorized_text(low)
+        if re.search(r"\b(?:sql\s*map|sqlmap|sqli|sql\s+injection)\b", low):
+            _target = _sec_target_from_text(t)
+            if _target:
+                out.append({"tool": "sqlmap", "label": "sqlmap audit · " + _target[:50],
+                            "result": _shrink(security_sqlmap_audit(_target, authorized=_authz), 3000)})
+            else:
+                out.append({"tool": "sqlmap", "label": "sqlmap audit",
+                            "result": _shrink({"error": "Tell me the authorised/staging URL with query parameters, e.g. 'sqlmap audit my https://example.com/item?id=1 — I am authorized'.",
+                                               "tool": "sqlmap"}, 900)})
         if re.search(r"\b(?:nmap|port\s*scan|network\s+inventory)\b", low):
             _target = _sec_target_from_text(t)
             if _target:
@@ -9207,7 +9394,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 and not _wants and not _no_media_ask and not (_video_words and not _image_words):
             _locked("image creation", "pro")
     if not tier_gte(tier, "enterprise") and _SECURITY_TOOL_RX.search(low):
-        _locked("Enterprise security toolbox (Nmap-style secscan · Wireshark/pcap triage · John weak-hash audit · Hydra login-defense audit)", "enterprise")
+        _locked("Enterprise security toolbox (Nmap-style secscan · SQLMap-style SQLi audit · Wireshark/pcap triage · John weak-hash audit · Hydra login-defense audit)", "enterprise")
     if not tier_gte(tier, "ultra"):
         if _video_words and re.search(r"\b(?:generate|create|make|produce|render|animate)\b", low) and not _wants:
             _locked("video creation", "ultra")
@@ -10946,7 +11133,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch51-security-osint",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch52-sqlmap-osint",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -11398,27 +11585,41 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/pro/leakcheck":
                 if self._require_tier(body, "pro"):
                     self._send_json(pro_leakcheck(body.get("query"), body.get("type", "email")))
-            # ---- Enterprise security OSINT toolbox (safe hosted equivalents of nmap/wireshark/john/hydra)
+            # ---- Enterprise security OSINT toolbox (safe hosted equivalents of nmap/sqlmap/wireshark/john/hydra)
             elif path == "/api/security/status":
                 if self._require_tier(body, "enterprise"):
                     self._send_json(security_tool_status())
             elif path == "/api/security/nmap":
                 if self._require_tier(body, "enterprise"):
-                    self._send_json(security_port_inventory(body.get("target") or body.get("host"),
-                                                           body.get("ports", ""), body.get("profile", "quick"),
-                                                           _sec_authorized(body)))
+                    _res = security_port_inventory(body.get("target") or body.get("host"),
+                                                   body.get("ports", ""), body.get("profile", "quick"),
+                                                   _sec_authorized(body))
+                    security_run_store(body.get("email"), "secscan", body.get("target") or body.get("host"), _sec_authorized(body), _res)
+                    self._send_json(_res)
+            elif path == "/api/security/sqlmap":
+                if self._require_tier(body, "enterprise"):
+                    _res = security_sqlmap_audit(body.get("url") or body.get("target") or "",
+                                                 body.get("method", "GET"), body.get("data"), _sec_authorized(body))
+                    security_run_store(body.get("email"), "sqlmap", body.get("url") or body.get("target") or "", _sec_authorized(body), _res)
+                    self._send_json(_res)
             elif path == "/api/security/pcap":
                 if self._require_tier(body, "enterprise"):
-                    self._send_json(security_pcap_analyze(body.get("data_b64") or body.get("pcap_b64") or "",
-                                                          body.get("name") or "capture.pcap"))
+                    _res = security_pcap_analyze(body.get("data_b64") or body.get("pcap_b64") or "",
+                                                 body.get("name") or "capture.pcap")
+                    security_run_store(body.get("email"), "pcap", body.get("name") or "capture.pcap", True, _res)
+                    self._send_json(_res)
             elif path == "/api/security/hash":
                 if self._require_tier(body, "enterprise"):
-                    self._send_json(security_hash_audit(body.get("hashes") or body.get("hash") or "",
-                                                        _sec_authorized(body)))
+                    _res = security_hash_audit(body.get("hashes") or body.get("hash") or "",
+                                               _sec_authorized(body))
+                    security_run_store(body.get("email"), "hashaudit", "hashes", _sec_authorized(body), _res)
+                    self._send_json(_res)
             elif path == "/api/security/login":
                 if self._require_tier(body, "enterprise"):
-                    self._send_json(security_login_audit(body.get("url") or body.get("target") or "",
-                                                         _sec_authorized(body)))
+                    _res = security_login_audit(body.get("url") or body.get("target") or "",
+                                                _sec_authorized(body))
+                    security_run_store(body.get("email"), "login_audit", body.get("url") or body.get("target") or "", _sec_authorized(body), _res)
+                    self._send_json(_res)
             # ---- media generation (image: pro+, video: ultra+)
             elif path == "/api/image":
                 if self._require_tier(body, "pro"):
@@ -12140,9 +12341,11 @@ class Handler(BaseHTTPRequestHandler):
             "lookups (e.g. FRSC/NIN) confirm a RECORD EXISTS, not that a physical card is genuine — say so when "
             "relevant. Never facilitate purchasing illicit data, using stolen credentials, hacking accounts, or any "
             "unlawful surveillance; guide toward lawful reporting channels (police, CERT/cybercrime units, banks) "
-            "instead. ENTERPRISE SECURITY TOOLBOX: when live tool results mention secscan, pcap, hashaudit or "
+            "instead. ENTERPRISE SECURITY TOOLBOX: when live tool results mention secscan, sqlmap, pcap, hashaudit or "
             "login_audit, treat them as authoritative defensive OSINT/security outputs. Nmap-style scans are limited "
-            "TCP-connect inventories for assets the user says they own or are authorised to test; Wireshark means "
+            "TCP-connect inventories for assets the user says they own or are authorised to test; SQLMap means "
+            "low-impact SQL-injection indicators on authorised/staging URLs only — no database dumping, table enumeration, "
+            "auth bypass or destructive payloads; Wireshark means "
             "offline pcap triage, not live packet capture from other people's networks; John means weak-hash auditing "
             "of owner-provided hashes against a tiny built-in list; Hydra means login-defense/rate-limit review, never "
             "credential spraying or brute-force attempts. "

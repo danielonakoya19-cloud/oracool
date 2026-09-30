@@ -31,7 +31,7 @@ def read(name):
 
 def test_build_marker_patch23():
     src = read("server.py")
-    assert src.count('"build": "patch51-security-osint"') == 2
+    assert src.count('"build": "patch52-sqlmap-osint"') == 2
 
 
 # ---------------------------------------------------------------- media persistence
