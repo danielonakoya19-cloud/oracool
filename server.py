@@ -11986,6 +11986,8 @@ class Handler(BaseHTTPRequestHandler):
                 _body = e.read().decode("utf-8", "replace")
                 if e.code == 429 or e.code >= 500:
                     _brain_note(_brain_name(base_url), failed=True, cooldown=_retry_after_s(getattr(e, "headers", None), _body) or (300 if e.code == 429 else 120))
+                elif e.code in (401, 403) or any(t in _body.lower() for t in ("credit balance", "insufficient_quota", "billing")):
+                    _brain_note(_brain_name(base_url), failed=True, cooldown=1800)  # patch50: dead key / no credits — bench 30 min so chats don't pay the round-trip
                 if (e.code == 429 and cont_rounds == 0 and "max_tokens" in _body
                         and payload.get("max_tokens", 0) > 700):
                     payload["max_tokens"] = 700

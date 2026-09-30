@@ -100,6 +100,34 @@ class Ladder(unittest.TestCase):
         self.assertGreater(s.brain_status()["anthropic"]["samples"], 0)
 
 
+class NoCredits(unittest.TestCase):
+    def test_billing_error_benches_claude_and_rotates(self):
+        s._BRAIN_STATS.clear(); calls = []
+        def fake_urlopen(req, timeout=0, context=None):
+            calls.append(req.full_url)
+            if "anthropic" in req.full_url:
+                raise s.urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, io.BytesIO(
+                    b'{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}'))
+            return _FakeResp(b'data: {"choices":[{"delta":{"content":"groq says hi"}}]}\n\ndata: [DONE]\n\n')
+        h = s.Handler.__new__(s.Handler); h.wfile = io.BytesIO(); h.rfile = io.BytesIO(); h.headers = _H({"Host": "localhost"}); h.client_address = ("127.0.0.1", 1)
+        h.request_version = "HTTP/1.1"; h.command = "POST"; h.path = "/api/chat"; h.requestline = "POST /api/chat HTTP/1.1"
+        h.send_response = h.send_header = h.end_headers = h.log_message = lambda *a, **k: None
+        body = {"messages": [{"role": "user", "content": "hello"}], "stream": True, "provider": "auto", "email": "c50b@example.invalid",
+                "_verified_email": "c50b@example.invalid", "tools": False}
+        with mock.patch.object(s, "key", lambda n, d="": {"ANTHROPIC_API_KEY": "sk-ant-x", "GROQ_API_KEY": "gk"}.get(n, "")), \
+             mock.patch.object(s.urllib.request, "urlopen", fake_urlopen), mock.patch.object(s, "is_blocked", lambda e: False), \
+             mock.patch.object(s, "check_tier", lambda e: "pro"), mock.patch.object(s, "chat_touch_async", lambda *a, **k: None), \
+             mock.patch.object(s, "_community_brief_cached", lambda e: ""), mock.patch.dict(s.KEYS, {"BRAIN_PROVIDER": ""}, clear=False):
+            h._handle_chat(body)
+        out = h.wfile.getvalue().decode()
+        self.assertTrue(calls, out[:400])
+        self.assertIn("anthropic.com", calls[0]); self.assertIn("groq", calls[1]); self.assertIn("groq says hi", out)
+        self.assertGreater(s._BRAIN_STATS["anthropic"]["fail_until"], s.time.time() + 1000)  # benched, so the next chat skips the dead brain
+        with mock.patch.object(s, "key", lambda n, d="": {"ANTHROPIC_API_KEY": "sk-ant-x", "GROQ_API_KEY": "gk"}.get(n, "")):
+            self.assertEqual(s._brain_order(), ["groq", "anthropic"])
+        self.assertIn("no credits", s._brain_error_text(400, "Your credit balance is too low"))
+
+
 class AdminBox(unittest.TestCase):
     def test_vault_box(self):
         for needle in ('id="akSave"', 'id="akTest"', "post('/api/admin/vault',{set:{[nm]:v}", "real ones start with <b>sk-ant-</b>", 'provider:\'anthropic\''):
