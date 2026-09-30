@@ -20,7 +20,7 @@ def _keys(**have):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch53-tools-ui-adminfix"'), 2)
+        self.assertEqual(SRV.count('"patch54-nmap-console"'), 2)
         self.assertNotIn("patch46-durable", SRV)
 
 

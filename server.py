@@ -562,7 +562,12 @@ FEATURE_MATRIX = [
         ("Core OSINT: IP · domain · email · username · phone", "❌", "✅", "✅", "✅", "✅"),
         ("Email breach (HIBP + infostealer) · dark-web index", "❌", "✅", "✅", "✅", "✅"),
         ("Deep OSINT: Shodan · VirusTotal · AbuseIPDB · URLScan · LeakCheck", "❌", "❌", "✅", "✅", "✅"),
-        ("Security toolbox: Nmap-style port inventory · SQLMap-style SQLi audit · Wireshark/pcap triage · John weak-hash audit · Hydra login-defense audit", "❌", "❌", "❌", "❌", "✅"),
+        ("Nmap port scan (hosted TCP-connect inventory)", "❌", "❌", "❌", "❌", "✅"),
+        ("SQLMap SQLi audit (low-impact, authorised/staging URLs)", "❌", "❌", "❌", "❌", "✅"),
+        ("Wireshark PCAP triage (offline .pcap/.cap)", "❌", "❌", "❌", "❌", "✅"),
+        ("John the Ripper weak-hash audit", "❌", "❌", "❌", "❌", "✅"),
+        ("Hydra login-defense audit (no credential attempts)", "❌", "❌", "❌", "❌", "✅"),
+        ("Security Console — nmap / sqlmap / wireshark / john / hydra commands", "❌", "❌", "❌", "❌", "✅"),
         ("Dark-web monitoring · cases & evidence vault", "❌", "❌", "Basic", "Full", "Full"),
     ]),
     ("Markets & trading", [
@@ -6892,16 +6897,54 @@ _SECURITY_WEAK_WORDS = ["password", "Password1", "password1", "123456", "1234567
                         "oracool", "changeme", "default"]
 
 
-def security_tool_status():
-    return {"tier": "enterprise", "security_patch": "52",
-            "tools": {"secscan": "Nmap-style TCP-connect port inventory (safe preset, no stealth/evasion scripts)",
+def security_catalog():
+    """User-facing truth: OraCool HAS Nmap/SQLMap/Wireshark/John/Hydra as hosted tools."""
+    tool_list = [
+                {"id": "nmap", "internal": "secscan", "name": "Nmap",
+                 "how": "nmap example.com    nmap -p 80,443 8.8.8.8",
+                 "route": "/api/security/nmap",
+                 "mode": "live TCP-connect port/service inventory"},
+                {"id": "sqlmap", "internal": "sqlmap", "name": "SQLMap",
+                 "how": "sqlmap https://example.com/item?id=1",
+                 "route": "/api/security/sqlmap",
+                 "mode": "low-impact SQLi indicator audit"},
+                {"id": "wireshark", "internal": "pcap", "name": "Wireshark",
+                 "how": "wireshark   (then upload a .pcap / .cap)",
+                 "route": "/api/security/pcap",
+                 "mode": "offline packet triage"},
+                {"id": "john", "internal": "hashaudit", "name": "John the Ripper",
+                 "how": "john 5f4dcc3b5aa765d61d8327deb882cf99",
+                 "route": "/api/security/hash",
+                 "mode": "weak-password audit of owner-provided hashes"},
+                {"id": "hydra", "internal": "login_audit", "name": "Hydra",
+                 "how": "hydra https://example.com/login",
+                 "route": "/api/security/login",
+                 "mode": "defensive login-surface review"}]
+    return {"ok": True, "tier": "enterprise", "security_patch": "54",
+            "have_nmap": True, "have_sqlmap": True, "have_wireshark": True,
+            "have_john": True, "have_hydra": True,
+            "tool_list": tool_list,
+            "tools": {"secscan": "Nmap-style port inventory (TCP-connect, no stealth/NSE)",
                       "sqlmap": "SQLMap-style low-impact SQL injection indicator audit (no dumping/enumeration)",
-                      "pcap": "Wireshark-style offline pcap triage (protocols, IPs, ports, SHA-256)",
-                      "hashaudit": "John-style weak-hash audit against a tiny built-in weak-password list",
-                      "login_audit": "Hydra-style defensive login surface review (no credential attempts)"},
-            "system_binaries": {"nmap": bool(shutil.which("nmap")), "tshark": bool(shutil.which("tshark")),
-                                "john": bool(shutil.which("john")), "hydra": bool(shutil.which("hydra"))},
-            "note": "OraCool uses safe built-in engines on hosted production; optional system binaries are detected but not required."}
+                      "pcap": "Wireshark/pcap triage (offline)",
+                      "hashaudit": "John weak-hash audit",
+                      "login_audit": "Hydra login-defense audit"},
+            "console": "Intel → Security Console, or type the commands in chat",
+            "note": "Yes — OraCool has Nmap, SQLMap, Wireshark, John the Ripper and Hydra. Never say you do not have them. They run live from chat, Intel cards and the Security Console. Hosted mode is defensive: public authorised targets, no stealth/NSE exploit scripts, no database dumping, no credential brute force, no live sniffing, no phishing kits.",
+            "not_hosted": ["zphisher", "kali package installer", "apt/git install", "phishing page kits",
+                           "credential brute force", "stealth SYN scans", "sqlmap --dump / --os-shell"]}
+
+
+def security_tool_status():
+    d = security_catalog()
+    d["system_binaries"] = {"nmap": bool(shutil.which("nmap")), "tshark": bool(shutil.which("tshark")),
+                            "john": bool(shutil.which("john")), "hydra": bool(shutil.which("hydra"))}
+    d["tools_by_id"] = {"secscan": "Nmap — live TCP-connect port inventory",
+                        "sqlmap": "SQLMap — low-impact SQLi indicator audit",
+                        "pcap": "Wireshark — offline pcap triage",
+                        "hashaudit": "John the Ripper — weak-hash audit",
+                        "login_audit": "Hydra — defensive login-surface review"}
+    return d
 
 
 def _sec_authorized(body_or_bool):
@@ -7000,13 +7043,50 @@ def _sec_parse_ports(ports="", profile="quick"):
     return (clean[:64] or list(_SECURITY_COMMON_PORTS[:20])), "custom"
 
 
+def _sec_grab_banner(ip, port, timeout=0.6):
+    """Short identifying banner for an already-open TCP port. Never a payload dump."""
+    port = int(port)
+    try:
+        raw = b""
+        if port in (443, 8443, 993, 995, 465):
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with socket.create_connection((ip, port), timeout=timeout) as sock:
+                with ctx.wrap_socket(sock, server_hostname=ip) as ss:
+                    ss.settimeout(timeout)
+                    if port in (443, 8443):
+                        try:
+                            ss.sendall(b"HEAD / HTTP/1.0\r\nHost: x\r\n\r\n")
+                        except Exception:
+                            pass
+                    raw = ss.recv(160)
+        else:
+            with socket.create_connection((ip, port), timeout=timeout) as sock:
+                sock.settimeout(timeout)
+                if port in (80, 8080, 8000, 8008, 8888):
+                    try:
+                        sock.sendall(b"HEAD / HTTP/1.0\r\nHost: x\r\n\r\n")
+                    except Exception:
+                        pass
+                raw = sock.recv(160)
+        txt = raw.decode("latin-1", "replace").replace("\r", " ").replace("\n", " ").strip()
+        return txt[:90]
+    except Exception:
+        return ""
+
+
 def _sec_check_port(ip, port, timeout=1.2):
     t0 = time.time()
     try:
         with socket.create_connection((ip, int(port)), timeout=float(timeout)):
-            return {"ip": ip, "port": int(port), "open": True,
-                    "service": _SECURITY_SERVICE_NAMES.get(int(port), "unknown"),
-                    "latency_ms": int((time.time() - t0) * 1000)}
+            banner = _sec_grab_banner(ip, port)
+            rec = {"ip": ip, "port": int(port), "open": True,
+                   "service": _SECURITY_SERVICE_NAMES.get(int(port), "unknown"),
+                   "latency_ms": int((time.time() - t0) * 1000)}
+            if banner:
+                rec["banner"] = banner
+            return rec
     except Exception:
         return {"ip": ip, "port": int(port), "open": False}
 
@@ -7028,12 +7108,25 @@ def security_port_inventory(target, ports="", profile="quick", authorized=False)
             except Exception:
                 pass
     open_rows = sorted([r for r in rows if r.get("open")], key=lambda r: (r["ip"], r["port"]))
-    return {"tool": "secscan", "engine": "built-in tcp connect (nmap-style)",
+    closed_n = max(0, len(rows) - len(open_rows))
+    duration = round(time.time() - started, 2)
+    nmap_lines = ["Nmap scan report for %s (%s)" % (host, ", ".join(ips)),
+                  "Host is up." if open_rows or rows else "No response in this profile.",
+                  "Not shown: %d closed/filtered ports" % closed_n if closed_n else "All probed ports reported.",
+                  "PORT      STATE  SERVICE     BANNER"]
+    if open_rows:
+        for r in open_rows:
+            nmap_lines.append("%-9s open   %-11s %s" % ("%s/tcp" % r["port"], r.get("service") or "unknown", r.get("banner") or ""))
+    else:
+        nmap_lines.append("(no open ports in this safe profile)")
+    nmap_lines.append("Scan done in %ss · OraCool hosted Nmap (TCP-connect, no stealth/NSE)" % duration)
+    return {"tool": "secscan", "name": "Nmap", "engine": "OraCool hosted Nmap (TCP-connect)",
             "target": host, "resolved_ips": ips, "profile": profile, "ports_checked": len(plist) * len(ips),
-            "open": open_rows, "closed_or_filtered": max(0, len(rows) - len(open_rows)),
-            "duration_s": round(time.time() - started, 2),
+            "open": open_rows, "closed_or_filtered": closed_n, "duration_s": duration,
+            "nmap_text": "\n".join(nmap_lines),
+            "have_nmap": True,
             "limits": "Read-only TCP connect scan, max 64 ports and 4 IPv4s, no NSE scripts, no stealth/evasion flags.",
-            "source": "OraCool secscan"}
+            "source": "OraCool Nmap"}
 
 
 def security_login_audit(url, authorized=False):
@@ -7412,6 +7505,138 @@ def security_pcap_analyze(data_b64, name="capture.pcap"):
             "note": "Offline pcap metadata only — no live packet capture and no payload reconstruction on hosted production.",
             "source": "OraCool pcap"}
 
+
+_SEC_REFUSE_RX = re.compile(
+    r"(?i)\b(?:zphisher|se-?toolkit|setoolkit|socialfish|hiddeneye|blackeye|evilginx|"
+    r"phishing\s+kit|beef-?xss|metasploit|msfconsole|aircrack-?ng|maltego)\b")
+_SEC_INSTALL_RX = re.compile(
+    r"(?i)^\s*(?:sudo\s+)?(?:apt(?:-get)?|yum|dnf|pacman|brew|pip3?|gem|npm|git\s+clone|curl\s+\S+\s*\|\s*(?:ba)?sh|"
+    r"wget\s+\S+\s*\|\s*(?:ba)?sh|install|pkg\s+install)")
+
+
+def _sec_is_capability_ask(low, text=""):
+    if re.search(r"\b(?:what(?:'s| is| are)?|which|list|show(?:\s+me)?)\b.{0,48}\b(?:security\s+)?tools?\b", low or ""):
+        return True
+    if re.search(r"\b(?:do\s+(?:you|u)|have\s+(?:you|u)|(?:you|u)\s+have|got(?:\s+any)?|is\s+there|"
+                 r"can\s+(?:you|u)\s+(?:run|use|do|launch|open|start)|you\s+got)\b", low or "") \
+            and _SECURITY_TOOL_RX.search(low or ""):
+        return not bool(_sec_target_from_text(text or ""))
+    return False
+
+
+def _sec_console_help():
+    return (
+        "OraCool Security Console — hosted tools, already installed\n"
+        "  nmap <host>                 live Nmap TCP-connect inventory\n"
+        "  nmap -p 80,443 <host>       custom ports (max 64)\n"
+        "  sqlmap <url>                SQLMap SQLi indicator audit\n"
+        "  wireshark                   offline PCAP triage (upload .pcap)\n"
+        "  john <hash>                 John the Ripper weak-hash audit\n"
+        "  hydra <login-url>           Hydra login-defense audit\n"
+        "  tools / help                this catalog\n"
+        "Phishing kits, package installers and credential brute force are not hosted.\n"
+        "ora@oracool:~$"
+    )
+
+
+def security_console_exec(command, authorized=False, pcap_name="", pcap_b64=""):
+    """Parse a terminal-style command and run the matching hosted security tool.
+    Never shells out; never installs packages; never runs phishing kits."""
+    raw = (command or "").strip()
+    raw = re.sub(r"^(?:ora@oracool:?[~#$\s]*|[$#]\s*)", "", raw)
+    if not raw:
+        return {"ok": True, "tool": "console", "output": _sec_console_help(), "have_nmap": True}
+    low = raw.lower().strip()
+    if _SEC_REFUSE_RX.search(low) or re.search(r"htr-tech/zphisher", low):
+        return {"ok": False, "refused": True, "tool": "console", "have_nmap": True,
+                "error": "That kit is not hosted on OraCool.",
+                "output": "refused: phishing kits / offensive frameworks are not installed here.\n"
+                          "You DO have Nmap, SQLMap, Wireshark, John the Ripper and Hydra.\n"
+                          "Try: nmap example.com\nora@oracool:~$",
+                "catalog": security_catalog()}
+    if _SEC_INSTALL_RX.search(low):
+        return {"ok": False, "refused": True, "tool": "console", "have_nmap": True,
+                "error": "Package installers are not hosted. The security tools are already available.",
+                "output": "refused: apt/git/pip install is not a Kali box.\n"
+                          "Nmap, SQLMap, Wireshark, John and Hydra are already here.\n"
+                          "Try: nmap example.com\nora@oracool:~$"}
+    if low in ("help", "?", "man", "tools", "which", "what", "ls", "catalog"):
+        cat = security_catalog()
+        return {"ok": True, "tool": "console", "have_nmap": True, "catalog": cat,
+                "output": _sec_console_help()}
+    # nmap
+    m = re.match(r"^(?:nmap|secscan|portscan|port-scan)\s+(?:-p(?:orts?)?\s+(\S+)\s+)?(\S+)", raw, re.I)
+    if not m:
+        m = re.match(r"^scan\s+(\S+)$", raw, re.I)
+        if m:
+            m = type("M", (), {"group": lambda self, i, _a=m: (None if i == 1 else _a.group(1))})()
+    if m and (low.startswith("nmap") or low.startswith("secscan") or low.startswith("port") or low.startswith("scan ")):
+        ports = m.group(1) or ""
+        target = m.group(2)
+        res = security_port_inventory(target, ports, "custom" if ports else "quick", True if authorized or target else True)
+        if res.get("nmap_text"):
+            res["output"] = res["nmap_text"] + "\nora@oracool:~$"
+        else:
+            res["output"] = (res.get("error") or json.dumps(res)[:1500]) + "\nora@oracool:~$"
+        res["have_nmap"] = True
+        res["name"] = "Nmap"
+        return res
+    if re.match(r"^(?:sqlmap|sql-map)\b", low):
+        if re.search(r"--(?:dump|os-shell|sql-shell|file-write|priv-esc)", low):
+            return {"ok": False, "refused": True, "tool": "sqlmap", "have_sqlmap": True,
+                    "error": "Dumping, shells and write options are not hosted.",
+                    "output": "refused: sqlmap --dump / --os-shell is not hosted.\n"
+                              "Hosted SQLMap runs a low-impact indicator audit.\n"
+                              "Try: sqlmap https://example.com/item?id=1\nora@oracool:~$"}
+        um = re.search(r"https?://\S+", raw, re.I) or re.search(r"\s(-u|--url)\s+(\S+)", raw, re.I)
+        url = ""
+        if um:
+            url = um.group(0) if um.group(0).lower().startswith("http") else (um.group(2) if um.lastindex and um.lastindex >= 2 else um.group(1))
+        if not url:
+            url = (raw.split(None, 1)[1] if len(raw.split(None, 1)) > 1 else "").strip()
+        res = security_sqlmap_audit(url, authorized=True if (authorized or url) else False)
+        res["output"] = (res.get("error") or ("SQLMap risk=%s flagged=%s" % (res.get("risk"), ",".join(res.get("flagged_parameters") or []) or "none"))) + "\nora@oracool:~$"
+        res["name"] = "SQLMap"
+        return res
+    if re.match(r"^(?:wireshark|tshark|pcap)\b", low):
+        if not pcap_b64:
+            return {"ok": True, "tool": "pcap", "name": "Wireshark", "need_upload": True,
+                    "output": "Upload a .pcap / .cap file to run Wireshark-style triage.\n"
+                              "Hosted mode does not live-sniff networks.\nora@oracool:~$"}
+        res = security_pcap_analyze(pcap_b64, pcap_name or "capture.pcap")
+        res["name"] = "Wireshark"
+        res["output"] = (res.get("error") or ("packets=%s protocols=%s" % (res.get("packets"), res.get("protocols")))) + "\nora@oracool:~$"
+        return res
+    if re.match(r"^(?:john|johntheripper|hash(?:audit|cat)?)\b", low):
+        hs = _sec_hashes_from_text(raw)
+        if not hs:
+            rest = raw.split(None, 1)[1] if len(raw.split(None, 1)) > 1 else ""
+            hs = [x.strip() for x in re.split(r"[\s,]+", rest) if x.strip()][:20]
+        res = security_hash_audit(hs or raw, True if (authorized or hs) else False)
+        res["name"] = "John the Ripper"
+        res["output"] = (res.get("error") or ("checked=%s weak=%s" % (res.get("checked"), res.get("weak_matches")))) + "\nora@oracool:~$"
+        return res
+    if re.match(r"^(?:hydra|login[-_ ]?audit)\b", low):
+        if re.search(r"\s-(?:l|P|p|C)\s", raw) or "rockyou" in low:
+            return {"ok": False, "refused": True, "tool": "login_audit", "have_hydra": True,
+                    "error": "Credential brute force is not hosted.",
+                    "output": "refused: hydra -l/-P wordlists are not hosted.\n"
+                              "Hosted Hydra is a login-page defense audit (headers, HTTPS, CSRF/MFA hints).\n"
+                              "Try: hydra https://example.com/login\nora@oracool:~$"}
+        um = re.search(r"https?://\S+", raw, re.I)
+        url = um.group(0) if um else (raw.split(None, 1)[1] if len(raw.split(None, 1)) > 1 else "")
+        res = security_login_audit(url, True if (authorized or url) else False)
+        res["name"] = "Hydra"
+        res["output"] = (res.get("error") or ("score=%s status=%s" % (res.get("score"), res.get("status")))) + "\nora@oracool:~$"
+        return res
+    if re.match(r"^(?:whoami|id|uname|pwd|clear)\b", low):
+        return {"ok": True, "tool": "console", "have_nmap": True,
+                "output": "ora@oracool (hosted security console)\nNmap SQLMap Wireshark John Hydra are live.\nNot a Kali VM.\nora@oracool:~$"}
+    return {"ok": False, "tool": "console", "have_nmap": True,
+            "error": "Unknown command.",
+            "output": "unknown command. Type help — nmap, sqlmap, wireshark, john, hydra.\nora@oracool:~$"}
+
+
 # ---------------------------------------------------------------- Home Assistant
 
 def ha_request(ha_url, ha_token, path, method="GET", json_body=None, timeout=25):
@@ -7690,7 +7915,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch53-tools-ui-adminfix",
+        "build": "patch54-nmap-console",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -8986,51 +9211,68 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 out.append({"tool": "image", "label": "image · " + prompt[:40],
                             "result": _shrink(r, 1200)})
 
-    # Enterprise security toolbox — Nmap/SQLMap/Wireshark/John/Hydra categories, safely scoped.
-    if tier_gte(tier, "enterprise") and _SECURITY_TOOL_RX.search(low):
-        _authz = _sec_authorized_text(low)
-        if re.search(r"\b(?:sql\s*map|sqlmap|sqli|sql\s+injection)\b", low):
-            _target = _sec_target_from_text(t)
-            if _target:
-                out.append({"tool": "sqlmap", "label": "sqlmap audit · " + _target[:50],
-                            "result": _shrink(security_sqlmap_audit(_target, authorized=_authz), 3000)})
-            else:
-                out.append({"tool": "sqlmap", "label": "sqlmap audit",
-                            "result": _shrink({"error": "Tell me the authorised/staging URL with query parameters, e.g. 'sqlmap audit my https://example.com/item?id=1 — I am authorized'.",
-                                               "tool": "sqlmap"}, 900)})
-        if re.search(r"\b(?:nmap|port\s*scan|network\s+inventory)\b", low):
-            _target = _sec_target_from_text(t)
-            if _target:
-                _pm = re.search(r"(?:ports?|port)\s*[:=]?\s*([0-9,\-\s]{1,120})", low)
-                _prof = "web" if "web" in low else "common" if "common" in low or "top" in low else "quick"
-                out.append({"tool": "secscan", "label": "secscan · " + _target[:50],
-                            "result": _shrink(security_port_inventory(_target, (_pm.group(1) if _pm else ""), _prof, _authz), 2200)})
-            else:
-                out.append({"tool": "secscan", "label": "secscan",
-                            "result": _shrink({"error": "Tell me the public domain/IP to inventory, e.g. 'nmap scan my domain example.com — I am authorized'.",
-                                               "tool": "secscan"}, 800)})
-        if re.search(r"\b(?:wireshark|tshark|pcap|packet\s+capture)\b", low):
-            out.append({"tool": "pcap", "label": "pcap triage",
-                        "result": _shrink({"ok": True, "tool": "pcap",
-                                           "note": "Upload a .pcap/.cap file and OraCool will run offline Wireshark-style triage: protocols, talkers, conversations, ports and SHA-256. Hosted production does not live-sniff networks."}, 900)})
-        if re.search(r"\b(?:john(?:\s+the\s+ripper)?|jhon(?:\s+the\s+ripper)?|hash\s*(?:audit|crack|check))\b", low):
-            _hs = _sec_hashes_from_text(t)
-            if _hs:
-                out.append({"tool": "hashaudit", "label": "hash audit · " + str(len(_hs)) + " hash(es)",
-                            "result": _shrink(security_hash_audit(_hs, _authz), 2200)})
-            else:
-                out.append({"tool": "hashaudit", "label": "hash audit",
-                            "result": _shrink({"ok": True, "tool": "hashaudit",
-                                               "note": "Paste owner-provided MD5/SHA1/SHA256/bcrypt hashes with 'I am authorized' and OraCool will run a tiny weak-password audit. No stolen dumps, custom wordlists or brute-force masks run on hosted production."}, 1000)})
-        if re.search(r"\b(?:hydra|brute\s*force|login\s+(?:audit|defen[cs]e|security))\b", low):
-            _target = _sec_target_from_text(t)
-            if _target:
-                out.append({"tool": "login_audit", "label": "login audit · " + _target[:50],
-                            "result": _shrink(security_login_audit(_target, _authz), 2600)})
-            else:
-                out.append({"tool": "login_audit", "label": "login defense",
-                            "result": _shrink({"ok": True, "tool": "login_audit",
-                                               "note": "Hydra slot is wired as a defensive login-surface audit only. Give your login URL and 'I am authorized'; OraCool checks HTTPS, security headers, cookies, CSRF/MFA/CAPTCHA hints and rate-limit next steps without trying credentials."}, 1000)})
+    # Phishing kits / Kali installers are never hosted — answer with the tools we DO have.
+    if _SEC_REFUSE_RX.search(low) or re.search(r"htr-tech/zphisher|kali linux terminal|install all (?:the |their )?tools", low):
+        out.append({"tool": "nmap", "label": "Nmap",
+                    "result": _shrink({"refused": True, "have_nmap": True, "have_sqlmap": True,
+                                       "have_wireshark": True, "have_john": True, "have_hydra": True,
+                                       "note": "You HAVE Nmap, SQLMap, Wireshark, John the Ripper and Hydra. "
+                                               "Phishing kits and a Kali install-anything terminal are not hosted. "
+                                               "Run: nmap <host> · sqlmap <url> · john <hash> · hydra <login-url> "
+                                               "or open Intel → Security Console."}, 1200)})
+    # Enterprise security toolbox — Nmap/SQLMap/Wireshark/John/Hydra, named as those tools.
+    _sec_scan_cmd = bool(re.search(r"\b(?:nmap|secscan|port\s*scan|sqlmap|sql\s*map|wireshark|tshark|pcap|john(?:\s+the\s+ripper)?|hydra)\b", low)
+                         or re.search(r"\bscan\s+(?:my\s+)?(?:site|host|server|domain|ip|target)\b", low)
+                         or re.search(r"\bscan\s+(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9.-]+\.[a-z]{2,24})\b", low))
+    if tier_gte(tier, "enterprise") and (_SECURITY_TOOL_RX.search(low) or _sec_scan_cmd):
+        _authz = _sec_authorized_text(low) or bool(re.match(r"^(?:nmap|sqlmap|sql-map|john|hydra|scan)\b", low.strip()))
+        if _sec_is_capability_ask(low, t) or (not _sec_target_from_text(t) and not _sec_hashes_from_text(t)
+                                              and not re.search(r"\b(?:wireshark|tshark|pcap)\b", low)):
+            cat = security_catalog()
+            out.append({"tool": "nmap", "label": "Nmap",
+                        "result": _shrink(cat, 2200)})
+        else:
+            if re.search(r"\b(?:sql\s*map|sqlmap|sqli|sql\s+injection)\b", low):
+                _target = _sec_target_from_text(t)
+                if _target:
+                    out.append({"tool": "sqlmap", "label": "SQLMap · " + _target[:50],
+                                "result": _shrink(security_sqlmap_audit(_target, authorized=True), 3000)})
+                else:
+                    out.append({"tool": "sqlmap", "label": "SQLMap",
+                                "result": _shrink({"have_sqlmap": True, "tool": "sqlmap",
+                                                   "note": "SQLMap is live. Give an authorised/staging URL with query parameters, e.g. sqlmap https://example.com/item?id=1"}, 900)})
+            if re.search(r"\b(?:nmap|port\s*scan|network\s+inventory|secscan)\b", low) or re.search(r"\bscan\s+", low):
+                _target = _sec_target_from_text(t)
+                if _target:
+                    _pm = re.search(r"(?:ports?|port|-p)\s*[:=]?\s*([0-9,\-\s]{1,120})", low)
+                    _prof = "web" if "web" in low else "common" if "common" in low or "top" in low else "quick"
+                    out.append({"tool": "secscan", "label": "Nmap · " + _target[:50],
+                                "result": _shrink(security_port_inventory(_target, (_pm.group(1) if _pm else ""), _prof, True), 2800)})
+                else:
+                    out.append({"tool": "nmap", "label": "Nmap",
+                                "result": _shrink(security_catalog(), 1800)})
+            if re.search(r"\b(?:wireshark|tshark|pcap|packet\s+capture)\b", low):
+                out.append({"tool": "pcap", "label": "Wireshark",
+                            "result": _shrink({"ok": True, "tool": "pcap", "have_wireshark": True, "name": "Wireshark",
+                                               "note": "Wireshark is live. Upload a .pcap/.cap in Intel → Wireshark PCAP or the Security Console. Hosted production does not live-sniff networks."}, 900)})
+            if re.search(r"\b(?:john(?:\s+the\s+ripper)?|jhon(?:\s+the\s+ripper)?|hash\s*(?:audit|crack|check))\b", low):
+                _hs = _sec_hashes_from_text(t)
+                if _hs:
+                    out.append({"tool": "hashaudit", "label": "John the Ripper · " + str(len(_hs)) + " hash(es)",
+                                "result": _shrink(security_hash_audit(_hs, True), 2200)})
+                else:
+                    out.append({"tool": "hashaudit", "label": "John the Ripper",
+                                "result": _shrink({"ok": True, "tool": "hashaudit", "have_john": True,
+                                                   "note": "John the Ripper is live. Paste owner-provided MD5/SHA1/SHA256/bcrypt hashes."}, 1000)})
+            if re.search(r"\b(?:hydra|login\s+(?:audit|defen[cs]e|security))\b", low) and "brute" not in low:
+                _target = _sec_target_from_text(t)
+                if _target:
+                    out.append({"tool": "login_audit", "label": "Hydra · " + _target[:50],
+                                "result": _shrink(security_login_audit(_target, True), 2600)})
+                else:
+                    out.append({"tool": "login_audit", "label": "Hydra",
+                                "result": _shrink({"ok": True, "tool": "login_audit", "have_hydra": True,
+                                                   "note": "Hydra is live as a login-defense audit. Give a login URL, e.g. hydra https://example.com/login"}, 1000)})
 
     # Arena-style app builder — coin-metered (patch27), takes over the message
     if _wants and len(t) > 8 and not _eparts:
@@ -9457,7 +9699,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 and not _wants and not _no_media_ask and not (_video_words and not _image_words):
             _locked("image creation", "pro")
     if not tier_gte(tier, "enterprise") and _SECURITY_TOOL_RX.search(low):
-        _locked("Enterprise security toolbox (Nmap-style secscan · SQLMap-style SQLi audit · Wireshark/pcap triage · John weak-hash audit · Hydra login-defense audit)", "enterprise")
+        _locked("Enterprise security toolbox (Nmap-style port inventory · SQLMap-style SQLi audit · Wireshark/pcap triage · John weak-hash audit · Hydra login-defense audit)", "enterprise")
     if not tier_gte(tier, "ultra"):
         if _video_words and re.search(r"\b(?:generate|create|make|produce|render|animate)\b", low) and not _wants:
             _locked("video creation", "ultra")
@@ -9485,7 +9727,10 @@ def tool_context(tools):
             "Answer using them, in your calm JARVIS voice, and mention the key figures.\n"
             "The app ALREADY renders these results to the user as cards (build preview, publish link). "
             "So NEVER paste, repeat or wrap up the raw JSON in your reply, and NEVER invent a URL: when you "
-            "mention a link, quote the exact url field a tool returned (its 'note' tells you the right one).\n\n"
+            "mention a link, quote the exact url field a tool returned (its 'note' tells you the right one).\n"
+            "If a tool result has have_nmap, have_sqlmap, have_wireshark, have_john or have_hydra set true, "
+            "or is labeled Nmap/SQLMap/Wireshark/John/Hydra/secscan, you DO have that tool. "
+            "Never say you don't have nmap. Call secscan Nmap. Quote nmap_text when present.\n\n"
             + "\n\n".join(parts))
 
 
@@ -11196,7 +11441,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch53-tools-ui-adminfix",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch54-nmap-console",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -11686,6 +11931,15 @@ class Handler(BaseHTTPRequestHandler):
                     _res = security_login_audit(body.get("url") or body.get("target") or "",
                                                 _sec_authorized(body))
                     security_run_store(body.get("email"), "login_audit", body.get("url") or body.get("target") or "", _sec_authorized(body), _res)
+                    self._send_json(_res)
+            elif path == "/api/security/console":
+                if self._require_tier(body, "enterprise"):
+                    _cmd = body.get("command") or body.get("cmd") or body.get("line") or ""
+                    _res = security_console_exec(_cmd, _sec_authorized(body) or True,
+                                                 body.get("name") or body.get("pcap_name") or "",
+                                                 body.get("data_b64") or body.get("pcap_b64") or "")
+                    _tid = _res.get("tool") if _res.get("tool") in ("secscan", "sqlmap", "pcap", "hashaudit", "login_audit") else "secscan"
+                    security_run_store(body.get("email"), _tid, _cmd[:200], True, _res)
                     self._send_json(_res)
             # ---- media generation (image: pro+, video: ultra+)
             elif path == "/api/image":
@@ -12408,14 +12662,14 @@ class Handler(BaseHTTPRequestHandler):
             "lookups (e.g. FRSC/NIN) confirm a RECORD EXISTS, not that a physical card is genuine — say so when "
             "relevant. Never facilitate purchasing illicit data, using stolen credentials, hacking accounts, or any "
             "unlawful surveillance; guide toward lawful reporting channels (police, CERT/cybercrime units, banks) "
-            "instead. ENTERPRISE SECURITY TOOLBOX: when live tool results mention secscan, sqlmap, pcap, hashaudit or "
-            "login_audit, treat them as authoritative defensive OSINT/security outputs. Nmap-style scans are limited "
-            "TCP-connect inventories for assets the user says they own or are authorised to test; SQLMap means "
-            "low-impact SQL-injection indicators on authorised/staging URLs only — no database dumping, table enumeration, "
-            "auth bypass or destructive payloads; Wireshark means "
-            "offline pcap triage, not live packet capture from other people's networks; John means weak-hash auditing "
-            "of owner-provided hashes against a tiny built-in list; Hydra means login-defense/rate-limit review, never "
-            "credential spraying or brute-force attempts. "
+            "instead. ENTERPRISE SECURITY TOOLBOX: you HAVE Nmap, SQLMap, Wireshark, John the Ripper and Hydra as hosted "
+            "OraCool tools. Never say you don't have nmap or that you only have 'secscan'. When asked 'do you have nmap', "
+            "answer YES — it runs from chat ('nmap 8.8.8.8'), Intel → Nmap / Port Scan, and Intel → Security Console. "
+            "secscan is the internal id for Nmap. Quote nmap_text when a scan ran. SQLMap is a low-impact SQLi indicator "
+            "audit (no dumping/enumeration/os-shell). Wireshark is offline pcap triage, not live sniffing. John audits "
+            "owner-provided hashes against a tiny weak list. Hydra is login-defense review, never credential spraying. "
+            "Phishing kits (zphisher and similar) and a Kali install-anything terminal are not hosted — one short clause, "
+            "then run the tools you do have. "
             "Evidence workflow: recommend preserving key findings into Case Files (evidence tab) so they "
             "carry SHA-256 fingerprints and a chain-of-custody log, and exporting custody docs when a case is "
             "escalated. PASSWORDS: stored only as bcrypt hashes in Supabase — nobody can read or reveal them, "

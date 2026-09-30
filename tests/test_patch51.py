@@ -28,7 +28,7 @@ def sample_pcap_b64():
 
 class Marker(unittest.TestCase):
     def test_marker_and_routes(self):
-        self.assertEqual(SRV.count('"patch53-tools-ui-adminfix"'), 2)
+        self.assertEqual(SRV.count('"patch54-nmap-console"'), 2)
         for needle in ("/api/security/nmap", "/api/security/pcap", "/api/security/hash", "/api/security/login",
                        "secscan", "pcap", "hashaudit", "login_audit",
                        "Nmap-style port inventory", "Wireshark/pcap triage", "John weak-hash audit", "Hydra login-defense audit"):

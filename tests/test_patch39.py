@@ -20,7 +20,7 @@ NAME = "Daniel " + "Onakoya"  # split so this test file itself never carries the
 
 class CreatorPrivacy(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch53-tools-ui-adminfix"'), 2)
+        self.assertEqual(SRV.count('"patch54-nmap-console"'), 2)
 
     def test_client_source_keeps_private_details_out(self):
         # patch48: the creator's NAME is public (creator card); the birthday and secondary email never ship to clients
