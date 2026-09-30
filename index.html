@@ -4757,9 +4757,33 @@ async function renderAdmin(){
     <div class="result" id="aDiag" style="margin-top:8px"></div>
     <div class="result" id="aMod" style="margin-top:8px"></div>
     <div id="aBrand" style="margin-top:14px"></div>
+    <div class="result" id="aKeys" style="margin-top:8px">
+      <div class="tag">🔑 Server keys (vault) — live on Render within 5 minutes, no redeploy</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center">
+        <select id="akName" style="min-width:210px"><option value="ANTHROPIC_API_KEY">ANTHROPIC_API_KEY (Claude brain)</option><option value="ANTHROPIC_MODEL">ANTHROPIC_MODEL</option><option value="BRAIN_PROVIDER">BRAIN_PROVIDER (auto preference)</option><option value="GEMINI_API_KEY">GEMINI_API_KEY (vision)</option><option value="GROQ_API_KEY">GROQ_API_KEY</option><option value="OPENAI_API_KEY">OPENAI_API_KEY</option><option value="PEXELS_API_KEY">PEXELS_API_KEY</option><option value="TURN_URLS">TURN_URLS (calls relay)</option><option value="TURN_USERNAME">TURN_USERNAME</option><option value="TURN_CREDENTIAL">TURN_CREDENTIAL</option><option value="CREATOR_PHOTO">CREATOR_PHOTO (image URL)</option><option value="__custom">Other name…</option></select>
+        <input type="text" id="akCustom" placeholder="KEY_NAME" style="display:none;max-width:180px;text-transform:uppercase">
+        <input type="password" id="akValue" placeholder="paste the value (e.g. sk-ant-…)" style="flex:1;min-width:220px" autocomplete="off">
+        <button class="btn primary" id="akSave">Save to vault</button>
+        <button class="btn ghost" id="akTest" title="Ask Claude one question through OraCool">🧪 Test Claude</button>
+      </div>
+      <div class="muted" id="akOut" style="font-size:11px;margin-top:6px">Values are stored encrypted-at-rest in Supabase and never shown again. Render environment variables still win over the vault.</div>
+    </div>
     <div id="aUsers"><div style="text-align:center;padding:16px"><span class="spinner"></span></div></div>
     <div class="result" id="aOut"></div>`;
   $('#aRefresh').onclick=refreshAdmin;
+  $('#akName').onchange=()=>{ $('#akCustom').style.display=$('#akName').value==='__custom'?'':'none'; };
+  $('#akSave').onclick=async()=>{ const nm=($('#akName').value==='__custom'?($('#akCustom').value||'').trim().toUpperCase():$('#akName').value); const v=($('#akValue').value||'').trim(); const out=$('#akOut');
+    if(!/^[A-Z][A-Z0-9_]{2,40}$/.test(nm)||!v){ out.innerHTML='<span style="color:var(--danger)">Pick a key name and paste its value.</span>'; return; }
+    if(nm==='ANTHROPIC_API_KEY' && !/^sk-ant-/.test(v)){ out.innerHTML='<span style="color:var(--danger)">That is not an Anthropic secret key — real ones start with <b>sk-ant-</b> (the <code>apikey_…</code> id shown in the console is only a label).</span>'; return; }
+    out.innerHTML='<span class="spinner"></span>'; const r=await post('/api/admin/vault',{set:{[nm]:v}, token:proToken});
+    if(r.ok){ $('#akValue').value=''; out.innerHTML='<span style="color:var(--ok)">✓ Saved '+escapeHtml(nm)+'. Vault now holds: '+escapeHtml((r.keys||[]).join(', '))+'. The server picks it up within 5 minutes'+(nm==='ANTHROPIC_API_KEY'?' — then tap 🧪 Test Claude.':'.')+'</span>'; }
+    else out.innerHTML='<span style="color:var(--danger)">'+escapeHtml(r.error||r.message||'failed')+'</span>'; };
+  $('#akTest').onclick=async()=>{ const out=$('#akOut'); out.innerHTML='<span class="spinner"></span> asking Claude…';
+    try{ const payload={messages:[{role:'user',content:'In one sentence: introduce yourself as OraCool AI and tell me which model family is answering.'}],stream:true,provider:'anthropic',max_tokens:120,access_token:session&&session.access_token,email:myEmail(),token:proToken||''};
+      const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); const rd=resp.body.getReader(); const dec=new TextDecoder(); let buf='',txt='',err='';
+      while(true){ const {done,value}=await rd.read(); if(done) break; buf+=dec.decode(value,{stream:true}); let i; while((i=buf.indexOf('\n\n'))>=0){ const ch=buf.slice(0,i); buf=buf.slice(i+2); for(const l of ch.split('\n')){ if(!l.startsWith('data:')) continue; const d=l.slice(5).trim(); if(d==='[DONE]') continue; try{ const j=JSON.parse(d); if(j.error) err=j.error; const c=j.choices&&j.choices[0]&&j.choices[0].delta&&j.choices[0].delta.content; if(c) txt+=c; }catch(e){} } } }
+      out.innerHTML=err?'<span style="color:var(--danger)">Claude: '+escapeHtml(err)+'</span>':(txt?'<span style="color:var(--ok)">✓ Claude answered:</span> '+escapeHtml(txt):'<span style="color:var(--danger)">No reply — is ANTHROPIC_API_KEY saved (and picked up yet)?</span>');
+    }catch(e){ out.innerHTML='<span style="color:var(--danger)">'+escapeHtml(e.message||e)+'</span>'; } };
   $('#aSearch').addEventListener('input',()=>{ renderAdminRows(adminCache); });
   await refreshAdmin();
   if($('#aMod')) renderModeration();

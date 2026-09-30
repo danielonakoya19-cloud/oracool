@@ -63,13 +63,16 @@ def _groq_chat_models():
 
 _BRAIN_STATS = {}     # brain name -> {"ewma": seconds-to-first-token, "fail_until": ts, "n": count}
 _BRAIN_LOCK = threading.Lock()
-_BRAIN_PRIOR = {"groq": 1.2, "agnes": 2.5, "openai": 2.0}
+_BRAIN_PRIOR = {"anthropic": 0.8, "groq": 1.2, "agnes": 2.5, "openai": 2.0}
+ANTHROPIC_BASE = "https://api.anthropic.com/v1"
+ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-4-5"
 _BRAIN_SLOW_S = 8.0   # a brain that takes longer than this to its first token is demoted below the others
 
 
 def _brain_name(base_url):
     b = str(base_url or "")
-    return "agnes" if "agnes-ai" in b else "openai" if "api.openai.com" in b else "groq" if "groq" in b else "custom"
+    return ("anthropic" if "anthropic" in b else "agnes" if "agnes-ai" in b else "openai" if "api.openai.com" in b
+            else "groq" if "groq" in b else "custom")
 
 
 def _brain_note(name, first_token_s=None, failed=False, cooldown=120):
@@ -99,7 +102,7 @@ def _brain_score(name):
 
 def _brain_order():
     """Configured brains, fastest healthy first (ties → the operator's preferred provider)."""
-    have = [n for n, k in (("groq", "GROQ_API_KEY"), ("agnes", "AGNES_API_KEY"), ("openai", "OPENAI_API_KEY")) if key(k)]
+    have = [n for n, k in (("anthropic", "ANTHROPIC_API_KEY"), ("groq", "GROQ_API_KEY"), ("agnes", "AGNES_API_KEY"), ("openai", "OPENAI_API_KEY")) if key(k)]
     return sorted(have, key=_brain_score)
 
 
@@ -156,10 +159,99 @@ def _retry_after_s(headers, body=""):
     return 0
 
 
+def _anthropic_model():
+    return str(key("ANTHROPIC_MODEL") or KEYS.get("ANTHROPIC_MODEL") or ANTHROPIC_DEFAULT_MODEL).strip()
+
+
+def _anthropic_messages(messages):
+    """OpenAI-style messages -> (system, messages) for Anthropic: system turns become the system prompt, roles must
+    alternate and start with a user turn, consecutive same-role turns are merged."""
+    system, out = [], []
+    for m in messages or []:
+        role = m.get("role"); content = m.get("content")
+        if isinstance(content, list):  # multimodal parts -> text only
+            content = " ".join(str(p.get("text") or "") for p in content if isinstance(p, dict))
+        content = str(content or "")
+        if role == "system":
+            if content.strip():
+                system.append(content)
+            continue
+        role = "assistant" if role == "assistant" else "user"
+        if out and out[-1]["role"] == role:
+            out[-1]["content"] += "\n\n" + content
+        else:
+            out.append({"role": role, "content": content})
+    if not out or out[0]["role"] != "user":
+        out.insert(0, {"role": "user", "content": "(continue)"})
+    if out[-1]["role"] != "user":
+        out.append({"role": "user", "content": "(continue)"})
+    for m in out:
+        if not m["content"].strip():
+            m["content"] = "(continue)"
+    return "\n\n".join(system), out
+
+
+def _anthropic_request(api_key, payload, stream=True):
+    """Build the urllib request for /v1/messages from an OpenAI-shaped payload."""
+    system, msgs = _anthropic_messages(payload.get("messages") or [])
+    body = {"model": payload.get("model") or _anthropic_model(), "messages": msgs,
+            "max_tokens": int(max(16, min(int(payload.get("max_tokens") or 1024), 8192))), "stream": bool(stream)}
+    if system:
+        body["system"] = system
+    try:
+        body["temperature"] = max(0.0, min(1.0, float(payload.get("temperature", 0.7))))
+    except Exception:
+        pass
+    headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json",
+               "Accept": "text/event-stream" if stream else "application/json", "User-Agent": UA}
+    return urllib.request.Request(ANTHROPIC_BASE + "/messages", data=json.dumps(body).encode("utf-8"), headers=headers, method="POST")
+
+
+class _AnthropicSSE:
+    """Iterates an Anthropic event-stream and yields OpenAI-format `data:` lines (bytes) so the chat loop needs no
+    special cases. Exposes .fp/.close() like the HTTPResponse it wraps."""
+    def __init__(self, resp):
+        self._r = resp
+        self.fp = getattr(resp, "fp", None)
+        self.headers = getattr(resp, "headers", {})
+        self.status = getattr(resp, "status", 200)
+
+    def __iter__(self):
+        for raw in self._r:
+            line = raw.decode("utf-8", "replace").strip()
+            if not line.startswith("data:"):
+                continue
+            try:
+                d = json.loads(line[5:].strip())
+            except Exception:
+                continue
+            t = d.get("type")
+            if t == "content_block_delta":
+                txt = (d.get("delta") or {}).get("text")
+                if txt:
+                    yield ("data: " + json.dumps({"choices": [{"delta": {"content": txt}}]}) + "\n").encode("utf-8")
+            elif t == "message_delta":
+                sr = (d.get("delta") or {}).get("stop_reason")
+                if sr:
+                    fr = "length" if sr == "max_tokens" else "stop"
+                    yield ("data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": fr}]}) + "\n").encode("utf-8")
+            elif t == "message_stop":
+                yield b"data: [DONE]\n"
+            elif t == "error":
+                yield ("data: " + json.dumps({"error": str((d.get("error") or {}).get("message") or "Anthropic stream error")[:200]}) + "\n").encode("utf-8")
+                yield b"data: [DONE]\n"
+
+    def close(self):
+        try:
+            self._r.close()
+        except Exception:
+            pass
+
+
 def _brain_error_text(code, body):
     """A human sentence for a provider failure (the raw JSON stays for the log)."""
     low = (body or "").lower()
-    if "insufficient_quota" in low or "no credits" in low or "billing" in low:
+    if "insufficient_quota" in low or "no credits" in low or "billing" in low or "credit balance" in low:
         return "The AI provider account has no credits left — the operator needs to top it up or switch provider."
     if code == 429 or "rate limit" in low or "rate_limit" in low:
         return "Every AI brain is rate-limited right now (daily token caps) — please try again in a few minutes."
@@ -6904,7 +6996,7 @@ def admin_vault_status():
     """Administrator-only: which server secrets are loaded (booleans only, never values)."""
     return {
         "keys": {n: bool(key(n)) for n in VAULT_STATUS_KEYS},
-        "brain": {"openai": bool(key("OPENAI_API_KEY")), "groq": bool(key("GROQ_API_KEY")),
+        "brain": {"openai": bool(key("OPENAI_API_KEY")), "groq": bool(key("GROQ_API_KEY")), "anthropic": bool(key("ANTHROPIC_API_KEY")),
                   "agnes": bool(key("AGNES_API_KEY")),
                   "default_provider": KEYS.get("BRAIN_PROVIDER", "groq"),
                   "default_model": KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL),
@@ -6980,7 +7072,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch49-clock",
+        "build": "patch50-claude",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -10396,7 +10488,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch49-clock",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch50-claude",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -11341,7 +11433,10 @@ class Handler(BaseHTTPRequestHandler):
                     tried.add(m)
                     return gk, "https://api.groq.com/openai/v1", m
         # patch47: other brains in measured order (fastest healthy first), never the one we just left
-        for _bn in _brain_order() + [n for n in ("groq", "agnes", "openai") if n not in _brain_order()]:
+        for _bn in _brain_order() + [n for n in ("anthropic", "groq", "agnes", "openai") if n not in _brain_order()]:
+            if _bn == "anthropic" and key("ANTHROPIC_API_KEY") and provider in ("auto", "anthropic") and "anthropic" not in tried and "anthropic" not in (base_url or ""):
+                tried.add("anthropic")
+                return key("ANTHROPIC_API_KEY"), ANTHROPIC_BASE, _anthropic_model()
             if _bn == "groq" and gk and provider in ("auto", "groq") and "groq" not in tried and "groq" not in (base_url or ""):
                 tried.add("groq")
                 m = KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL)
@@ -11366,6 +11461,8 @@ class Handler(BaseHTTPRequestHandler):
         if api_key:
             return api_key, base_url or "https://api.openai.com/v1", model or "gpt-4o-mini", provider
 
+        if provider in ("anthropic", "claude"):
+            return key("ANTHROPIC_API_KEY"), ANTHROPIC_BASE, model or _anthropic_model(), "anthropic"
         if provider == "groq":
             k = key("GROQ_API_KEY")
             return k, "https://api.groq.com/openai/v1", model or KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), provider
@@ -11378,7 +11475,10 @@ class Handler(BaseHTTPRequestHandler):
         # auto (patch47): the fastest HEALTHY brain answers first. BRAIN_PROVIDER (keys.json/env) is a
         # preference bonus, not a hard order — a brain that has been slow or rate-limited is demoted for a
         # while so the user is never parked behind a 40-second reply or a 429 when another brain is fine.
+        _streaming = bool(body.get("stream", True))
         for _bn in _brain_order():
+            if _bn == "anthropic" and key("ANTHROPIC_API_KEY") and _streaming:
+                return key("ANTHROPIC_API_KEY"), ANTHROPIC_BASE, model or _anthropic_model(), provider
             if _bn == "agnes" and key("AGNES_API_KEY"):
                 return key("AGNES_API_KEY"), AGNES_BASE, model or KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), provider
             if _bn == "groq" and key("GROQ_API_KEY"):
@@ -11860,12 +11960,19 @@ class Handler(BaseHTTPRequestHandler):
                        "Accept": "text/event-stream", "User-Agent": UA}
             spayload = dict(payload)
             spayload["messages"] = stream_msgs
-            req = urllib.request.Request(url, data=json.dumps(spayload).encode("utf-8"),
-                                         headers=headers, method="POST")
+            _is_anthropic = "anthropic" in (base_url or "")
+            if _is_anthropic:  # patch50: Claude speaks the Messages API — translate request and stream
+                spayload.pop("reasoning_effort", None)
+                req = _anthropic_request(api_key, spayload, stream=True)
+            else:
+                req = urllib.request.Request(url, data=json.dumps(spayload).encode("utf-8"),
+                                             headers=headers, method="POST")
             ctx = ssl.create_default_context()
             _t_req = time.time()
             try:
                 resp = urllib.request.urlopen(req, timeout=_FIRST_TOKEN_S, context=ctx)  # patch47: silence → next brain in 15s, not 180s
+                if _is_anthropic:
+                    resp = _AnthropicSSE(resp)
             except urllib.error.HTTPError as e:
                 _body = e.read().decode("utf-8", "replace")
                 if e.code == 429 or e.code >= 500:
