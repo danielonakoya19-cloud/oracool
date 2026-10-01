@@ -164,7 +164,7 @@ class StickerTests(unittest.TestCase):
 
 class WiringTests(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch57-intel-hide-userbase"'), 2)
+        self.assertEqual(SRV.count('"patch58-media-honesty"'), 2)
 
     def test_service_privacy_gates(self):
         for fn in ("def _room_member_ok", "def room_add_member", "def room_remove_member",

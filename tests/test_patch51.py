@@ -28,7 +28,7 @@ def sample_pcap_b64():
 
 class Marker(unittest.TestCase):
     def test_marker_and_routes(self):
-        self.assertEqual(SRV.count('"patch57-intel-hide-userbase"'), 2)
+        self.assertEqual(SRV.count('"patch58-media-honesty"'), 2)
         for needle in ("/api/security/nmap", "/api/security/pcap", "/api/security/hash", "/api/security/login",
                        "secscan", "pcap", "hashaudit", "login_audit",
                        "Nmap-style port inventory", "Wireshark/pcap triage", "John weak-hash audit", "Hydra login-defense audit"):
@@ -83,7 +83,7 @@ class SecurityTools(unittest.TestCase):
     def test_auto_tools_enterprise_and_locked(self):
         with mock.patch.object(s, "security_port_inventory", lambda *a, **k: {"tool": "secscan", "open": []}):
             out = s.auto_tools("nmap scan example.com ports 80,443 — I am authorized", tier="enterprise", email="e@example.com")
-        self.assertTrue(any(x["tool"] == "secscan" for x in out), out)
+        self.assertTrue(any(x["tool"] == "nmap" for x in out), out)
         out2 = s.auto_tools("run john the ripper on this hash", tier="pro", email="p@example.com")
         self.assertTrue(any(x["tool"] == "locked" and "Enterprise security toolbox" in x["label"] for x in out2), out2)
 

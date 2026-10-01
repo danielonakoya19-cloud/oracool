@@ -70,7 +70,7 @@ def test_manifest_traversal_blocked():
 
 
 def test_health_marker_patch26():
-    assert '"build": "patch57-intel-hide-userbase"' in open(os.path.join(ROOT, "server.py")).read()
+    assert '"build": "patch58-media-honesty"' in open(os.path.join(ROOT, "server.py")).read()
 
 
 # ---------------------------------------------------------------- client

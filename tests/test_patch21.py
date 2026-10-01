@@ -47,7 +47,7 @@ class FakeSSE:
 class BuildMarkerTests(unittest.TestCase):
     def test_patch21_marker(self):
         src = (ROOT / "server.py").read_text(errors="ignore")
-        self.assertIn('"build": "patch57-intel-hide-userbase"', src)
+        self.assertIn('"build": "patch58-media-honesty"', src)
 
 
 class CascadeOrderTests(unittest.TestCase):

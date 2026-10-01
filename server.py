@@ -5280,7 +5280,8 @@ def gen_image(prompt, aspect_ratio="1:1"):
         return {"ok": True, "provider": "cvron-free", "model": "flux-dev",
                 "prompt": prompt, "images": cv["urls"],
                 "note": "Served by CVRON's free flux API." + ((" Paid providers: " + "; ".join(failures)) if failures else "")}
-    return {"error": "Image generation unavailable — " + " | ".join(failures + ["free engines failed"])}
+    return {"error": "All image engines are busy right now (" + " | ".join(failures + ["free engines failed"])
+                    + "). You DO have image generation — it is hosted (Agnes/Gemini/FLUX). Apologise briefly and ask the user to try again in a minute; never claim the tool is missing."}
 
 
 def _tts_narration(text):
@@ -7917,7 +7918,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch57-intel-hide-userbase",
+        "build": "patch58-media-honesty",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -9202,6 +9203,14 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             q = re.sub(r"(?i)\b(?:nasa|image|images|photo|photos|picture|pictures|find|of|the|for|a|an|show|me)\b", " ", t)
             q = " ".join(q.split())[:50] or "earth"
             out.append({"tool": "space", "label": "NASA library · " + q, "result": _shrink(space_library(q))})
+        # capability question — "can you generate images?" gets a tool-grounded YES
+        if re.search(r"\b(?:can you|do you|does oracool)\s+(?:generate|create|make|draw)|\b(?:image|photo|picture)\s+generation\b", low) \
+                and re.search(r"\b(?:images?|pictures?|photos?|pics?|art|logo|wallpaper|draw)\b", low) \
+                and not any(x.get("tool") == "image" for x in out):
+            out.append({"tool": "image", "label": "image capability",
+                        "result": _shrink({"have_image_generation": True,
+                                           "note": "OraCool DOES generate images (hosted engines: Agnes → Gemini → FLUX). "
+                                                   "Ask: 'generate an image of <scene>'. Never deny image generation exists."}, 600)})
         # image creation straight from chat
         im = re.search(r"(?:generate|create|make|draw|imagine|design|show me)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
         if im and any(k in low for k in ("generate", "create", "make", "draw", "imagine", "design")) \
@@ -9248,7 +9257,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 if _target:
                     _pm = re.search(r"(?:ports?|port|-p)\s*[:=]?\s*([0-9,\-\s]{1,120})", low)
                     _prof = "web" if "web" in low else "common" if "common" in low or "top" in low else "quick"
-                    out.append({"tool": "secscan", "label": "Nmap · " + _target[:50],
+                    out.append({"tool": "nmap", "label": "Nmap · " + _target[:50],
                                 "result": _shrink(security_port_inventory(_target, (_pm.group(1) if _pm else ""), _prof, True), 2800)})
                 else:
                     out.append({"tool": "nmap", "label": "Nmap",
@@ -9730,9 +9739,11 @@ def tool_context(tools):
             "The app ALREADY renders these results to the user as cards (build preview, publish link). "
             "So NEVER paste, repeat or wrap up the raw JSON in your reply, and NEVER invent a URL: when you "
             "mention a link, quote the exact url field a tool returned (its 'note' tells you the right one).\n"
-            "If a tool result has have_nmap, have_sqlmap, have_wireshark, have_john or have_hydra set true, "
-            "or is labeled Nmap/SQLMap/Wireshark/John/Hydra/secscan, you DO have that tool. "
-            "Never say you don't have nmap. Call secscan Nmap. Quote nmap_text when present.\n\n"
+            "If a tool result has have_nmap, have_sqlmap, have_wireshark, have_john, have_hydra or have_image_generation set true, "
+            "or is labeled Nmap/SQLMap/Wireshark/John/Hydra, you DO have that tool. Never say you don't have nmap — the id "
+            "secscan means Nmap, but never write 'secscan' (or pcap/mediainspect) to the user; use the human names. "
+            "If a tool returned an 'images' list, the pictures are ALREADY rendered in the chat — announce them; never deny image generation. "
+            "Quote nmap_text when present.\n\n"
             + "\n\n".join(parts))
 
 
@@ -11443,7 +11454,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch57-intel-hide-userbase",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch58-media-honesty",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -12666,12 +12677,18 @@ class Handler(BaseHTTPRequestHandler):
             "unlawful surveillance; guide toward lawful reporting channels (police, CERT/cybercrime units, banks) "
             "instead. ENTERPRISE SECURITY TOOLBOX: you HAVE Nmap, SQLMap, Wireshark, John the Ripper and Hydra as hosted "
             "OraCool tools. Never say you don't have nmap or that you only have 'secscan'. When asked 'do you have nmap', "
-            "answer YES — it runs from chat ('nmap 8.8.8.8'), Intel → Nmap / Port Scan. "
-            "secscan is the internal id for Nmap. Quote nmap_text when a scan ran. SQLMap is a low-impact SQLi indicator "
+            "answer YES — it runs from chat ('nmap 8.8.8.8'). "
+            "Internal ids (secscan · pcap · hashaudit · login_audit · mediainspect) must NEVER appear in your replies — "
+            "call the tools Nmap, Wireshark, John the Ripper, Hydra, SQLMap. Quote nmap_text when a scan ran. SQLMap is a low-impact SQLi indicator "
             "audit (no dumping/enumeration/os-shell). Wireshark is offline pcap triage, not live sniffing. John audits "
             "owner-provided hashes against a tiny weak list. Hydra is login-defense review, never credential spraying. "
             "Phishing kits (zphisher and similar) and a Kali install-anything terminal are not hosted — one short clause, "
             "then run the tools you do have. "
+            "IMAGE GENERATION IS REAL: OraCool HAS hosted image creation (Pro plan and above) — 'generate / draw / make "
+            "an image of …' runs it through Agnes → Gemini → free FLUX engines and the picture card appears in chat. "
+            "Asked 'do you have image generation' the answer is YES. If every engine fails, say the engines are busy "
+            "and offer a retry — NEVER claim the tool does not exist. "
+            "INTERNAL IDS: never write secscan, pcap, hashaudit, login_audit or mediainspect to the user; use the human tool names. "
             "Evidence workflow: recommend preserving key findings into Case Files (evidence tab) so they "
             "carry SHA-256 fingerprints and a chain-of-custody log, and exporting custody docs when a case is "
             "escalated. PASSWORDS: stored only as bcrypt hashes in Supabase — nobody can read or reveal them, "
