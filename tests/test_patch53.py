@@ -13,20 +13,16 @@ APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch56-no-fake-kali"'), 2)
+        self.assertEqual(SRV.count('"patch57-intel-hide-userbase"'), 2)
         self.assertIn('/api/admin/users/resync', SRV)
         self.assertIn('admin_users_resync', SRV)
 
 
 class IntelUI(unittest.TestCase):
-    def test_security_tools_visible_in_intel_panel(self):
-        for needle in ("Nmap / Port Scan", "SQLMap SQLi Audit", "Wireshark PCAP",
-                       "John the Ripper Audit", "Hydra Login Defense",
-                       "/api/security/nmap", "/api/security/sqlmap", "/api/security/pcap",
-                       "/api/security/hash", "/api/security/login",
-                       "id=\"secAuth\"", "Repair user list"):
-            self.assertIn(needle, APP, needle)
-        self.assertIn("Enterprise security toolbox appears in Intel", APP)
+    def test_security_tools_not_shown_as_intel_cards(self):
+        self.assertNotIn("Nmap / Port Scan", APP)
+        self.assertIn("YOU HAVE Nmap", APP)
+        self.assertIn("Repair user list", APP)
 
 
 class AdminRepair(unittest.TestCase):

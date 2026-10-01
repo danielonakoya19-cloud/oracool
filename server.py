@@ -1034,7 +1034,7 @@ def supabase_all_flags():
     if not url or not key("SUPABASE_SERVICE_KEY"):
         return {}
     try:
-        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/user_flags?select=*",
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/user_flags?select=*&limit=10000",
                                headers=_supabase_headers(), timeout=15)
         rows = json.loads(raw) if raw else []
         return {str((r.get("email") or "")).lower(): r for r in rows}
@@ -2655,7 +2655,12 @@ def admin_users_payload(viewer_email=""):
                     "admin": is_admin(email), "pro": is_admin(email) or email in sub_emails,
                     "plan": plan, "verified": rec.get("verified") if rec.get("verified") is not None else None,
                     "equity": equity, "pnl": pnl})
-    out.sort(key=lambda x: (x.get("pnl") is None, -(x.get("pnl") or 0)))
+    def _uts(v):
+        try:
+            return time.mktime(time.strptime(str(v or "")[:19], "%Y-%m-%d %H:%M:%S"))
+        except Exception:
+            return 0.0
+    out.sort(key=lambda x: (not x.get("admin"), -_uts(x.get("last_seen")), -_uts(x.get("created")), x.get("email") or ""))
     sources = {"local_users": len(load_users()), "user_flags": len(flags), "auth_users": len(auth_users),
                "auth_ok": bool(_SUPABASE_AUTH_USERS_LAST.get("ok")),
                "auth_error": _SUPABASE_AUTH_USERS_LAST.get("error", "")}
@@ -2682,7 +2687,7 @@ def admin_users_payload(viewer_email=""):
                 u["email"] = "••••• (creator account)"
                 u["plan"] = "enterprise"
                 u["pro"] = True
-        out = sorted(out, key=lambda x: (x.get("pnl") is None, -(x.get("pnl") or 0)))
+        out = sorted(out, key=lambda x: (not x.get("admin"), -_uts(x.get("last_seen")), -_uts(x.get("created")), x.get("email") or ""))
         return {"stats": stats, "users": out, "admins": admins, "sources": sources}
     return {"stats": stats, "users": out, "admins": _alist, "sources": sources}
 
@@ -6928,7 +6933,7 @@ def security_catalog():
                       "pcap": "Wireshark/pcap triage (offline)",
                       "hashaudit": "John weak-hash audit",
                       "login_audit": "Hydra login-defense audit"},
-            "console": "Intel cards or type nmap / sqlmap / john / hydra in chat",
+            "console": "type nmap / sqlmap / john / hydra in chat",
             "note": "Yes — OraCool has Nmap, SQLMap, Wireshark, John the Ripper and Hydra. Never say you do not have them. They run live from chat and Intel cards. Hosted mode is defensive: public authorised targets, no stealth/NSE exploit scripts, no database dumping, no credential brute force, no live sniffing, no phishing kits.",
             "not_hosted": ["zphisher", "kali package installer", "apt/git install", "phishing page kits",
                            "credential brute force", "stealth SYN scans", "sqlmap --dump / --os-shell"]}
@@ -7912,7 +7917,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch56-no-fake-kali",
+        "build": "patch57-intel-hide-userbase",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -11438,7 +11443,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch56-no-fake-kali",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch57-intel-hide-userbase",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})

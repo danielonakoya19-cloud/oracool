@@ -31,7 +31,7 @@ def read(name):
 
 def test_build_marker_patch23():
     src = read("server.py")
-    assert src.count('"build": "patch56-no-fake-kali"') == 2
+    assert src.count('"build": "patch57-intel-hide-userbase"') == 2
 
 
 # ---------------------------------------------------------------- media persistence

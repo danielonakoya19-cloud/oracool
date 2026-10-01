@@ -14,7 +14,7 @@ SQL = open(os.path.join(ROOT, "supabase_patch54_security_console.sql"), encoding
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch56-no-fake-kali"'), 2)
+        self.assertEqual(SRV.count('"patch57-intel-hide-userbase"'), 2)
         self.assertIn("/api/security/console", SRV)
         self.assertIn("security_console_exec", SRV)
         self.assertIn("have_nmap", SRV)
@@ -79,7 +79,7 @@ class Console(unittest.TestCase):
 
 class FrontendAndSql(unittest.TestCase):
     def test_console_card_and_prompt(self):
-        for needle in ("Nmap / Port Scan", "YOU HAVE Nmap", "/api/security/nmap"):
+        for needle in ("YOU HAVE Nmap",):
             self.assertIn(needle, APP, needle)
 
     def test_price_list_locks_security_to_enterprise(self):
