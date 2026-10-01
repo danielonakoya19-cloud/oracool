@@ -31,7 +31,7 @@ def read(name):
 # ---------------------------------------------------------------- markers
 
 def test_build_marker_patch24():
-    assert read("server.py").count('"build": "patch55-kali-look"') == 2
+    assert read("server.py").count('"build": "patch56-no-fake-kali"') == 2
 
 
 def test_key_configured_locally_and_not_committed():

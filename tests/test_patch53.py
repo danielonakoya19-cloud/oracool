@@ -13,7 +13,7 @@ APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch55-kali-look"'), 2)
+        self.assertEqual(SRV.count('"patch56-no-fake-kali"'), 2)
         self.assertIn('/api/admin/users/resync', SRV)
         self.assertIn('admin_users_resync', SRV)
 

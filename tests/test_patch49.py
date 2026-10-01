@@ -21,7 +21,7 @@ def _handler():
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch55-kali-look"'), 2)
+        self.assertEqual(SRV.count('"patch56-no-fake-kali"'), 2)
         self.assertNotIn("patch48b-creator", SRV)
 
 
