@@ -37,7 +37,7 @@ def read(name):
 # ---------------------------------------------------------------- markers
 
 def test_build_marker_patch25():
-    assert read("server.py").count('"build": "patch54-nmap-console"') == 2
+    assert read("server.py").count('"build": "patch55-kali-look"') == 2
 
 
 # ---------------------------------------------------------------- voice notes

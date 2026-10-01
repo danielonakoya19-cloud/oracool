@@ -567,7 +567,7 @@ FEATURE_MATRIX = [
         ("Wireshark PCAP triage (offline .pcap/.cap)", "❌", "❌", "❌", "❌", "✅"),
         ("John the Ripper weak-hash audit", "❌", "❌", "❌", "❌", "✅"),
         ("Hydra login-defense audit (no credential attempts)", "❌", "❌", "❌", "❌", "✅"),
-        ("Security Console — nmap / sqlmap / wireshark / john / hydra commands", "❌", "❌", "❌", "❌", "✅"),
+        ("Terminal (Kali-style) — nmap / sqlmap / wireshark / john / hydra", "❌", "❌", "❌", "❌", "✅"),
         ("Dark-web monitoring · cases & evidence vault", "❌", "❌", "Basic", "Full", "Full"),
     ]),
     ("Markets & trading", [
@@ -6929,8 +6929,8 @@ def security_catalog():
                       "pcap": "Wireshark/pcap triage (offline)",
                       "hashaudit": "John weak-hash audit",
                       "login_audit": "Hydra login-defense audit"},
-            "console": "Intel → Security Console, or type the commands in chat",
-            "note": "Yes — OraCool has Nmap, SQLMap, Wireshark, John the Ripper and Hydra. Never say you do not have them. They run live from chat, Intel cards and the Security Console. Hosted mode is defensive: public authorised targets, no stealth/NSE exploit scripts, no database dumping, no credential brute force, no live sniffing, no phishing kits.",
+            "console": "Intel → Terminal, or type the commands in chat",
+            "note": "Yes — OraCool has Nmap, SQLMap, Wireshark, John the Ripper and Hydra. Never say you do not have them. They run live from chat, Intel cards and Intel → Terminal. Hosted mode is defensive: public authorised targets, no stealth/NSE exploit scripts, no database dumping, no credential brute force, no live sniffing, no phishing kits.",
             "not_hosted": ["zphisher", "kali package installer", "apt/git install", "phishing page kits",
                            "credential brute force", "stealth SYN scans", "sqlmap --dump / --os-shell"]}
 
@@ -7524,18 +7524,25 @@ def _sec_is_capability_ask(low, text=""):
     return False
 
 
+KALI_PS1 = "┌──(kali㉿oracool)-[~]\n└─$ "
+
+
+def _kali_out(msg=""):
+    msg = (msg or "").rstrip()
+    return (msg + "\n" + KALI_PS1) if msg else KALI_PS1
+
+
 def _sec_console_help():
-    return (
-        "OraCool Security Console — hosted tools, already installed\n"
-        "  nmap <host>                 live Nmap TCP-connect inventory\n"
+    return _kali_out(
+        "Kali GNU/Linux Rolling — hosted tools\n"
+        "  nmap <host>                 Nmap TCP-connect inventory\n"
         "  nmap -p 80,443 <host>       custom ports (max 64)\n"
         "  sqlmap <url>                SQLMap SQLi indicator audit\n"
-        "  wireshark                   offline PCAP triage (upload .pcap)\n"
+        "  wireshark                   Wireshark PCAP triage (upload)\n"
         "  john <hash>                 John the Ripper weak-hash audit\n"
         "  hydra <login-url>           Hydra login-defense audit\n"
-        "  tools / help                this catalog\n"
-        "Phishing kits, package installers and credential brute force are not hosted.\n"
-        "ora@oracool:~$"
+        "  whoami / uname / pwd / ls / clear / help\n"
+        "Phishing kits, package installers and credential brute force are not hosted."
     )
 
 
@@ -7543,7 +7550,7 @@ def security_console_exec(command, authorized=False, pcap_name="", pcap_b64=""):
     """Parse a terminal-style command and run the matching hosted security tool.
     Never shells out; never installs packages; never runs phishing kits."""
     raw = (command or "").strip()
-    raw = re.sub(r"^(?:ora@oracool:?[~#$\s]*|[$#]\s*)", "", raw)
+    raw = re.sub(r"^(?:ora@oracool:?[~#$\s]*|┌──[^\n]*\n└─[$#]\s*|[$#]\s*)", "", raw)
     if not raw:
         return {"ok": True, "tool": "console", "output": _sec_console_help(), "have_nmap": True}
     low = raw.lower().strip()
@@ -7552,18 +7559,21 @@ def security_console_exec(command, authorized=False, pcap_name="", pcap_b64=""):
                 "error": "That kit is not hosted on OraCool.",
                 "output": "refused: phishing kits / offensive frameworks are not installed here.\n"
                           "You DO have Nmap, SQLMap, Wireshark, John the Ripper and Hydra.\n"
-                          "Try: nmap example.com\nora@oracool:~$",
+                          "Try: nmap example.com" + KALI_PS1 + "",
                 "catalog": security_catalog()}
     if _SEC_INSTALL_RX.search(low):
         return {"ok": False, "refused": True, "tool": "console", "have_nmap": True,
                 "error": "Package installers are not hosted. The security tools are already available.",
                 "output": "refused: apt/git/pip install is not a Kali box.\n"
                           "Nmap, SQLMap, Wireshark, John and Hydra are already here.\n"
-                          "Try: nmap example.com\nora@oracool:~$"}
-    if low in ("help", "?", "man", "tools", "which", "what", "ls", "catalog"):
+                          "Try: nmap example.com" + KALI_PS1 + ""}
+    if low in ("help", "?", "man", "tools", "which", "what", "catalog"):
         cat = security_catalog()
         return {"ok": True, "tool": "console", "have_nmap": True, "catalog": cat,
                 "output": _sec_console_help()}
+    if low in ("ls", "ls -la", "ls -l"):
+        return {"ok": True, "tool": "console", "have_nmap": True,
+                "output": _kali_out("nmap  sqlmap  wireshark  john  hydra")}
     # nmap
     m = re.match(r"^(?:nmap|secscan|portscan|port-scan)\s+(?:-p(?:orts?)?\s+(\S+)\s+)?(\S+)", raw, re.I)
     if not m:
@@ -7575,9 +7585,9 @@ def security_console_exec(command, authorized=False, pcap_name="", pcap_b64=""):
         target = m.group(2)
         res = security_port_inventory(target, ports, "custom" if ports else "quick", True if authorized or target else True)
         if res.get("nmap_text"):
-            res["output"] = res["nmap_text"] + "\nora@oracool:~$"
+            res["output"] = res["nmap_text"] + "" + KALI_PS1 + ""
         else:
-            res["output"] = (res.get("error") or json.dumps(res)[:1500]) + "\nora@oracool:~$"
+            res["output"] = (res.get("error") or json.dumps(res)[:1500]) + "" + KALI_PS1 + ""
         res["have_nmap"] = True
         res["name"] = "Nmap"
         return res
@@ -7587,7 +7597,7 @@ def security_console_exec(command, authorized=False, pcap_name="", pcap_b64=""):
                     "error": "Dumping, shells and write options are not hosted.",
                     "output": "refused: sqlmap --dump / --os-shell is not hosted.\n"
                               "Hosted SQLMap runs a low-impact indicator audit.\n"
-                              "Try: sqlmap https://example.com/item?id=1\nora@oracool:~$"}
+                              "Try: sqlmap https://example.com/item?id=1" + KALI_PS1 + ""}
         um = re.search(r"https?://\S+", raw, re.I) or re.search(r"\s(-u|--url)\s+(\S+)", raw, re.I)
         url = ""
         if um:
@@ -7595,17 +7605,17 @@ def security_console_exec(command, authorized=False, pcap_name="", pcap_b64=""):
         if not url:
             url = (raw.split(None, 1)[1] if len(raw.split(None, 1)) > 1 else "").strip()
         res = security_sqlmap_audit(url, authorized=True if (authorized or url) else False)
-        res["output"] = (res.get("error") or ("SQLMap risk=%s flagged=%s" % (res.get("risk"), ",".join(res.get("flagged_parameters") or []) or "none"))) + "\nora@oracool:~$"
+        res["output"] = (res.get("error") or ("SQLMap risk=%s flagged=%s" % (res.get("risk"), ",".join(res.get("flagged_parameters") or []) or "none"))) + "" + KALI_PS1 + ""
         res["name"] = "SQLMap"
         return res
     if re.match(r"^(?:wireshark|tshark|pcap)\b", low):
         if not pcap_b64:
             return {"ok": True, "tool": "pcap", "name": "Wireshark", "need_upload": True,
                     "output": "Upload a .pcap / .cap file to run Wireshark-style triage.\n"
-                              "Hosted mode does not live-sniff networks.\nora@oracool:~$"}
+                              "Hosted mode does not live-sniff networks." + KALI_PS1 + ""}
         res = security_pcap_analyze(pcap_b64, pcap_name or "capture.pcap")
         res["name"] = "Wireshark"
-        res["output"] = (res.get("error") or ("packets=%s protocols=%s" % (res.get("packets"), res.get("protocols")))) + "\nora@oracool:~$"
+        res["output"] = (res.get("error") or ("packets=%s protocols=%s" % (res.get("packets"), res.get("protocols")))) + "" + KALI_PS1 + ""
         return res
     if re.match(r"^(?:john|johntheripper|hash(?:audit|cat)?)\b", low):
         hs = _sec_hashes_from_text(raw)
@@ -7614,7 +7624,7 @@ def security_console_exec(command, authorized=False, pcap_name="", pcap_b64=""):
             hs = [x.strip() for x in re.split(r"[\s,]+", rest) if x.strip()][:20]
         res = security_hash_audit(hs or raw, True if (authorized or hs) else False)
         res["name"] = "John the Ripper"
-        res["output"] = (res.get("error") or ("checked=%s weak=%s" % (res.get("checked"), res.get("weak_matches")))) + "\nora@oracool:~$"
+        res["output"] = (res.get("error") or ("checked=%s weak=%s" % (res.get("checked"), res.get("weak_matches")))) + "" + KALI_PS1 + ""
         return res
     if re.match(r"^(?:hydra|login[-_ ]?audit)\b", low):
         if re.search(r"\s-(?:l|P|p|C)\s", raw) or "rockyou" in low:
@@ -7622,19 +7632,27 @@ def security_console_exec(command, authorized=False, pcap_name="", pcap_b64=""):
                     "error": "Credential brute force is not hosted.",
                     "output": "refused: hydra -l/-P wordlists are not hosted.\n"
                               "Hosted Hydra is a login-page defense audit (headers, HTTPS, CSRF/MFA hints).\n"
-                              "Try: hydra https://example.com/login\nora@oracool:~$"}
+                              "Try: hydra https://example.com/login" + KALI_PS1 + ""}
         um = re.search(r"https?://\S+", raw, re.I)
         url = um.group(0) if um else (raw.split(None, 1)[1] if len(raw.split(None, 1)) > 1 else "")
         res = security_login_audit(url, True if (authorized or url) else False)
         res["name"] = "Hydra"
-        res["output"] = (res.get("error") or ("score=%s status=%s" % (res.get("score"), res.get("status")))) + "\nora@oracool:~$"
+        res["output"] = (res.get("error") or ("score=%s status=%s" % (res.get("score"), res.get("status")))) + "" + KALI_PS1 + ""
         return res
-    if re.match(r"^(?:whoami|id|uname|pwd|clear)\b", low):
+    if re.match(r"^clear\b", low):
+        return {"ok": True, "tool": "console", "clear": True, "have_nmap": True, "output": KALI_PS1}
+    if re.match(r"^whoami\b", low):
+        return {"ok": True, "tool": "console", "have_nmap": True, "output": _kali_out("kali")}
+    if re.match(r"^id\b", low):
+        return {"ok": True, "tool": "console", "have_nmap": True, "output": _kali_out("uid=1000(kali) gid=1000(kali) groups=1000(kali),27(sudo)")}
+    if re.match(r"^pwd\b", low):
+        return {"ok": True, "tool": "console", "have_nmap": True, "output": _kali_out("/home/kali")}
+    if re.match(r"^uname\b", low):
         return {"ok": True, "tool": "console", "have_nmap": True,
-                "output": "ora@oracool (hosted security console)\nNmap SQLMap Wireshark John Hydra are live.\nNot a Kali VM.\nora@oracool:~$"}
+                "output": _kali_out("Linux oracool 6.8.11-amd64 #1 SMP PREEMPT_DYNAMIC Kali x86_64 GNU/Linux")}
     return {"ok": False, "tool": "console", "have_nmap": True,
             "error": "Unknown command.",
-            "output": "unknown command. Type help — nmap, sqlmap, wireshark, john, hydra.\nora@oracool:~$"}
+            "output": "unknown command. Type help — nmap, sqlmap, wireshark, john, hydra." + KALI_PS1 + ""}
 
 
 # ---------------------------------------------------------------- Home Assistant
@@ -7915,7 +7933,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch54-nmap-console",
+        "build": "patch55-kali-look",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -9219,7 +9237,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                                        "note": "You HAVE Nmap, SQLMap, Wireshark, John the Ripper and Hydra. "
                                                "Phishing kits and a Kali install-anything terminal are not hosted. "
                                                "Run: nmap <host> · sqlmap <url> · john <hash> · hydra <login-url> "
-                                               "or open Intel → Security Console."}, 1200)})
+                                               "or open Intel → Terminal."}, 1200)})
     # Enterprise security toolbox — Nmap/SQLMap/Wireshark/John/Hydra, named as those tools.
     _sec_scan_cmd = bool(re.search(r"\b(?:nmap|secscan|port\s*scan|sqlmap|sql\s*map|wireshark|tshark|pcap|john(?:\s+the\s+ripper)?|hydra)\b", low)
                          or re.search(r"\bscan\s+(?:my\s+)?(?:site|host|server|domain|ip|target)\b", low)
@@ -9254,7 +9272,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             if re.search(r"\b(?:wireshark|tshark|pcap|packet\s+capture)\b", low):
                 out.append({"tool": "pcap", "label": "Wireshark",
                             "result": _shrink({"ok": True, "tool": "pcap", "have_wireshark": True, "name": "Wireshark",
-                                               "note": "Wireshark is live. Upload a .pcap/.cap in Intel → Wireshark PCAP or the Security Console. Hosted production does not live-sniff networks."}, 900)})
+                                               "note": "Wireshark is live. Upload a .pcap/.cap in Intel → Wireshark PCAP or Intel → Terminal. Hosted production does not live-sniff networks."}, 900)})
             if re.search(r"\b(?:john(?:\s+the\s+ripper)?|jhon(?:\s+the\s+ripper)?|hash\s*(?:audit|crack|check))\b", low):
                 _hs = _sec_hashes_from_text(t)
                 if _hs:
@@ -11441,7 +11459,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch54-nmap-console",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch55-kali-look",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -12664,7 +12682,7 @@ class Handler(BaseHTTPRequestHandler):
             "unlawful surveillance; guide toward lawful reporting channels (police, CERT/cybercrime units, banks) "
             "instead. ENTERPRISE SECURITY TOOLBOX: you HAVE Nmap, SQLMap, Wireshark, John the Ripper and Hydra as hosted "
             "OraCool tools. Never say you don't have nmap or that you only have 'secscan'. When asked 'do you have nmap', "
-            "answer YES — it runs from chat ('nmap 8.8.8.8'), Intel → Nmap / Port Scan, and Intel → Security Console. "
+            "answer YES — it runs from chat ('nmap 8.8.8.8'), Intel → Nmap / Port Scan, and Intel → Terminal. "
             "secscan is the internal id for Nmap. Quote nmap_text when a scan ran. SQLMap is a low-impact SQLi indicator "
             "audit (no dumping/enumeration/os-shell). Wireshark is offline pcap triage, not live sniffing. John audits "
             "owner-provided hashes against a tiny weak list. Hydra is login-defense review, never credential spraying. "
