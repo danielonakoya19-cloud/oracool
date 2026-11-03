@@ -36,7 +36,7 @@ def _cleanup():
 
 class Marker(unittest.TestCase):
     def test_build(self):
-        self.assertEqual(SRV.count('"patch62-real-payouts"'), 2)
+        self.assertEqual(SRV.count('"patch63-any-currency"'), 2)
 
     def test_transfers_code(self):
         for needle in ("def paystack_initiate_transfer", "def paystack_verify_transfer",
@@ -72,14 +72,15 @@ class RealBank(unittest.TestCase):
                  mock.patch.object(s, "paystack_initiate_transfer") as minit:
                 s.touch_user(ME, wallet_available_cents=1_500)  # $15
                 s.paystack_create_recipient.return_value = {"ok": True, "recipient_code": "RCP_x"}
-                minit.return_value = {"ok": True, "transfer_code": "TRF_1", "status": "processing", "amount_ngn": 0}
+                minit.side_effect = lambda r, k, reason="", currency="NGN": {
+                    "ok": True, "transfer_code": "TRF_1", "status": "processing", "amount_ngn": k / 100.0}
                 r = s.wallet_withdraw(ME, "bank", "0123456789 GTBank", "Test User")
                 self.assertTrue(r["ok"], r)
                 self.assertTrue(r["real"])
                 self.assertEqual(r["transfer_code"], "TRF_1")
-                self.assertEqual(r["ngn_amount"], 15.0 * s.NGN_PER_USD)
+                self.assertEqual(r["ngn_amount"], r["local_amount"])   # live FX rate
                 self.assertEqual(s.paystack_create_recipient.call_args[0][2], "058")
-                self.assertEqual(minit.call_args[0][1], int(15.0 * s.NGN_PER_USD * 100))
+                self.assertEqual(minit.call_args[0][1], int(r["local_amount"] * 100))   # live FX
                 self.assertEqual(rows[0]["status"], "processing")
                 self.assertEqual(s.wallet_state(ME)["available_usd"], 0.0)
                 # verify at paystack → success marks paid
@@ -110,7 +111,7 @@ class RealBank(unittest.TestCase):
                  mock.patch.object(s, "paystack_banks", lambda force=False: [{"name": "GTBank", "code": "058"}]), \
                  mock.patch.object(s, "paystack_create_recipient", lambda n, a, c: {"ok": True, "recipient_code": "R"}), \
                  mock.patch.object(s, "paystack_initiate_transfer",
-                                   lambda r, k, reason="": {"error": "Insufficient balance", "paystack": True}):
+                                   lambda r, k, reason="", currency="NGN": {"error": "Insufficient balance", "paystack": True}):
                 s.touch_user(ME, wallet_available_cents=1_500)
                 r = s.wallet_withdraw(ME, "bank", "0123456789 GTBank", "Test User")
                 self.assertFalse(r["ok"])

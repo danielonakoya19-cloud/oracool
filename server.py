@@ -1998,6 +1998,49 @@ def paystack_banks(force=False):
         return []
 
 
+_FX_CACHE = {"rows": {}, "at": 0.0}
+_FX_FALLBACK = {"NGN": 1550.0, "GHS": 15.2, "ZAR": 18.3, "KES": 129.0, "XOF": 605.0, "XAF": 605.0,
+                "USD": 1.0, "GBP": 0.78, "EUR": 0.92, "AED": 3.67, "CAD": 1.36}
+FX_ZERO_DECIMAL = {"JPY", "KRW", "VND", "CLP", "XOF", "XAF", "UGX", "RWF", "ISK"}
+_PAYSTACK_CURRENCIES = {"NGN", "GHS", "ZAR", "USD"}
+
+
+def fx_rates():
+    """Live USD-based FX table (open.er-api.com, no key), cached 1h; a small
+    built-in fallback keeps conversions working if the rate API is down."""
+    if _FX_CACHE["rows"] and time.time() - _FX_CACHE["at"] < 3600:
+        return _FX_CACHE["rows"]
+    try:
+        _, raw, _ = http_fetch("https://open.er-api.com/v6/latest/USD", timeout=20)
+        d = json.loads(raw)
+        rows = d.get("rates") or {}
+        if rows.get("NGN"):
+            rows["USD"] = 1.0
+            _FX_CACHE["rows"] = rows
+            _FX_CACHE["at"] = time.time()
+            return rows
+    except Exception:
+        pass
+    return dict(_FX_FALLBACK)
+
+
+def fx_convert(usd_amount, currency):
+    """USD → target currency. Returns (major_amount, rate) or (None, rate)."""
+    currency = str(currency or "NGN").strip().upper()[:3]
+    rows = fx_rates()
+    rate = rows.get(currency)
+    if not rate or rate <= 0:
+        rate = _FX_FALLBACK.get(currency)
+    if not rate:
+        return None, None
+    major = float(usd_amount) * float(rate)
+    if currency in FX_ZERO_DECIMAL:
+        major = float(round(major))
+    else:
+        major = round(major, 2)
+    return major, float(rate)
+
+
 _BANK_ALIASES = {
     "gtbank": "guaranty trust bank", "gtb": "guaranty trust bank",
     "uba": "united bank for africa", "fbn": "first bank of nigeria",
@@ -2065,14 +2108,60 @@ def paystack_create_recipient(account_name, account_number, bank_code):
         return {"error": str(e)[:160]}
 
 
-def paystack_initiate_transfer(recipient_code, amount_kobo, reason=""):
+def paystack_ghs_recipient(account_name, network, phone):
+    """Ghana mobile-money recipient (MTN / Telecel(Vodafone) / AirtelTigo)."""
+    sec = _paystack_secret()
+    if not sec:
+        return {"error": "Paystack secret key not configured."}
+    net = str(network or "").strip().lower()
+    net = {"mtn": "mtn", "telecel": "telecel", "vodafone": "telecel",
+           "airteltigo": "atl", "airtel": "atl", "tigo": "atl", "atl": "atl"}.get(net, net)
+    if net not in ("mtn", "telecel", "atl"):
+        return {"error": "Pick the mobile-money network: MTN, Telecel (Vodafone) or AirtelTigo."}
+    try:
+        _, raw, _ = http_fetch("https://api.paystack.co/transferrecipient", method="POST",
+                               headers={"Authorization": "Bearer " + sec, "Content-Type": "application/json"},
+                               json_body={"type": "mobile_money", "name": account_name[:60],
+                                          "mobile_number": re.sub(r"[^0-9+]", "", str(phone))[:14],
+                                          "network": net, "currency": "GHS"}, timeout=30)
+        d = json.loads(raw)
+        if d.get("status") and (d.get("data") or {}).get("recipient_code"):
+            return {"ok": True, "recipient_code": d["data"]["recipient_code"], "bank_name": net.upper() + " MoMo"}
+        return {"error": str(d.get("message") or "Paystack rejected the mobile-money details.")[:160]}
+    except Exception as e:
+        return {"error": str(e)[:160]}
+
+
+def paystack_zar_recipient(account_name, bank_code, account_number):
+    """South African bank account (basa)."""
+    sec = _paystack_secret()
+    if not sec:
+        return {"error": "Paystack secret key not configured."}
+    try:
+        _, raw, _ = http_fetch("https://api.paystack.co/transferrecipient", method="POST",
+                               headers={"Authorization": "Bearer " + sec, "Content-Type": "application/json"},
+                               json_body={"type": "basa", "name": account_name[:60],
+                                          "account_number": re.sub(r"[^0-9]", "", str(account_number))[:20],
+                                          "bank_code": re.sub(r"[^0-9]", "", str(bank_code))[:6],
+                                          "currency": "ZAR"}, timeout=30)
+        d = json.loads(raw)
+        if d.get("status") and (d.get("data") or {}).get("recipient_code"):
+            return {"ok": True, "recipient_code": d["data"]["recipient_code"], "bank_name": "South Africa · " + str(bank_code)}
+        return {"error": str(d.get("message") or "Paystack rejected the account details.")[:160]}
+    except Exception as e:
+        return {"error": str(e)[:160]}
+
+
+def paystack_initiate_transfer(recipient_code, amount_minor, reason="", currency="NGN"):
+    """Send real money through Paystack Transfers. amount_minor is in the
+    recipient currency's smallest unit (kobo / pesewas / cents)."""
     sec = _paystack_secret()
     if not sec:
         return {"error": "Paystack secret key not configured."}
     try:
         _, raw, _ = http_fetch("https://api.paystack.co/transfer", method="POST",
                                headers={"Authorization": "Bearer " + sec, "Content-Type": "application/json"},
-                               json_body={"source": "balance", "amount": int(amount_kobo),
+                               json_body={"source": "balance", "amount": int(amount_minor),
                                           "recipient": recipient_code,
                                           "reason": (reason or "OraCool wallet withdrawal")[:100]}, timeout=40)
         d = json.loads(raw)
@@ -2080,7 +2169,7 @@ def paystack_initiate_transfer(recipient_code, amount_kobo, reason=""):
             data = d["data"]
             return {"ok": True, "transfer_code": data.get("transfer_code"),
                     "status": data.get("status") or "processing",
-                    "amount_ngn": (data.get("amount") or int(amount_kobo)) / 100.0}
+                    "amount_ngn": (data.get("amount") or int(amount_minor)) / 100.0}
         return {"error": str(d.get("message") or "Paystack refused the transfer.")[:160], "paystack": True}
     except Exception as e:
         return {"error": str(e)[:160], "paystack": True}
@@ -2190,7 +2279,10 @@ def wallet_state(email):
         coins = None
     count, coins_earned, early = _ref_counters(email)
     ws = _wallet_table_rows(email)
+    _rows = fx_rates()
     return {"ok": True,
+            "fx_ngn_per_usd": _rows.get("NGN") or NGN_PER_USD,
+            "payout_currencies": "any of 160+ — NGN & GHS & ZAR are instant via Paystack, others by international transfer at the live rate; crypto pays USD (USDT)",
             "available_usd": round(w["available_cents"] / 100.0, 2),
             "pending_usd": round(w["pending_cents"] / 100.0, 2),
             "withdrawn_usd": round(w["paidout_cents"] / 100.0, 2),
@@ -2206,7 +2298,7 @@ def wallet_state(email):
                     "transfer or crypto; the creator pays withdrawals personally, usually within 48 hours."}
 
 
-def wallet_withdraw(email, method, destination, account_name=""):
+def wallet_withdraw(email, method, destination, account_name="", currency=""):
     """Real money out. method=bank → instant Paystack naira transfer when the
     secret key has Transfers enabled (real payout, status processing → paid);
     otherwise — and always for crypto — the request joins the admin queue the
@@ -2227,45 +2319,88 @@ def wallet_withdraw(email, method, destination, account_name=""):
         return {"error": "You need at least $10.00 available to withdraw — you have $" + format(have, ".2f")
                         + ". Keep referring: $1 per friend once they start using OraCool."}
     amount = w["available_cents"]
-    # ---- real bank payout via Paystack Transfers when configured ----
-    if method == "bank" and _paystack_secret():
+    currency = str(currency or ("NGN" if method == "bank" else "USD")).strip().upper()[:3]
+    if method == "crypto":
+        currency = "USD"   # USDT is dollar-based
+    major, rate = fx_convert(amount / 100.0, currency)
+    if currency not in _PAYSTACK_CURRENCIES and (major is None or rate is None):
+        return {"error": "I could not get today's exchange rate for " + currency + ". Try NGN/GHS/ZAR, or crypto."}
+    # ---- instant rails: Paystack Transfers (NGN bank · GHS mobile money · ZAR bank) ----
+    if method == "bank" and _paystack_secret() and currency in ("NGN", "GHS", "ZAR"):
         acct_name = re.sub(r"\s+", " ", str(account_name or "").strip())[:60]
         if len(acct_name) < 3:
             return {"error": "Add the account NAME exactly as it appears at the bank (Paystack verifies it)."}
-        parts = destination.split()
-        acct_no = next((x for x in parts if x.isdigit() and len(x) >= 10), "")
-        bank_txt = " ".join(x for x in parts if x is not acct_no).strip()
-        bank, berr = _paystack_resolve_bank(bank_txt)
-        if not bank:
-            return {"error": berr or "Could not resolve that bank."}
-        rec = paystack_create_recipient(acct_name, acct_no, bank["code"])
+        rec = {}
+        dest_txt = ""
+        if currency == "NGN":
+            parts = destination.split()
+            acct_no = next((x for x in parts if x.isdigit() and len(x) >= 10), "")
+            bank_txt = " ".join(x for x in parts if x is not acct_no).strip()
+            bank, berr = _paystack_resolve_bank(bank_txt)
+            if not bank:
+                return {"error": berr or "Could not resolve that bank."}
+            rec = paystack_create_recipient(acct_name, acct_no, bank["code"])
+            dest_txt = acct_no + " " + bank["name"] + " · " + acct_name
+        elif currency == "GHS":
+            net = next((x for x in destination.split() if not x.isdigit() and len(x) >= 3), "")
+            phone = next((x for x in destination.split() if x.isdigit() and len(x) >= 9), "")
+            rec = paystack_ghs_recipient(acct_name, net, phone)
+            dest_txt = net.upper() + " MoMo " + phone + " · " + acct_name
+        else:   # ZAR
+            parts = destination.split()
+            bank_code = next((x for x in parts if len(x) <= 6 and x.isdigit()), "")
+            acct_no = next((x for x in parts if x.isdigit() and len(x) >= 6 and x is not bank_code), "")
+            if not bank_code or not acct_no:
+                return {"error": "For South Africa give: branch code + account number + bank (e.g. 051001 123456789 Capitec)."}
+            rec = paystack_zar_recipient(acct_name, bank_code, acct_no)
+            dest_txt = acct_no + " · " + acct_name
         if rec.get("error"):
             return {"error": "Paystack: " + rec["error"]}
-        ngn_kobo = int(round(amount / 100.0 * NGN_PER_USD * 100))
-        tr = paystack_initiate_transfer(rec["recipient_code"], ngn_kobo,
-                                        "OraCool wallet withdrawal · " + email)
+        minor = int(round(major * 100))
+        tr = paystack_initiate_transfer(rec["recipient_code"], minor,
+                                        "OraCool wallet withdrawal · " + email, currency)
         if tr.get("error"):
             if tr.get("paystack"):
                 return {"ok": False, "error": "Transfer failed (" + tr["error"] + "). Nothing was deducted — check the OraCool Paystack balance covers payouts, then try again."}
             return {"ok": False, "error": tr["error"]}
-        row = {"email": email, "amount_cents": amount, "method": "bank",
-               "destination": acct_no + " " + bank["name"] + " · " + acct_name,
-               "status": "processing", "ngn_amount": ngn_kobo / 100.0,
+        row = {"email": email, "amount_cents": amount, "method": "bank", "currency": currency,
+               "destination": dest_txt,
+               "status": "processing", "ngn_amount": tr.get("amount_ngn") or (minor / 100.0),
+               "local_amount": major, "fx_rate": rate,
                "paystack_recipient": rec["recipient_code"],
                "paystack_transfer_code": tr["transfer_code"],
                "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
         _wallet_table_insert(row)
         touch_user(email, wallet_available_cents=0)
         try:
-            audit_log(email, "wallet.paystack_transfer", "$" + format(amount / 100.0, ".2f") + " → ₦" + format(ngn_kobo / 100.0, ",.2f") + " · " + bank["name"])
-            notify_admins("wallet", "REAL bank transfer sent", email + " · " + tr["transfer_code"] + " · ₦" + format(ngn_kobo / 100.0, ",.2f") + " (" + tr["status"] + ")")
+            audit_log(email, "wallet.paystack_transfer", "$" + format(amount / 100.0, ".2f") + " → " + currency + " " + format(major, ",.2f") + " · " + dest_txt)
+            notify_admins("wallet", "REAL " + currency + " transfer sent", email + " · " + str(tr["transfer_code"]) + " · " + currency + " " + format(major, ",.2f") + " (" + tr["status"] + ")")
         except Exception:
             pass
         return {"ok": True, "amount_usd": round(amount / 100.0, 2), "method": "bank",
-                "ngn_amount": ngn_kobo / 100.0, "transfer_code": tr["transfer_code"],
+                "currency": currency, "local_amount": major, "fx_rate": rate,
+                "ngn_amount": tr.get("amount_ngn"), "transfer_code": tr["transfer_code"],
                 "paystack_status": tr["status"], "real": True,
-                "note": "REAL naira transfer sent through Paystack" + (" — it lands in the account minutes-to-hours (bank speeds vary)." if tr["status"] in ("success", "processing") else " — status: " + str(tr["status"]) + ".") + " Track it in Account → Wallet."}
-    email_row = {"email": email, "amount_cents": amount, "method": method,
+                "note": "REAL " + currency + " transfer sent through Paystack at today's rate (1 USD = " + format(rate, ",.2f") + " " + currency + ")" + (" — it lands minutes-to-hours." if tr["status"] in ("success", "processing") else " — status: " + str(tr["status"]) + ".") + " Track it in Account → Wallet."}
+    # ---- every other currency on earth: international payout at the live rate ----
+    if method == "bank":
+        row = {"email": email, "amount_cents": amount, "method": "bank (international)",
+               "currency": currency, "destination": destination + (" · " + acct_name_text if (acct_name_text := re.sub(r"\s+", " ", str(account_name or "").strip())) else ""),
+               "status": "requested", "local_amount": major, "fx_rate": rate,
+               "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        _wallet_table_insert(row)
+        touch_user(email, wallet_available_cents=0)
+        try:
+            audit_log(email, "wallet.international_requested", "$" + format(amount / 100.0, ".2f") + " → " + currency + " " + format(major, ",.2f"))
+            notify_admins("wallet", "International payout requested", email + " · " + currency + " " + format(major, ",.2f") + " @ " + str(rate) + " · " + row["destination"])
+        except Exception:
+            pass
+        return {"ok": True, "amount_usd": round(amount / 100.0, 2), "method": "bank",
+                "currency": currency, "local_amount": major, "fx_rate": rate,
+                "note": "Withdrawal locked in at today's live rate (1 USD = " + format(rate, ",.2f") + " " + currency
+                        + ") = " + format(major, ",.2f") + " " + currency
+                        + ". Sent by international transfer within 48 hours — track it in Account → Wallet."}
+    email_row = {"email": email, "amount_cents": amount, "method": method, "currency": currency or "USD",
                  "destination": destination, "status": "requested",
                  "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     _wallet_table_insert(email_row)
@@ -8738,7 +8873,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch62-real-payouts",
+        "build": "patch63-any-currency",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -12303,7 +12438,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch62-real-payouts",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch63-any-currency",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -12908,7 +13043,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not _em:
                     self._send_json({"error": "Sign in first."}); return
                 if str(body.get("op") or "status") == "withdraw":
-                    self._send_json(wallet_withdraw(_em, body.get("method"), body.get("destination"), body.get("account_name")))
+                    self._send_json(wallet_withdraw(_em, body.get("method"), body.get("destination"), body.get("account_name"), body.get("currency")))
                 else:
                     self._send_json(wallet_state(_em))
             elif path == "/api/account/apikeys":
