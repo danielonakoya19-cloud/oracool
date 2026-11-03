@@ -31,7 +31,7 @@ def read(name):
 
 def test_build_marker_patch23():
     src = read("server.py")
-    assert src.count('"build": "patch58-media-honesty"') == 2
+    assert src.count('"build": "patch59-referral-advocates"') == 2
 
 
 # ---------------------------------------------------------------- media persistence

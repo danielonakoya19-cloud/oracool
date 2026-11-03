@@ -540,6 +540,7 @@ FEATURE_MATRIX = [
         ("Photo understanding (attach any picture, ask anything)", "✅", "✅", "✅", "✅", "✅"),
         ("Camera: selfie & clip report, on-device photo/video editor", "✅", "✅", "✅", "✅", "✅"),
         ("AI image generation", "❌", "❌", "✅", "Unlimited", "Unlimited"),
+        ("Refer & earn — 250,000 coins per friend · Advocate early access at 3", "✅", "✅", "✅", "✅", "✅"),
         ("AI video generation", "❌", "❌", "❌", "✅", "✅"),
         ("Licensed stock photos in builds (Pexels · Openverse · Wikimedia)", "✅", "✅", "✅", "✅", "✅"),
     ]),
@@ -1198,7 +1199,7 @@ def is_verified(email):
     return False
 
 
-def auth_signup(email, password, name="", username=""):
+def auth_signup(email, password, name="", username="", ref=""):
     """Password signup without an email-code gate; passwords stay in Supabase.
     The username is the member's PUBLIC, UNIQUE community identity (their e-mail
     is never shown to other members). If omitted, one is auto-assigned later."""
@@ -1264,8 +1265,15 @@ def auth_signup(email, password, name="", username=""):
             return {"error": "That username was just taken by another member. Pick another one."}
         if prof:
             touch_user(email, username=prof.get("username"), oracool_number=prof.get("oracool_number"))
+        _ref_out = None
+        if ref:
+            try:
+                _ref_out = referral_credit(ref, email)
+            except Exception:
+                _ref_out = None
         return {"status": 200, "data": r["data"], "admin": False,
                 "blocked": is_blocked(email), "pro_token": check_subscription(email),
+                "referral": {"credited": bool(_ref_out), "coins": (_ref_out or {}).get("coins_awarded") or 0},
                 "community": {"username": (prof or {}).get("username"),
                               "number": (prof or {}).get("oracool_number")}}
     return {"error": "Account created. Please sign in with your email and password."}
@@ -1564,7 +1572,8 @@ def coins_gate(email, cost=COIN_COST_BUILD):
         return None
     if st.get("one_time"):
         msg = ("Your one-time Free allowance of {:,} build coins is used up — a site build costs {:,} coins and you have "
-               "{:,} left. Free accounts do not refill: new coins arrive only when you pay for a plan. "
+               "{:,} left. Free accounts do not refill automatically, but you can EARN more: refer friends "
+               "(Account → Refer & earn) and every signup through your link pays you 250,000 coins. "
                .format(st["grant"], cost, st["balance"]))
     else:
         msg = ("You are out of building coins for this week — a site build costs {:,} coins and you have "
@@ -1592,6 +1601,156 @@ def coins_charge(email, cost=COIN_COST_BUILD):
         touch_user(email, coins={"week": st["week"], "balance": new})
         st["balance"] = new
         return st
+
+
+
+# ------------------------------------------------- referrals → advocates (patch59)
+# Verified members become advocates: every friend who creates an account through
+# their personal link earns the advocate +250,000 build coins instantly; 3
+# referrals = ADVOCATE status (early access to new features) + a 1,000,000
+# bonus; 10 referrals = a 5,000,000 bonus. Wallet + counters live on user_flags
+# (durable) and every event is logged to the `referrals` table.
+REF_REWARD_COINS = 250_000
+REF_EARLY_ACCESS_AT = 3
+REF_MILESTONES = {3: 1_000_000, 10: 5_000_000}
+_REF_RX = re.compile(r"^[A-Z0-9]{4,12}$")
+
+
+def _ref_code_new():
+    return "ORA" + "".join(secrets.choice("ABCDEFGHJKMNPQRSTUVWXYZ23456789") for _ in range(5))
+
+
+def referral_code(email):
+    """This member's permanent referral code — created on first use, stored on
+    the durable user_flags row so it survives redeploys."""
+    email = (email or "").strip().lower()
+    if not email:
+        return ""
+    rec = load_users().get(email) or {}
+    code = str(rec.get("ref_code") or "").upper()
+    if not _REF_RX.match(code):
+        row = supabase_get_flag(email) or {}
+        code = str(row.get("ref_code") or "").upper()
+    if not _REF_RX.match(code):
+        taken = set()
+        try:
+            for u in load_users().values():
+                c = str(u.get("ref_code") or "").upper()
+                if c:
+                    taken.add(c)
+        except Exception:
+            pass
+        try:
+            for r in supabase_all_flags().values():
+                c = str(r.get("ref_code") or "").upper()
+                if c:
+                    taken.add(c)
+        except Exception:
+            pass
+        code = _ref_code_new()
+        while code in taken:
+            code = _ref_code_new()
+        touch_user(email, ref_code=code)
+    return code
+
+
+def referral_link(email, base=""):
+    code = referral_code(email)
+    if not code:
+        return ""
+    base = (base or key("PUBLIC_BASE_URL") or "https://oracoolai.com").rstrip("/")
+    return base + "/app?ref=" + code
+
+
+def _referrals_log(row):
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return
+    try:
+        http_fetch(url.rstrip("/") + "/rest/v1/referrals", method="POST",
+                   headers=_supabase_headers(), json_body=row, timeout=10)
+    except Exception:
+        pass
+
+
+def _ref_counters(email):
+    loc = load_users().get(email) or {}
+    cloud = supabase_get_flag(email) or {}
+    count = max(int(loc.get("ref_count") or 0), int(cloud.get("ref_count") or 0))
+    earned = max(int(loc.get("ref_coins_earned") or 0), int(cloud.get("ref_coins_earned") or 0))
+    early = bool(loc.get("early_access") or cloud.get("early_access"))
+    return count, earned, early
+
+
+def referral_credit(code, new_email):
+    """A brand-new account arrived carrying ?ref=CODE. Reward the advocate and
+    return a summary dict (or None when the code is invalid / self-referral)."""
+    code = str(code or "").strip().upper()
+    m = _REF_RX.match(code)
+    new_email = (new_email or "").strip().lower()
+    if not m or not new_email:
+        return None
+    owner = ""
+    try:
+        for em, r in (supabase_all_flags() or {}).items():
+            if str(r.get("ref_code") or "").upper() == code:
+                owner = em
+                break
+        if not owner:
+            for em, r in load_users().items():
+                if str(r.get("ref_code") or "").upper() == code:
+                    owner = em
+                    break
+    except Exception:
+        return None
+    if not owner or owner == new_email:
+        return None
+    count, _earned0, _ea = _ref_counters(owner)
+    count += 1
+    rewards = [{"kind": "referral", "coins": REF_REWARD_COINS}]
+    if count in REF_MILESTONES:
+        rewards.append({"kind": "milestone", "at": count, "coins": REF_MILESTONES[count]})
+    total = sum(r["coins"] for r in rewards)
+    earned = _earned0 + total
+    early = count >= REF_EARLY_ACCESS_AT
+    touch_user(owner, ref_code=code, ref_count=count, ref_coins_earned=earned, early_access=early)
+    try:  # top the wallet up immediately
+        tier = check_tier(owner)
+        if not ((tier == "enterprise") or is_admin(owner)):
+            st = coins_state(owner)
+            if not st.get("unlimited"):
+                touch_user(owner, coins={"week": st["week"], "balance": st["balance"] + total})
+    except Exception:
+        pass
+    _referrals_log({"referrer_email": owner, "referred_email": new_email, "code": code,
+                    "coins_awarded": total,
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+    try:
+        audit_log(owner, "referral.joined", new_email + " · +" + format(total, ",") + " coins")
+        notify_admins("growth", "New referral", owner + " brought " + new_email + " (+" + format(total, ",") + " coins)")
+    except Exception:
+        pass
+    return {"ok": True, "referrer": owner, "referred": new_email, "count": count,
+            "coins_awarded": total, "early_access": early, "rewards": rewards}
+
+
+def referral_status(email):
+    """Everything the Account tab and the AI need to present the program."""
+    email = (email or "").strip().lower()
+    if not email:
+        return {"error": "Sign in to get your referral link."}
+    code = referral_code(email)
+    count, earned, early = _ref_counters(email)
+    nxt = min([k for k in sorted(REF_MILESTONES) if k > count] or [0]) or None
+    return {"ok": True, "code": code, "link": referral_link(email),
+            "referrals": count, "coins_per_referral": REF_REWARD_COINS,
+            "coins_earned": earned, "early_access": early,
+            "early_access_at": REF_EARLY_ACCESS_AT,
+            "next_milestone": nxt, "next_reward": REF_MILESTONES.get(nxt) if nxt else None,
+            "note": "Every friend who creates an OraCool account through your link adds "
+                    + format(REF_REWARD_COINS, ",") + " build coins to your wallet instantly. "
+                    "3 referrals = ADVOCATE status with early access to new features (+1,000,000 bonus). "
+                    "10 referrals = +5,000,000 bonus coins."}
 
 
 # ---------------------------------------------------------------- GitHub
@@ -2616,7 +2775,10 @@ def admin_users_payload(viewer_email=""):
         if em not in users:
             users[em] = {"created": f.get("created") or "", "last_seen": f.get("last_seen") or "",
                          "blocked": bool(f.get("blocked")), "block_reason": f.get("block_reason") or "",
-                         "blocked_by": f.get("blocked_by") or "", "blocked_at": f.get("blocked_at") or ""}
+                         "blocked_by": f.get("blocked_by") or "", "blocked_at": f.get("blocked_at") or "",
+                         "ref_code": f.get("ref_code") or "", "ref_count": int(f.get("ref_count") or 0),
+                         "ref_coins_earned": int(f.get("ref_coins_earned") or 0),
+                         "early_access": bool(f.get("early_access"))}
         elif "blocked" in f:  # patch48: the durable row is the truth — a stale local copy never shows a block as lifted
             users[em] = dict(users[em], blocked=bool(f.get("blocked")), block_reason=f.get("block_reason") or "",
                              blocked_by=f.get("blocked_by") or "", blocked_at=f.get("blocked_at") or "")
@@ -2654,6 +2816,9 @@ def admin_users_payload(viewer_email=""):
                     "blocked": bool(rec.get("blocked")), "block_reason": rec.get("block_reason") or "",
                     "admin": is_admin(email), "pro": is_admin(email) or email in sub_emails,
                     "plan": plan, "verified": rec.get("verified") if rec.get("verified") is not None else None,
+                    "ref_count": int(rec.get("ref_count") or 0),
+                    "ref_coins_earned": int(rec.get("ref_coins_earned") or 0),
+                    "early_access": bool(rec.get("early_access")),
                     "equity": equity, "pnl": pnl})
     def _uts(v):
         try:
@@ -2672,6 +2837,8 @@ def admin_users_payload(viewer_email=""):
              "active24h": sum(1 for u in out if _recent(u.get("last_seen"), 86400)),
              "new24h": sum(1 for u in out if _recent(u.get("created"), 86400)),
              "total_pnl": round(sum(u.get("pnl") or 0 for u in out), 2),
+             "advocates": sum(1 for u in out if (u.get("ref_count") or 0) > 0),
+             "ref_coins_total": sum(int(u.get("ref_coins_earned") or 0) for u in out),
              "sources": sources}
     # Creator-identity confidentiality: nobody except the creator's own AI/panel
     # may see the creator's email or know which account is the creator.
@@ -7918,7 +8085,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch58-media-honesty",
+        "build": "patch59-referral-advocates",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -9115,6 +9282,10 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         term = " ".join(term.split())[:60] or "marketplace"
         out.append({"tool": "darkweb", "label": "dark-web · " + term,
                     "result": _shrink(osint_darkweb(term), 1800)})
+    # patch59: referral program — every signed-in member can ask for their link
+    if email and re.search(r"\breferr?als?\b|\bref\s*(?:code|link)\b|refer (?:a |my |some )?(?:friend|person|people|someone)|invite (?:a |my )?friend|\badvocates?\b|earn more coins|free coins", low):
+        out.append({"tool": "referrals", "label": "refer & earn",
+                    "result": _shrink(referral_status(email), 1200)})
     # patch40: image collection — "find/collect/get me 6 images of X"
     _imq = re.search(r"\b(?:find|search|collect|get|show|fetch|gather|source)\s+(?:me\s+)?(?:some\s+|a few\s+|(\d{1,2})\s+)?(?:stock\s+|real\s+|licensed\s+|free\s+)?(?:images?|photos?|pictures?|pics)\s+(?:of|for|about|showing)\s+(.{3,80})", low)
     if _imq and not any(k in low for k in ("generate", "draw", "imagine", "create an image", "make an image")):
@@ -11454,7 +11625,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch58-media-honesty",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch59-referral-advocates",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -12010,7 +12181,16 @@ class Handler(BaseHTTPRequestHandler):
             # ---- auth (Supabase GoTrue)
             elif path == "/api/auth/signup":
                 self._send_json(auth_signup(body.get("email"), body.get("password"),
-                                            body.get("name", ""), body.get("username") or ""))
+                                            body.get("name", ""), body.get("username") or "",
+                                            body.get("ref") or ""))
+            elif path == "/api/referrals":
+                _rem = (body.get("email") or "").strip().lower()
+                _at = body.get("access_token") or ""
+                if _at:
+                    _me = supabase_auth("/auth/v1/user", access_token=_at)
+                    if _me.get("status") == 200 and isinstance(_me.get("data"), dict):
+                        _rem = (_me["data"].get("email") or _rem).strip().lower()
+                self._send_json(referral_status(_rem) if _rem else {"error": "Sign in to get your referral link."})
             elif path == "/api/auth/confirm":
                 self._send_json(auth_confirm(body.get("token_hash") or body.get("token")))
             elif path == "/api/auth/recover":
@@ -12689,6 +12869,11 @@ class Handler(BaseHTTPRequestHandler):
             "Asked 'do you have image generation' the answer is YES. If every engine fails, say the engines are busy "
             "and offer a retry — NEVER claim the tool does not exist. "
             "INTERNAL IDS: never write secscan, pcap, hashaudit, login_audit or mediainspect to the user; use the human tool names. "
+            "REFERRAL PROGRAM (turn members into advocates): every signed-in member has a permanent referral link "
+            "(Account → Refer & earn, oracoolai.com/app?ref=CODE). Each friend who creates an account through it pays the "
+            "advocate +250,000 build coins instantly; 3 referrals = ADVOCATE status with EARLY ACCESS to new OraCool "
+            "features (+1,000,000 bonus); 10 referrals = +5,000,000. Answer 'how do I get more coins / invite a friend' "
+            "with the live referrals tool result and quote their real code — never invent a code. "
             "Evidence workflow: recommend preserving key findings into Case Files (evidence tab) so they "
             "carry SHA-256 fingerprints and a chain-of-custody log, and exporting custody docs when a case is "
             "escalated. PASSWORDS: stored only as bcrypt hashes in Supabase — nobody can read or reveal them, "
