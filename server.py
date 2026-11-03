@@ -542,6 +542,7 @@ FEATURE_MATRIX = [
         ("AI image generation", "❌", "❌", "✅", "Unlimited", "Unlimited"),
         ("Refer & earn — 250,000 coins per friend · Advocate early access at 3", "✅", "✅", "✅", "✅", "✅"),
         ("Personal API keys — build on OraCool from any OpenAI-compatible app (/v1)", "100 req/day", "1,000/day", "5,000/day", "20,000/day", "Unlimited"),
+        ("OraCool Wallet — $1 per active referral · withdraw from $10 (bank/crypto)", "✅", "✅", "✅", "✅", "✅"),
         ("Community power features — host AMAs · Showcase your builds", "Ask & like", "Ask & like", "✅ host", "✅ host", "✅ host"),
         ("AI video generation", "❌", "❌", "❌", "✅", "✅"),
         ("Licensed stock photos in builds (Pexels · Openverse · Wikimedia)", "✅", "✅", "✅", "✅", "✅"),
@@ -1575,7 +1576,8 @@ def coins_gate(email, cost=COIN_COST_BUILD):
     if st.get("one_time"):
         msg = ("Your one-time Free allowance of {:,} build coins is used up — a site build costs {:,} coins and you have "
                "{:,} left. Free accounts do not refill automatically, but you can EARN more: refer friends "
-               "(Account → Refer & earn) and every signup through your link pays you 250,000 coins. "
+               "(Account → Refer & earn) and every signup through your link pays you 250,000 coins plus $1.00 "
+               "in your Wallet once they start using OraCool. "
                .format(st["grant"], cost, st["balance"]))
     else:
         msg = ("You are out of building coins for this week — a site build costs {:,} coins and you have "
@@ -1715,7 +1717,13 @@ def referral_credit(code, new_email):
     total = sum(r["coins"] for r in rewards)
     earned = _earned0 + total
     early = count >= REF_EARLY_ACCESS_AT
-    touch_user(owner, ref_code=code, ref_count=count, ref_coins_earned=earned, early_access=early)
+    touch_user(owner, ref_code=code, ref_count=count, ref_coins_earned=earned, early_access=early,
+               wallet_pending_cents=int((load_users().get(owner) or supabase_get_flag(owner) or {}).get("wallet_pending_cents") or 0) + WALLET_REFERRAL_CENTS)
+    try:   # remember the pending payout even before the SQL lands (local mirror)
+        with _WALLET_LOCK:
+            _WALLET_LOCAL["pending"][new_email] = owner
+    except Exception:
+        pass
     try:  # top the wallet up immediately
         tier = check_tier(owner)
         if not ((tier == "enterprise") or is_admin(owner)):
@@ -1725,7 +1733,7 @@ def referral_credit(code, new_email):
     except Exception:
         pass
     _referrals_log({"referrer_email": owner, "referred_email": new_email, "code": code,
-                    "coins_awarded": total,
+                    "coins_awarded": total, "status": "pending",
                     "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
     try:
         audit_log(owner, "referral.joined", new_email + " · +" + format(total, ",") + " coins")
@@ -1951,6 +1959,233 @@ def openai_compat_chat(body, auth_header):
             "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": max(1, sum(len(str(m.get("content") or "")) for m in clean) // 4),
                       "completion_tokens": len(text) // 4, "total_tokens": (sum(len(str(m.get("content") or "")) for m in clean) + len(text)) // 4}}}
+
+
+
+# ------------------------------------------------------- wallet (patch61)
+# Every member has an OraCool Wallet: referral coins arrive instantly, and each
+# referred friend pays $1 — held as PENDING until that friend actually USES
+# OraCool (their first chat), then it becomes AVAILABLE to withdraw (from $10).
+# Withdrawals are paid out by the creator (bank transfer or crypto).
+WALLET_REFERRAL_CENTS = 100
+WALLET_MIN_WITHDRAW_CENTS = 1_000        # $10
+_WALLET_USED_MEMO = set()
+_WALLET_LOCAL = {"pending": {}, "earned": {}}   # referred_email -> referrer_email
+_WALLET_LOCK = threading.Lock()
+
+
+def _wallet_rec(email):
+    email = (email or "").strip().lower()
+    loc = load_users().get(email) or {}
+    cloud = supabase_get_flag(email) or {}
+    def _maxi(field):
+        try:
+            return max(int(loc.get(field) or 0), int(cloud.get(field) or 0))
+        except Exception:
+            return 0
+    return {"available_cents": _maxi("wallet_available_cents"),
+            "pending_cents": _maxi("wallet_pending_cents"),
+            "paidout_cents": _maxi("wallet_paidout_cents")}
+
+
+def _wallet_table_insert(row):
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return False
+    try:
+        http_fetch(url.rstrip("/") + "/rest/v1/wallet_withdrawals", method="POST",
+                   headers=_supabase_headers(), json_body=row, timeout=10)
+        return True
+    except Exception:
+        return False
+
+
+def _wallet_table_rows(email):
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return []
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/wallet_withdrawals?select=*"
+                               "&email=eq." + urllib.parse.quote(email, safe="") +
+                               "&order=created_at.desc&limit=20",
+                               headers=_supabase_headers(), timeout=10)
+        return json.loads(raw) if raw else []
+    except Exception:
+        return []
+
+
+def _wallet_table_open():
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return []
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/wallet_withdrawals?select=*"
+                               "&status=in.(requested,processing)&order=created_at.asc",
+                               headers=_supabase_headers(), timeout=10)
+        return json.loads(raw) if raw else []
+    except Exception:
+        return []
+
+
+def _wallet_table_patch(wid, fields):
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return False
+    try:
+        http_fetch(url.rstrip("/") + "/rest/v1/wallet_withdrawals?id=eq." + str(wid),
+                   method="PATCH", headers=_supabase_headers(), json_body=fields, timeout=10)
+        return True
+    except Exception:
+        return False
+
+
+def wallet_state(email):
+    email = (email or "").strip().lower()
+    if not email:
+        return {"error": "Sign in to open your wallet."}
+    w = _wallet_rec(email)
+    try:
+        st = coins_state(email)
+        coins = st.get("balance")
+    except Exception:
+        coins = None
+    count, coins_earned, early = _ref_counters(email)
+    ws = _wallet_table_rows(email)
+    return {"ok": True,
+            "available_usd": round(w["available_cents"] / 100.0, 2),
+            "pending_usd": round(w["pending_cents"] / 100.0, 2),
+            "withdrawn_usd": round(w["paidout_cents"] / 100.0, 2),
+            "referral_reward_usd": WALLET_REFERRAL_CENTS / 100.0,
+            "min_withdraw_usd": WALLET_MIN_WITHDRAW_CENTS / 100.0,
+            "coins": coins, "referrals": count, "coins_earned": coins_earned,
+            "history": [{"id": x.get("id"), "amount_usd": round(int(x.get("amount_cents") or 0) / 100.0, 2),
+                         "method": x.get("method"), "destination": x.get("destination"),
+                         "status": x.get("status"), "created_at": x.get("created_at"),
+                         "paid_at": x.get("paid_at")} for x in ws],
+            "note": "Each friend you refer locks in $1 the moment their account is created — it turns into "
+                    "withdrawable cash once they actually USE OraCool (first chat). Withdraw from $10 by bank "
+                    "transfer or crypto; the creator pays withdrawals personally, usually within 48 hours."}
+
+
+def wallet_withdraw(email, method, destination):
+    email = (email or "").strip().lower()
+    if not email:
+        return {"error": "Sign in first."}
+    method = str(method or "").strip().lower()
+    if method not in ("bank", "crypto"):
+        return {"error": "Pick a payout method: bank or crypto."}
+    destination = re.sub(r"\s+", " ", str(destination or "").strip())[:120]
+    if len(destination) < 6:
+        return {"error": "Add the payout destination (bank: account number + bank name · crypto: USDT TRC-20 wallet address)."}
+    w = _wallet_rec(email)
+    if w["available_cents"] < WALLET_MIN_WITHDRAW_CENTS:
+        have = w["available_cents"] / 100.0
+        return {"error": "You need at least $10.00 available to withdraw — you have $" + format(have, ".2f")
+                        + ". Keep referring: $1 per friend once they start using OraCool."}
+    amount = w["available_cents"]
+    email_row = {"email": email, "amount_cents": amount, "method": method,
+                 "destination": destination, "status": "requested",
+                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    _wallet_table_insert(email_row)
+    try:
+        _local_path = os.path.join(DATA_DIR, "wallet_withdrawals.json")
+        rows = []
+        if os.path.exists(_local_path):
+            try:
+                rows = json.loads(open(_local_path, encoding="utf-8").read() or "[]")
+            except Exception:
+                rows = []
+        rows.append(email_row)
+        open(_local_path, "w", encoding="utf-8").write(json.dumps(rows[-200:], indent=1))
+    except Exception:
+        pass
+    touch_user(email, wallet_available_cents=0)
+    try:
+        audit_log(email, "wallet.withdraw_requested", "$" + format(amount / 100.0, ".2f") + " · " + method)
+        notify_admins("wallet", "Withdrawal requested", email + " · $" + format(amount / 100.0, ".2f") + " · " + method + " · " + destination)
+    except Exception:
+        pass
+    return {"ok": True, "amount_usd": round(amount / 100.0, 2), "method": method,
+            "note": "Request recorded. The creator pays withdrawals personally (bank transfer or crypto), usually within 48 hours. Track it in Account → Wallet."}
+
+
+def wallet_mark_paid(withdrawal_id, by=""):
+    rows = _wallet_table_open()
+    target = None
+    for r in rows:
+        if str(r.get("id")) == str(withdrawal_id):
+            target = r
+            break
+    if not target:
+        try:   # local fallback when Supabase is unreachable
+            _local_path = os.path.join(DATA_DIR, "wallet_withdrawals.json")
+            for r in json.loads(open(_local_path, encoding="utf-8").read() or "[]"):
+                if str(r.get("id")) == str(withdrawal_id) and r.get("status") == "requested":
+                    target = r
+                    break
+        except Exception:
+            pass
+    if not target:
+        return {"error": "That withdrawal request is not open (already paid?)."}
+    if str(target.get("status") or "") not in ("requested", "processing"):
+        return {"error": "That withdrawal request is not open (already paid?)."}
+    _wallet_table_patch(target.get("id"), {"status": "paid",
+                                           "paid_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                           "paid_by": (by or "admin")[:60]})
+    try:
+        em = (target.get("email") or "").lower()
+        rec = load_users().get(em) or supabase_get_flag(em) or {}
+        touch_user(em, wallet_paidout_cents=int(rec.get("wallet_paidout_cents") or 0) + int(target.get("amount_cents") or 0))
+        emit_event(em, "wallet", "Withdrawal paid 🎉", "$" + format(int(target.get("amount_cents") or 0) / 100.0, ".2f") + " sent via " + str(target.get("method")))
+        audit_log(by or "admin", "wallet.paid", str(target.get("email")) + " · " + str(target.get("amount_cents")) + "c")
+    except Exception:
+        pass
+    return {"ok": True, "paid": str(target.get("email")), "amount_usd": round(int(target.get("amount_cents") or 0) / 100.0, 2)}
+
+
+def referral_mark_used(referred_email):
+    """The referred friend just USED OraCool (first chat): their referrer's $1
+    moves from pending to withdrawable. Runs at most once per account."""
+    email = (referred_email or "").strip().lower()
+    if not email or email in _WALLET_USED_MEMO:
+        return None
+    _WALLET_USED_MEMO.add(email)
+    referrer = ""
+    url = key("SUPABASE_URL")
+    if url and key("SUPABASE_SERVICE_KEY"):
+        try:
+            _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/referrals?select=*&referred_email=eq."
+                                   + urllib.parse.quote(email, safe="") + "&status=eq.pending&limit=1",
+                                   headers=_supabase_headers(), timeout=10)
+            rows = json.loads(raw) if raw else []
+            if rows:
+                referrer = (rows[0].get("referrer_email") or "").lower()
+                http_fetch(url.rstrip("/") + "/rest/v1/referrals?id=eq." + str(rows[0].get("id")),
+                           method="PATCH", headers=_supabase_headers(),
+                           json_body={"status": "earned",
+                                      "earned_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
+                           timeout=10)
+        except Exception:
+            referrer = ""
+    if not referrer:
+        with _WALLET_LOCK:
+            referrer = _WALLET_LOCAL["pending"].get(email) or ""
+    if not referrer or referrer == email:
+        return None
+    with _WALLET_LOCK:
+        _WALLET_LOCAL["earned"][email] = referrer
+    try:
+        rec = load_users().get(referrer) or supabase_get_flag(referrer) or {}
+        pend = int(rec.get("wallet_pending_cents") or 0)
+        avail = int(rec.get("wallet_available_cents") or 0)
+        touch_user(referrer, wallet_pending_cents=max(0, pend - WALLET_REFERRAL_CENTS),
+                   wallet_available_cents=avail + WALLET_REFERRAL_CENTS)
+        emit_event(referrer, "wallet", "Referral reward unlocked 💰",
+                   email + " started using OraCool — $1.00 is now withdrawable in your Wallet.")
+        audit_log(referrer, "wallet.referral_earned", email + " · $1.00")
+    except Exception:
+        pass
+    return {"referrer": referrer, "referred": email, "cents": WALLET_REFERRAL_CENTS}
 
 
 # ---------------------------------------------------------------- GitHub
@@ -8285,7 +8520,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch60-power-ecosystem",
+        "build": "patch61-user-wallet",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -9482,6 +9717,10 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         term = " ".join(term.split())[:60] or "marketplace"
         out.append({"tool": "darkweb", "label": "dark-web · " + term,
                     "result": _shrink(osint_darkweb(term), 1800)})
+    # patch61: wallet — balance, pending referral dollars, withdrawals
+    if email and re.search(r"\bwallet\b|\bwithdraw\b|cash ?out|payout|my (?:\$|usd|money|balance)|earn (?:\$|money|cash)", low):
+        out.append({"tool": "wallet", "label": "wallet",
+                    "result": _shrink(wallet_state(email), 1200)})
     # patch60: personal API keys (OpenAI-compatible) — users mint their own keys
     if email and re.search(r"\bapi[\s_-]*keys?\b", low) and "vault" not in low and "anthropic" not in low \
             and any(k in low for k in ("create", "my", "get", "generate", "make", "personal", "have", "do i", "how", "key for")):
@@ -11846,7 +12085,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch60-power-ecosystem",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch61-user-wallet",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -12228,6 +12467,15 @@ class Handler(BaseHTTPRequestHandler):
                 _adp = _require_admin(self, body)
                 if _adp:
                     self._send_json(admin_users_payload((_adp.get("sub") or "").lower()))
+            elif path == "/api/admin/wallet":
+                _adw = _require_admin(self, body)
+                if not _adw:
+                    return
+                if str(body.get("op") or "list") == "paid":
+                    self._send_json(wallet_mark_paid(body.get("id"), (_adw.get("sub") or body.get("email") or "admin")))
+                else:
+                    self._send_json({"ok": True, "open": _wallet_table_open(),
+                                     "note": "Pay each request by bank transfer or crypto, then mark it paid."})
             elif path == "/api/admin/users/resync":
                 _adp = _require_admin(self, body)
                 if _adp:
@@ -12430,6 +12678,19 @@ class Handler(BaseHTTPRequestHandler):
                     if _me.get("status") == 200 and isinstance(_me.get("data"), dict):
                         _rem = (_me["data"].get("email") or _rem).strip().lower()
                 self._send_json(referral_status(_rem) if _rem else {"error": "Sign in to get your referral link."})
+            elif path == "/api/wallet":
+                _at = body.get("access_token") or ""
+                _em = (body.get("email") or "").strip().lower()
+                if _at:
+                    _me = supabase_auth("/auth/v1/user", access_token=_at)
+                    if _me.get("status") == 200 and isinstance(_me.get("data"), dict):
+                        _em = (_me["data"].get("email") or _em).strip().lower()
+                if not _em:
+                    self._send_json({"error": "Sign in first."}); return
+                if str(body.get("op") or "status") == "withdraw":
+                    self._send_json(wallet_withdraw(_em, body.get("method"), body.get("destination")))
+                else:
+                    self._send_json(wallet_state(_em))
             elif path == "/api/account/apikeys":
                 _at = body.get("access_token") or ""
                 _em = (body.get("email") or "").strip().lower()
@@ -12982,6 +13243,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         # ---- agentic tools: the AI runs live tools itself when the message asks for data
+        try:   # patch61: the referred friend's first chat unlocks the referrer's $1
+            if _conv_em:
+                referral_mark_used(_conv_em)
+        except Exception:
+            pass
         tool_runs = []
         tier = "free"
         chat_email = _conv_em
@@ -13124,6 +13390,10 @@ class Handler(BaseHTTPRequestHandler):
             "Asked 'do you have image generation' the answer is YES. If every engine fails, say the engines are busy "
             "and offer a retry — NEVER claim the tool does not exist. "
             "INTERNAL IDS: never write secscan, pcap, hashaudit, login_audit or mediainspect to the user; use the human tool names. "
+            "WALLET (real money): every member has an OraCool Wallet — Account → Wallet. Each referred friend locks in $1.00 "
+            "the moment their account is created (shown as PENDING) and it becomes WITHDRAWABLE once that friend actually "
+            "uses OraCool (their first chat). Withdrawals open at $10.00, paid by bank transfer or crypto, processed "
+            "personally within ~48 hours; quote the live wallet tool result for balances. "
             "PERSONAL API KEYS (developer platform): any member can mint personal API keys in Devices → API keys — they look like "
             "sk-ora-…, are shown once, and work with any OpenAI-compatible client against https://oracoolai.com/v1 "
             "(POST /v1/chat/completions, GET /v1/models). Daily limits follow the plan; never print or guess a full key. "

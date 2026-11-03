@@ -94,7 +94,7 @@ class InstallPwaTests(unittest.TestCase):
         expect = __import__("re").search(
             r'"build": "(patch[^"]+)"', (ROOT / "server.py").read_text(errors="ignore")).group(1)
         self.assertEqual(json.loads(raw)["build"], expect)
-        self.assertEqual(json.loads(raw)["build"], "patch60-power-ecosystem")
+        self.assertEqual(json.loads(raw)["build"], "patch61-user-wallet")
 
 
 if __name__ == "__main__":
