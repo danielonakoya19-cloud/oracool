@@ -38,3 +38,8 @@ grant all on public.wallet_withdrawals to service_role;
 -- select count(*) from public.wallet_withdrawals where status = 'requested';
 -- select email, wallet_available_cents, wallet_pending_cents from public.user_flags
 --   where coalesce(wallet_available_cents,0) + coalesce(wallet_pending_cents,0) > 0;
+
+-- patch63 upgrade: multi-currency payouts (run once if you already ran the above)
+alter table public.wallet_withdrawals add column if not exists currency text;
+alter table public.wallet_withdrawals add column if not exists local_amount numeric;
+alter table public.wallet_withdrawals add column if not exists fx_rate numeric;
