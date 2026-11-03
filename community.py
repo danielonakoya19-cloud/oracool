@@ -323,6 +323,154 @@ class Service:
             row = row[0] if isinstance(row, list) else row
         return {"ok": True, "profile": self._public_profile(email, row)}
 
+    # ------------------------------------------------ power: AMA + showcase (patch60)
+    def can_host(self, email):
+        """Power users: paid plans, administrators and Advocates (early access)."""
+        if not email:
+            return False
+        try:
+            if self.d["is_admin"](email) or self.d["check_tier"](email) in ("pro", "ultra", "enterprise"):
+                return True
+            rec = (self.d["load_users"]() or {}).get(email) or {}
+            return bool(rec.get("early_access"))
+        except Exception:
+            return False
+
+    def ama_create(self, email, title, description=""):
+        self._need()
+        email = (email or "").lower()
+        if not self.can_host(email):
+            return {"error": "Hosting an AMA is for power users — be on the Pro plan or above, or an Advocate (3+ referrals)."}
+        title = _clean(title, 120)
+        if len(title) < 4:
+            return {"error": "Give the AMA a real title (4+ characters)."}
+        for r in self.store.get("comm_amas", "host_email=eq." + email + "&status=eq.live"):
+            self.store.patch("comm_amas", "id=eq." + str(r.get("id")), {"status": "ended", "ended_at": _ts(time.time())})
+        row = self.store.insert("comm_amas", {"host_email": email, "title": title,
+                                              "description": _clean(description, 400), "status": "live",
+                                              "created_at": _ts(time.time()), "started_at": _ts(time.time())})
+        self.d["notify_admins"]("community", "AMA started", email + " — " + title)
+        return {"ok": True, "ama": row}
+
+    def amas(self, email=""):
+        self._need()
+        rows = self.store.get("comm_amas", "select=*&order=created_at.desc&limit=30")
+        hosts = self._profiles_for([r.get("host_email") for r in rows])
+        qs = self.store.get("comm_ama_questions", "select=*&order=votes.desc,created_at.desc&limit=200")
+        by_ama = {}
+        for q in qs:
+            by_ama.setdefault(str(q.get("ama_id")), []).append(q)
+        out = []
+        for r in rows:
+            hh = hosts.get(r.get("host_email")) or {}
+            out.append({"id": r.get("id"), "title": r.get("title"), "description": r.get("description"),
+                        "status": r.get("status"), "created_at": r.get("created_at"),
+                        "host": {"username": hh.get("username"), "number": hh.get("oracool_number"),
+                                 "email": r.get("host_email")},
+                        "mine": (r.get("host_email") or "") == (email or "").lower(),
+                        "questions": [self._ama_q_view(q) for q in (by_ama.get(str(r.get("id"))) or [])[:50]]})
+        return {"ok": True, "amas": out, "can_host": self.can_host(email)}
+
+    def _ama_q_view(self, q):
+        return {"id": q.get("id"), "body": q.get("body"), "votes": int(q.get("votes") or 0),
+                "answered": bool(q.get("answered")), "answer": q.get("answer_text") or "",
+                "asker": q.get("asker_email"), "created_at": q.get("created_at")}
+
+    def ama_ask(self, email, ama_id, body_text):
+        self._need()
+        email = (email or "").lower()
+        text = _clean(body_text, 300)
+        if len(text) < 3:
+            return {"error": "Write your question first."}
+        ama = self.store.one("comm_amas", "id=eq." + str(ama_id))
+        if not ama or ama.get("status") != "live":
+            return {"error": "That AMA is not live."}
+        row = self.store.insert("comm_ama_questions", {"ama_id": ama_id, "asker_email": email,
+                                                       "body": text, "votes": 0, "answered": False,
+                                                       "created_at": _ts(time.time())})
+        return {"ok": True, "question": self._ama_q_view(row or {})}
+
+    def ama_vote(self, email, q_id):
+        self._need()
+        q = self.store.one("comm_ama_questions", "id=eq." + str(q_id))
+        if not q:
+            return {"error": "Question not found."}
+        votes = int(q.get("votes") or 0) + 1
+        self.store.patch("comm_ama_questions", "id=eq." + str(q_id), {"votes": votes})
+        return {"ok": True, "votes": votes}
+
+    def ama_answer(self, email, q_id, text):
+        self._need()
+        email = (email or "").lower()
+        q = self.store.one("comm_ama_questions", "id=eq." + str(q_id))
+        if not q:
+            return {"error": "Question not found."}
+        ama = self.store.one("comm_amas", "id=eq." + str(q.get("ama_id")))
+        if not ama or (ama.get("host_email") or "").lower() != email:
+            return {"error": "Only the AMA host can answer questions."}
+        self.store.patch("comm_ama_questions", "id=eq." + str(q_id),
+                         {"answered": True, "answer_text": _clean(text, 1200),
+                          "answered_at": _ts(time.time())})
+        return {"ok": True}
+
+    def ama_end(self, email, ama_id):
+        self._need()
+        email = (email or "").lower()
+        ama = self.store.one("comm_amas", "id=eq." + str(ama_id))
+        if not ama or (ama.get("host_email") or "").lower() != email:
+            return {"error": "Only the host can end this AMA."}
+        self.store.patch("comm_amas", "id=eq." + str(ama_id), {"status": "ended", "ended_at": _ts(time.time())})
+        return {"ok": True}
+
+    def showcase_share(self, email, title, url, description=""):
+        self._need()
+        email = (email or "").lower()
+        url = str(url or "").strip()
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        if "." not in url:
+            return {"error": "Paste the link to your published build."}
+        row = self.store.insert("comm_showcase", {"email": email, "title": _clean(title or "My build", 90),
+                                                  "url": url[:300], "description": _clean(description, 240),
+                                                  "likes": 0, "created_at": _ts(time.time())})
+        return {"ok": True, "item": row}
+
+    def showcase(self, email=""):
+        self._need()
+        rows = self.store.get("comm_showcase", "select=*&order=likes.desc,created_at.desc&limit=40")
+        owners = self._profiles_for([r.get("email") for r in rows])
+        liked = set()
+        if email:
+            try:
+                for l in self.store.get("comm_showcase_likes", "voter_email=eq." + email.lower()):
+                    liked.add(str(l.get("item_id")))
+            except Exception:
+                pass
+        return {"ok": True, "items": [{"id": r.get("id"), "title": r.get("title"), "url": r.get("url"),
+                                       "description": r.get("description"), "likes": int(r.get("likes") or 0),
+                                       "liked": str(r.get("id")) in liked,
+                                       "owner": {"username": (owners.get(r.get("email")) or {}).get("username"),
+                                                 "number": (owners.get(r.get("email")) or {}).get("oracool_number")}}
+                                      for r in rows]}
+
+    def showcase_like(self, email, item_id):
+        self._need()
+        email = (email or "").lower()
+        row = self.store.one("comm_showcase", "id=eq." + str(item_id))
+        if not row:
+            return {"error": "Showcase item not found."}
+        dup = self.store.one("comm_showcase_likes", "item_id=eq." + str(item_id) + "&voter_email=eq." + email)
+        if dup:
+            return {"ok": True, "likes": int(row.get("likes") or 0), "already": True}
+        try:
+            self.store.insert("comm_showcase_likes", {"item_id": item_id, "voter_email": email,
+                                                      "created_at": _ts(time.time())})
+        except Exception:
+            return {"ok": True, "likes": int(row.get("likes") or 0), "already": True}
+        likes = int(row.get("likes") or 0) + 1
+        self.store.patch("comm_showcase", "id=eq." + str(item_id), {"likes": likes})
+        return {"ok": True, "likes": likes}
+
     def _online(self, email):
         return (time.time() - self.presence.get(email, 0)) < ONLINE_WINDOW
 

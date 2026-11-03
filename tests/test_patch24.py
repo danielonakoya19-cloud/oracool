@@ -31,7 +31,7 @@ def read(name):
 # ---------------------------------------------------------------- markers
 
 def test_build_marker_patch24():
-    assert read("server.py").count('"build": "patch59-referral-advocates"') == 2
+    assert read("server.py").count('"build": "patch60-power-ecosystem"') == 2
 
 
 def test_key_configured_locally_and_not_committed():

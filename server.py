@@ -541,6 +541,8 @@ FEATURE_MATRIX = [
         ("Camera: selfie & clip report, on-device photo/video editor", "✅", "✅", "✅", "✅", "✅"),
         ("AI image generation", "❌", "❌", "✅", "Unlimited", "Unlimited"),
         ("Refer & earn — 250,000 coins per friend · Advocate early access at 3", "✅", "✅", "✅", "✅", "✅"),
+        ("Personal API keys — build on OraCool from any OpenAI-compatible app (/v1)", "100 req/day", "1,000/day", "5,000/day", "20,000/day", "Unlimited"),
+        ("Community power features — host AMAs · Showcase your builds", "Ask & like", "Ask & like", "✅ host", "✅ host", "✅ host"),
         ("AI video generation", "❌", "❌", "❌", "✅", "✅"),
         ("Licensed stock photos in builds (Pexels · Openverse · Wikimedia)", "✅", "✅", "✅", "✅", "✅"),
     ]),
@@ -1751,6 +1753,204 @@ def referral_status(email):
                     + format(REF_REWARD_COINS, ",") + " build coins to your wallet instantly. "
                     "3 referrals = ADVOCATE status with early access to new features (+1,000,000 bonus). "
                     "10 referrals = +5,000,000 bonus coins."}
+
+
+
+# ------------------------------------------- personal API keys (patch60)
+# Every OraCool member can mint personal API keys (like the OpenAI platform or
+# Grok) and call OraCool from any OpenAI-compatible client. Full keys are shown
+# ONCE at creation; only a SHA-256 hash + prefix + last4 are ever stored.
+APIKEY_PREFIX = "sk-ora-"
+APIKEY_DAILY = {"free": 100, "starter": 1_000, "pro": 5_000, "ultra": 20_000, "enterprise": None}
+_APIKEY_LIMIT_CACHE = {}
+_APIKEY_LOCK = threading.Lock()
+
+
+def _apikey_hash(raw):
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _apikey_table_insert(row):
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return False
+    try:
+        http_fetch(url.rstrip("/") + "/rest/v1/api_keys", method="POST",
+                   headers=dict(_supabase_headers(), **{"Prefer": "resolution=merge-duplicates"}),
+                   json_body=row, timeout=10)
+        return True
+    except Exception:
+        return False
+
+
+def _apikey_table_get(key_hash):
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return None
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/api_keys?select=*&key_hash=eq." + key_hash,
+                               headers=_supabase_headers(), timeout=10)
+        rows = json.loads(raw) if raw else []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def _apikey_table_rows(email):
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return []
+    try:
+        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/api_keys?select=*"
+                               "&email=eq." + urllib.parse.quote(email, safe="") +
+                               "&revoked=eq.false&order=created_at.desc",
+                               headers=_supabase_headers(), timeout=10)
+        return json.loads(raw) if raw else []
+    except Exception:
+        return []
+
+
+def _apikey_table_patch(key_hash, fields):
+    url = key("SUPABASE_URL")
+    if not url or not key("SUPABASE_SERVICE_KEY"):
+        return False
+    try:
+        http_fetch(url.rstrip("/") + "/rest/v1/api_keys?key_hash=eq." + key_hash, method="PATCH",
+                   headers=_supabase_headers(), json_body=fields, timeout=10)
+        return True
+    except Exception:
+        return False
+
+
+def api_key_create(email, name=""):
+    email = (email or "").strip().lower()
+    if not email:
+        return {"error": "Sign in to create an API key."}
+    name = re.sub(r"\s+", " ", str(name or "").strip())[:40] or "default"
+    raw = APIKEY_PREFIX + secrets.token_hex(20)
+    row = {"email": email, "name": name, "key_hash": _apikey_hash(raw),
+           "prefix": raw[:12], "last4": raw[-4:],
+           "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "revoked": False, "requests": 0}
+    _apikey_table_insert(row)
+    try:
+        audit_log(email, "apikey.created", name)
+    except Exception:
+        pass
+    return {"ok": True, "name": name, "key": raw, "prefix": row["prefix"], "last4": row["last4"],
+            "note": "Copy this key NOW — it is shown only once. Base URL for OpenAI-compatible clients: "
+                    + (key("PUBLIC_BASE_URL") or "https://oracoolai.com").rstrip("/") + "/v1"}
+
+
+def api_key_list(email):
+    email = (email or "").strip().lower()
+    if not email:
+        return {"error": "Sign in first."}
+    rows = [{"id": r.get("key_hash"), "name": r.get("name"), "prefix": r.get("prefix"),
+             "last4": r.get("last4"), "created_at": r.get("created_at"),
+             "requests": int(r.get("requests") or 0), "revoked": bool(r.get("revoked"))}
+            for r in (_apikey_table_rows(email) or [])]
+    return {"ok": True, "keys": rows,
+            "base_url": (key("PUBLIC_BASE_URL") or "https://oracoolai.com").rstrip("/") + "/v1"}
+
+
+def api_key_revoke(email, key_id):
+    email = (email or "").strip().lower()
+    if not email or not key_id:
+        return {"error": "Which key? Pick one from your list."}
+    rows = _apikey_table_rows(email)
+    target = next((r for r in rows if r.get("key_hash") == key_id), None)
+    if not target:
+        return {"error": "That key is not on your account."}
+    _apikey_table_patch(key_id, {"revoked": True})
+    try:
+        audit_log(email, "apikey.revoked", str(target.get("name") or ""))
+    except Exception:
+        pass
+    return {"ok": True, "revoked": target.get("name") or target.get("prefix")}
+
+
+def api_key_auth(header):
+    """Bearer-token auth for the public /v1 API. Returns the key row or None."""
+    m = re.match(r"^\s*Bearer\s+(\S+)\s*$", header or "", re.I)
+    if not m:
+        return None
+    raw = m.group(1)
+    if not raw.startswith(APIKEY_PREFIX):
+        return None
+    row = _apikey_table_get(_apikey_hash(raw))
+    if not row or row.get("revoked"):
+        return None
+    _apikey_table_patch(row.get("key_hash"), {"last_used_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+    return row
+
+
+def _apikey_rate_ok(row):
+    """Daily request cap by the owner's plan. enterprise/unlimited = no cap."""
+    email = (row.get("email") or "").lower()
+    try:
+        tier = check_tier(email)
+    except Exception:
+        tier = "free"
+    cap = APIKEY_DAILY.get(tier, APIKEY_DAILY["free"])
+    if cap is None or is_admin(email):
+        return True, cap
+    today = time.strftime("%Y-%m-%d")
+    kid = str(row.get("key_hash") or "")
+    with _APIKEY_LOCK:
+        day, n = _APIKEY_LIMIT_CACHE.get(kid, (today, 0))
+        if day != today:
+            day, n = today, 0
+        if n >= cap:
+            return False, cap
+        _APIKEY_LIMIT_CACHE[kid] = (day, n + 1)
+    return True, cap
+
+
+def openai_compat_chat(body, auth_header):
+    """POST /v1/chat/completions — OpenAI-compatible, authenticated with a
+    personal OraCool API key. Non-streaming JSON or SSE when stream=true."""
+    row = api_key_auth(auth_header)
+    if not row:
+        return {"status": 401, "obj": {"error": {"message": "Invalid API key. Create one in OraCool → Devices → API keys (sk-ora-…).", "type": "invalid_request_error"}}}
+    ok, cap = _apikey_rate_ok(row)
+    if not ok:
+        return {"status": 429, "obj": {"error": {"message": "Daily API limit for this plan reached (" + format(cap, ",") + " requests). It resets at midnight UTC — or upgrade.", "type": "rate_limit_error"}}}
+    msgs = body.get("messages") or []
+    if not isinstance(msgs, list) or not msgs:
+        return {"status": 400, "obj": {"error": {"message": "messages[] is required.", "type": "invalid_request_error"}}}
+    clean = [{"role": str(m.get("role") or "user")[:16], "content": str(m.get("content") or "")[:24000]}
+             for m in msgs if isinstance(m, dict)][:64]
+    tier = "free"
+    try:
+        tier = check_tier((row.get("email") or "").lower())
+    except Exception:
+        pass
+    sysline = ("You are OraCool AI, an assistant built by Daniel Onakoya Adebayo in Lagos, Nigeria. "
+               "Answer through OraCool's public API in a calm, precise JARVIS voice. The caller is on the "
+               + tier + " plan. Ground answers in the messages provided; never fabricate tool results.")
+    clean = [{"role": "system", "content": sysline}] + clean
+    text, err = llm_complete(clean, temperature=float(body.get("temperature") or 0.4) if isinstance(body.get("temperature"), (int, float)) else 0.4,
+                             max_tokens=min(int(body.get("max_tokens") or 900), 4000))
+    if err or text is None:
+        return {"status": 502, "obj": {"error": {"message": str(err or "All engines busy — retry shortly."), "type": "server_error"}}}
+    _apikey_table_patch(row.get("key_hash"), {"requests": int(row.get("requests") or 0) + 1})
+    if body.get("stream"):
+        def _gen():
+            cid = "chatcmpl-" + secrets.token_hex(10)
+            base = {"id": cid, "object": "chat.completion.chunk", "created": int(time.time()), "model": "oracool-1"}
+            for i in range(0, len(text), 24):
+                ch = dict(base, choices=[{"index": 0, "delta": {"content": text[i:i + 24]}, "finish_reason": None}])
+                yield ("data: " + json.dumps(ch) + "\n\n").encode("utf-8")
+            fin = dict(base, choices=[{"index": 0, "delta": {}, "finish_reason": "stop"}])
+            yield ("data: " + json.dumps(fin) + "\n\n").encode("utf-8")
+            yield b"data: [DONE]\n\n"
+        return {"status": 200, "stream": _gen()}
+    return {"status": 200, "obj": {"id": "chatcmpl-" + secrets.token_hex(10), "object": "chat.completion",
+            "created": int(time.time()), "model": "oracool-1",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": max(1, sum(len(str(m.get("content") or "")) for m in clean) // 4),
+                      "completion_tokens": len(text) // 4, "total_tokens": (sum(len(str(m.get("content") or "")) for m in clean) + len(text)) // 4}}}
 
 
 # ---------------------------------------------------------------- GitHub
@@ -8085,7 +8285,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch59-referral-advocates",
+        "build": "patch60-power-ecosystem",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -9282,6 +9482,17 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         term = " ".join(term.split())[:60] or "marketplace"
         out.append({"tool": "darkweb", "label": "dark-web · " + term,
                     "result": _shrink(osint_darkweb(term), 1800)})
+    # patch60: personal API keys (OpenAI-compatible) — users mint their own keys
+    if email and re.search(r"\bapi[\s_-]*keys?\b", low) and "vault" not in low and "anthropic" not in low \
+            and any(k in low for k in ("create", "my", "get", "generate", "make", "personal", "have", "do i", "how", "key for")):
+        out.append({"tool": "apikeys", "label": "personal API keys",
+                    "result": _shrink({"have_api_keys": True,
+                                       "base_url": (key("PUBLIC_BASE_URL") or "https://oracoolai.com").rstrip("/") + "/v1",
+                                       "note": "Every OraCool member can create personal API keys in Devices → API keys "
+                                               "(like the OpenAI platform). Keys look like sk-ora-… and work with any "
+                                               "OpenAI-compatible client against POST /v1/chat/completions. Daily request "
+                                               "limits follow the plan (free 100/day, starter 1k, pro 5k, ultra 20k, "
+                                               "enterprise unlimited). Never print a user's full key."}, 900)})
     # patch59: referral program — every signed-in member can ask for their link
     if email and re.search(r"\breferr?als?\b|\bref\s*(?:code|link)\b|refer (?:a |my |some )?(?:friend|person|people|someone)|invite (?:a |my )?friend|\badvocates?\b|earn more coins|free coins", low):
         out.append({"tool": "referrals", "label": "refer & earn",
@@ -11446,6 +11657,16 @@ class Handler(BaseHTTPRequestHandler):
                     return
         except Exception:
             pass
+        if path == "/v1/models":
+            _body = json.dumps({"object": "list", "data": [
+                {"id": "oracool-1", "object": "model", "owned_by": "oracool"},
+                {"id": "oracool-mini", "object": "model", "owned_by": "oracool"}]}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(_body)))
+            self.end_headers()
+            self.wfile.write(_body)
+            return
         if path == "/":
             try:  # patch48: pricing matrix + creator card are rendered from the server's single source of truth
                 with open(os.path.join(BASE_DIR, "landing.html"), encoding="utf-8") as _lf:
@@ -11625,7 +11846,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch59-referral-advocates",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch60-power-ecosystem",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -11676,6 +11897,24 @@ class Handler(BaseHTTPRequestHandler):
                     _ae = ((verify_jwt(body["token"].strip(), key("JWT_SECRET") or "dev-secret")) or {}).get("sub", "")
                 _tail = path.split("/")[3] if path.count("/") > 3 else path.split("/")[-1]
                 audit_log(_ae, path.replace("/api/", ""), _tail)
+            if path == "/v1/chat/completions":
+                _r = openai_compat_chat(body, self.headers.get("Authorization") or "")
+                if _r.get("stream"):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+                    try:
+                        _gen = _r["stream"]
+                        if callable(_gen):
+                            _gen = _gen()
+                        for chunk in _gen:
+                            self.wfile.write(chunk); self.wfile.flush()
+                    except Exception:
+                        pass
+                    return
+                self._send_json(_r.get("obj") or {"error": {"message": "server error"}}, status=_r.get("status", 200))
+                return
             if path.startswith("/api/community/"):
                 self._send_json(community_route(path[len("/api/community/"):], body,
                                                 self.headers.get("Host") or ""))
@@ -12191,6 +12430,22 @@ class Handler(BaseHTTPRequestHandler):
                     if _me.get("status") == 200 and isinstance(_me.get("data"), dict):
                         _rem = (_me["data"].get("email") or _rem).strip().lower()
                 self._send_json(referral_status(_rem) if _rem else {"error": "Sign in to get your referral link."})
+            elif path == "/api/account/apikeys":
+                _at = body.get("access_token") or ""
+                _em = (body.get("email") or "").strip().lower()
+                if _at:
+                    _me = supabase_auth("/auth/v1/user", access_token=_at)
+                    if _me.get("status") == 200 and isinstance(_me.get("data"), dict):
+                        _em = (_me["data"].get("email") or _em).strip().lower()
+                if not _em:
+                    self._send_json({"error": "Sign in first."}); return
+                _op = str(body.get("op") or "list")
+                if _op == "create":
+                    self._send_json(api_key_create(_em, body.get("name")))
+                elif _op == "revoke":
+                    self._send_json(api_key_revoke(_em, body.get("id")))
+                else:
+                    self._send_json(api_key_list(_em))
             elif path == "/api/auth/confirm":
                 self._send_json(auth_confirm(body.get("token_hash") or body.get("token")))
             elif path == "/api/auth/recover":
@@ -12869,6 +13124,12 @@ class Handler(BaseHTTPRequestHandler):
             "Asked 'do you have image generation' the answer is YES. If every engine fails, say the engines are busy "
             "and offer a retry — NEVER claim the tool does not exist. "
             "INTERNAL IDS: never write secscan, pcap, hashaudit, login_audit or mediainspect to the user; use the human tool names. "
+            "PERSONAL API KEYS (developer platform): any member can mint personal API keys in Devices → API keys — they look like "
+            "sk-ora-…, are shown once, and work with any OpenAI-compatible client against https://oracoolai.com/v1 "
+            "(POST /v1/chat/completions, GET /v1/models). Daily limits follow the plan; never print or guess a full key. "
+            "POWER COMMUNITY: members on Pro and above (and Advocates with early access) can host AMAs in the Community tab, "
+            "and everyone can share their published builds in the Showcase — encourage word-of-mouth: 'host an AMA' / 'share "
+            "your build'. "
             "REFERRAL PROGRAM (turn members into advocates): every signed-in member has a permanent referral link "
             "(Account → Refer & earn, oracoolai.com/app?ref=CODE). Each friend who creates an account through it pays the "
             "advocate +250,000 build coins instantly; 3 referrals = ADVOCATE status with EARLY ACCESS to new OraCool "
@@ -15297,6 +15558,24 @@ def community_route(action, body, self_host=""):
             return set_community_avatar(me, body.get("data_url"))
         if action == "media":
             return upload_community_media(me, body.get("data_url"))
+        if action == "amas":
+            return svc.amas(me)
+        if action == "ama/create":
+            return svc.ama_create(me, body.get("title"), body.get("description") or "")
+        if action == "ama/ask":
+            return svc.ama_ask(me, body.get("ama_id"), body.get("body"))
+        if action == "ama/vote":
+            return svc.ama_vote(me, body.get("question_id"))
+        if action == "ama/answer":
+            return svc.ama_answer(me, body.get("question_id"), body.get("text"))
+        if action == "ama/end":
+            return svc.ama_end(me, body.get("ama_id"))
+        if action == "showcase":
+            return svc.showcase(me)
+        if action == "showcase/share":
+            return svc.showcase_share(me, body.get("title"), body.get("url"), body.get("description") or "")
+        if action == "showcase/like":
+            return svc.showcase_like(me, body.get("item_id"))
         if action == "badge":
             return verified_status(me)
         if action == "badge/pay":

@@ -3026,6 +3026,86 @@ function waDateLabel(t){
 function commActive(){ return UI.view==='community' && !isBlockedSession(); }
 function fmtCommTime(t){ try{ const sx=String(t||''); const d=/T/.test(sx)?new Date(sx):new Date(sx.replace(' ','T')+'Z'); if(isNaN(d)) return sx||''; const now=new Date(); const same=d.toDateString()===now.toDateString(); return (same?'':d.toLocaleDateString([], {month:'short',day:'numeric'})+' ')+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }catch(e){ return t||''; } }
 function updateCommBadge(n){ const b=$('#commTabBadge'); if(!b) return; n=Number(n)||0; b.textContent=n>99?'99+':String(n); b.classList.toggle('on', n>0); const d=$('#commDmBadge'); if(d) d.innerHTML=n>0?`<span class="cunread">${n}</span>`:''; }
+/* ---------- AMA + Showcase (power ecosystem, patch60) ---------- */
+async function renderCommAma(){
+  const body=$('#commBody'); if(!body) return;
+  body.innerHTML='<div class="muted">Loading AMAs…</div>';
+  const r=await post('/api/community/amas',{});
+  if(r.error){ body.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+  const qRow=(q,host)=>`<div class="logline" style="display:block;margin:6px 0;line-height:1.5">
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <button class="btn small ghost" data-vote="${escapeHtml(String(q.id))}" title="Upvote" style="min-width:44px">▲ ${q.votes||0}</button>
+        <div style="flex:1"><div style="font-size:12.5px">${escapeHtml(q.body||'')}</div>
+        ${q.answered?`<div class="okbox" style="margin-top:4px;font-size:12px"><b>Host answered:</b> ${escapeHtml(q.answer||'')}</div>`
+          :(host?`<div style="display:flex;gap:6px;margin-top:4px"><input type="text" data-ans="${escapeHtml(String(q.id))}" placeholder="Answer as the host…" style="flex:1"><button class="btn small primary" data-ansbtn="${escapeHtml(String(q.id))}">Reply</button></div>`
+          :'<div class="muted" style="font-size:10px">awaiting the host</div>')}</div>
+      </div></div>`;
+  const aCard=a=>`<div style="border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span class="tag" style="color:${a.status==='live'?'var(--ok)':'var(--dim)'};border-color:${a.status==='live'?'var(--ok)':'var(--dim)'}">${a.status==='live'?'● LIVE':'ended'}</span>
+        <b style="font-size:13px">${escapeHtml(a.title||'')}</b>
+        <span class="muted" style="font-size:11px">host @${escapeHtml((a.host&&a.host.username)||'?')}</span>
+        ${a.mine&&a.status==='live'?`<button class="btn small ghost" data-end="${escapeHtml(String(a.id))}" style="margin-left:auto;color:var(--danger);border-color:var(--danger)">End AMA</button>`:''}
+      </div>
+      ${a.description?`<div class="muted" style="font-size:11px;margin-top:4px">${escapeHtml(a.description)}</div>`:''}
+      ${a.status==='live'?`<div style="display:flex;gap:6px;margin-top:8px"><input type="text" data-ask="${escapeHtml(String(a.id))}" placeholder="Ask the host anything…" style="flex:1"><button class="btn small primary" data-askbtn="${escapeHtml(String(a.id))}">Ask</button></div>`:''}
+      <div data-qs>${(a.questions||[]).map(q=>qRow(q, a.mine&&a.status==='live')).join('')||'<div class="muted" style="font-size:11px;margin-top:6px">No questions yet.</div>'}</div>
+    </div>`;
+  body.innerHTML=`<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+      <b>🎙 Ask Me Anything</b>
+      ${r.can_host?'<button class="btn small primary" id="amaNew">＋ Host an AMA</button>':'<span class="hint">Power users (Pro plan+, or Advocates with early access) can host AMAs — ask in chat how to unlock.</span>'}
+    </div>
+    ${(r.amas||[]).map(aCard).join('')||'<div class="muted">No AMAs yet. Power users: kick one off!</div>'}`;
+  const nw=$('#amaNew');
+  if(nw) nw.onclick=async()=>{
+    const t=prompt('AMA title (e.g. "I built 40 sites with OraCool — ask me anything"):','')||'';
+    if(t.trim().length<4) return;
+    const d=prompt('One line about you / the topic (optional):','')||'';
+    const rr=await post('/api/community/ama/create',{title:t.trim(), description:d.trim()});
+    if(rr.error) addErr('AMA: '+rr.error); else addSystemNote('🎙 Your AMA is LIVE. Members can ask questions now.');
+    renderCommAma();
+  };
+  body.querySelectorAll('[data-vote]').forEach(b=>{ b.onclick=async()=>{ const rr=await post('/api/community/ama/vote',{question_id:b.dataset.vote}); b.textContent='▲ '+(rr.votes||'?'); }; });
+  body.querySelectorAll('[data-askbtn]').forEach(b=>{ b.onclick=async()=>{
+    const inp=body.querySelector('[data-ask="'+b.dataset.askbtn+'"]'); const v=(inp&&inp.value||'').trim(); if(!v) return;
+    const rr=await post('/api/community/ama/ask',{ama_id:b.dataset.askbtn, body:v});
+    if(rr.error) addErr('AMA: '+rr.error); renderCommAma(); }; });
+  body.querySelectorAll('[data-ansbtn]').forEach(b=>{ b.onclick=async()=>{
+    const inp=body.querySelector('[data-ans="'+b.dataset.ansbtn+'"]'); const v=(inp&&inp.value||'').trim(); if(!v) return;
+    const rr=await post('/api/community/ama/answer',{question_id:b.dataset.ansbtn, text:v});
+    if(rr.error) addErr('AMA: '+rr.error); renderCommAma(); }; });
+  body.querySelectorAll('[data-end]').forEach(b=>{ b.onclick=async()=>{ if(!confirm('End this AMA?')) return;
+    await post('/api/community/ama/end',{ama_id:b.dataset.end}); renderCommAma(); }; });
+}
+async function renderCommShowcase(){
+  const body=$('#commBody'); if(!body) return;
+  body.innerHTML='<div class="muted">Loading the showcase…</div>';
+  const r=await post('/api/community/showcase',{});
+  if(r.error){ body.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+  body.innerHTML=`<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+      <b>🏆 Build showcase — word of mouth beats ads</b>
+      <button class="btn small primary" id="scNew">＋ Share my build</button>
+    </div>
+    <div class="hint" style="margin-bottom:8px">Published a site with the builder? Drop the link here — members see it (and open it) at a glance.</div>
+    ${(r.items||[]).map(i=>`<div class="logline" style="display:block;margin-bottom:8px;line-height:1.5">
+        <b style="color:var(--cyan2)">${escapeHtml(i.title||'build')}</b>
+        <span class="muted" style="font-size:11px">by @${escapeHtml((i.owner&&i.owner.username)||'?')}</span>
+        <div style="font-size:12px;margin-top:2px"><a href="${escapeHtml(i.url)}" target="_blank" rel="noopener" style="color:var(--cyan)">${escapeHtml(i.url)}</a></div>
+        ${i.description?`<div class="muted" style="font-size:11px">${escapeHtml(i.description)}</div>`:''}
+        <button class="btn small ghost" data-like="${escapeHtml(String(i.id))}" style="margin-top:4px;${i.liked?'color:var(--ok);border-color:var(--ok)':''}">♥ ${i.likes||0}${i.liked?' · liked':''}</button>
+      </div>`).join('')||'<div class="muted">Nothing shared yet — be the first to show a build.</div>'}`;
+  const nw=$('#scNew');
+  if(nw) nw.onclick=async()=>{
+    const u=prompt('Link to your published build (e.g. https://yoursite.oracoolai.com):','')||'';
+    if(!u.trim()) return;
+    const t=prompt('Title:','My OraCool build')||'My OraCool build';
+    const d=prompt('One line about it (optional):','')||'';
+    const rr=await post('/api/community/showcase/share',{url:u.trim(), title:t.trim(), description:d.trim()});
+    if(rr.error) addErr('Showcase: '+rr.error); else addSystemNote('🏆 Your build is in the Showcase.');
+    renderCommShowcase();
+  };
+  body.querySelectorAll('[data-like]').forEach(b=>{ b.onclick=async()=>{ const rr=await post('/api/community/showcase/like',{item_id:b.dataset.like}); if(!rr.error){ b.textContent='♥ '+(rr.likes||0)+(rr.already?' · liked':''); b.style.color='var(--ok)'; } }; });
+}
 async function renderCommunity(){
   const box=$('#p-community'); if(!box) return;
   if(!session){ box.innerHTML='<h3 class="ptitle">💬 Community</h3><div class="warnbox">Sign in to chat with other OraCool members.</div>'; return; }
@@ -3044,7 +3124,7 @@ async function renderCommunity(){
     </div>
     <div id="commBadgeCard" style="margin-bottom:8px"></div>
     <div class="commhead" style="margin-bottom:6px">
-      <div class="commnav"><button class="btn small ${COMM.view==='rooms'?'primary':'ghost'}" data-v="rooms">Rooms</button><button class="btn small ${COMM.view==='dms'?'primary':'ghost'}" data-v="dms">Messages <span id="commDmBadge"></span></button><button class="btn small ${COMM.view==='people'?'primary':'ghost'}" data-v="people">People & Friends</button></div>
+      <div class="commnav"><button class="btn small ${COMM.view==='rooms'?'primary':'ghost'}" data-v="rooms">Rooms</button><button class="btn small ${COMM.view==='dms'?'primary':'ghost'}" data-v="dms">Messages <span id="commDmBadge"></span></button><button class="btn small ${COMM.view==='people'?'primary':'ghost'}" data-v="people">People & Friends</button><button class="btn small ${COMM.view==='ama'?'primary':'ghost'}" data-v="ama" title="Ask Me Anything sessions">🎙 AMA</button><button class="btn small ${COMM.view==='showcase'?'primary':'ghost'}" data-v="showcase" title="Members' published builds">🏆 Showcase</button></div>
     </div>
     <div id="commGuide" class="muted" style="font-size:11px;margin:0 0 8px"></div>
     <div id="commBody"><div class="muted">Loading…</div></div>`;
@@ -3069,7 +3149,7 @@ async function renderCommunity(){
     bc.innerHTML=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid var(--line);border-radius:12px;padding:8px 12px;font-size:12px"><span class="vbadge">✦</span><span><b>Get the verified badge</b> — $10/month (≈ ₦${Number(me.badge&&me.badge.price_ngn||15500).toLocaleString()}). Verified members stand out and can only be reviewed by an administrator.</span><button class="btn small primary" id="commBadgeBuy" style="margin-left:auto">Get verified</button></div>`;
     const bb=$('#commBadgeBuy'); if(bb) bb.onclick=commBadgeBuy;
   }
-  if(COMM.view==='rooms') renderCommRooms(); else if(COMM.view==='dms') renderCommDms(); else renderCommPeople();
+  if(COMM.view==='rooms') renderCommRooms(); else if(COMM.view==='dms') renderCommDms(); else if(COMM.view==='ama') renderCommAma(); else if(COMM.view==='showcase') renderCommShowcase(); else renderCommPeople();
   if(!COMM.timer) COMM.timer=setInterval(commPoll, 4000);
 }
 async function editCommProfile(){
@@ -3905,7 +3985,6 @@ const _sbNew=document.getElementById('newChatBtn'); if(_sbNew) _sbNew.onclick=()
 /* ---------- status ---------- */
 function renderStatus(){
   const brainOK=!(srv && srv.brain && srv.brain.ready===false);
-  const hasHA=!!(settings.haUrl&&settings.haToken);
   const rows=[
     ['Neural core (AI brain)', brainOK?'ok':'off', brainOK? (srv?(srv.brain.default_provider==='groq'?'Groq · online':'Online'):'online') : 'no key'],
     ['Holographic interface','ok','v2.0 · online'],
@@ -3919,7 +3998,7 @@ function renderStatus(){
     ['OSINT toolkit', tierGte('starter')?'ok':'warn', tierGte('starter')?'IP · Domain · Username · Email':'locked until Starter'],
     ['Markets feed','ok','Stocks · Crypto · FRED'],
     ['Payments (Paystack)', srv&&srv.payments_ready?'ok':'off', srv&&srv.payments_ready?'configured':'not configured'],
-    ['Device bridge (Home Assistant)', hasHA?'ok':'off', hasHA?'linked':'not configured'],
+    ['Personal API keys', 'ok', 'Devices → API keys · OpenAI-compatible /v1'],
   ];
   $('#p-status').innerHTML=`
     <h3 class="ptitle">System Status</h3>
@@ -4385,7 +4464,6 @@ async function mkFred(series){
 
 /* ---------- devices ---------- */
 async function renderDevices(){
-  const hasHA=!!(settings.haUrl&&settings.haToken);
   const apps=[['WhatsApp','https://wa.me/'],['YouTube','https://youtube.com'],['Instagram','https://instagram.com'],['Spotify','https://open.spotify.com'],['Netflix','https://netflix.com'],['X (Twitter)','https://x.com'],['Telegram','https://t.me'],['Gmail','https://mail.google.com'],['Google','https://google.com']];
   $('#p-devices').innerHTML=`
     <h3 class="ptitle">Device Control</h3>
@@ -4397,19 +4475,9 @@ async function renderDevices(){
     <div class="row"><button class="btn ghost" id="camOpen">📷 Open camera</button><button class="btn primary" id="camShot" style="display:none">📸 Capture</button><button class="btn ghost" id="camStop" style="display:none">■ Stop</button></div>
     <video id="camVideo" autoplay playsinline muted style="width:100%;border-radius:10px;margin-top:8px;display:none;border:1px solid var(--line)"></video>
     <div class="result" id="camOut"></div>
-    <h3 class="ptitle" style="margin-top:16px">🏠 Home Assistant <span class="muted">(smart home)</span></h3>
-    <label class="lbl">Home Assistant URL</label>
-    <input type="text" id="haUrl" placeholder="http://192.168.1.10:8123" value="${escapeHtml(settings.haUrl)}">
-    <label class="lbl">Long-lived access token</label>
-    <input type="password" id="haToken" placeholder="Paste token…" value="${escapeHtml(settings.haToken)}">
-    <div class="row"><button class="btn primary" id="haSave">Save &amp; scan</button><button class="btn ghost" id="haDemo">Demo devices</button></div>
-    <div class="hint">Home Assistant → Profile → create a long-lived token. Controls lights, switches, fans, media players &amp; more.</div>
-    <div id="devout" style="margin-top:14px"></div>
-    <div id="radarBox" style="margin-top:16px"></div>
-    <div id="filesAgent" style="margin-top:16px"></div>`;
+    <div id="filesAgent" style="margin-top:16px"></div>
+    <div id="apiKeysBox" style="margin-top:8px"></div>`;
   $('#p-devices').querySelectorAll('[data-app]').forEach(b=>{ b.onclick=()=>{ try{ window.open(b.dataset.app,'_blank'); }catch(e){ window.location.href=b.dataset.app; } }; });
-  $('#haSave').onclick=()=>{ settings.haUrl=$('#haUrl').value.trim(); settings.haToken=$('#haToken').value.trim(); saveSettings(); scanDevices(); };
-  $('#haDemo').onclick=()=>showDemoDevices();
   let stream=null;
   $('#camOpen').onclick=async()=>{
     try{
@@ -4425,64 +4493,42 @@ async function renderDevices(){
     $('#camOut').innerHTML='<img src="'+c.toDataURL('image/png')+'" style="width:100%;border-radius:10px;margin-top:8px"><div class="hint">Captured from your camera.</div>';
   };
   $('#camStop').onclick=()=>{ if(stream){ stream.getTracks().forEach(t=>t.stop()); } const v=$('#camVideo'); v.srcObject=null; v.style.display='none'; $('#camShot').style.display='none'; $('#camStop').style.display='none'; $('#camOpen').style.display=''; };
-  if(hasHA) scanDevices(); else showDemoDevices();
-  renderRadar();
   renderFilesAgent();
+  renderApiKeys();
 }
 
-/* ---------- nearby devices radar (Bluetooth LE + network) ---------- */
-const radarFound = [];
-function renderRadar(){
-  const box=$('#radarBox'); if(!box) return;
-  const conn=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
-  const net = conn ? `${conn.type||conn.effectiveType||'—'} · downlink ${conn.downlink!=null?conn.downlink+'Mbps':'—'} · rtt ${conn.rtt!=null?conn.rtt+'ms':'—'}` : 'Network Information API unavailable in this browser';
-  box.innerHTML=`
-    <h3 class="ptitle">📡 Nearby Devices Radar</h3>
-    <div class="muted" style="font-size:11px">Browsers are sandboxed — they cannot read your Wi-Fi SSID or enumerate every LAN device (that needs a native app). What IS possible: live Bluetooth-LE scanning of nearby devices (Android Chrome), connection stats, and your smart-home devices via Home Assistant.</div>
-    <div class="statcards" style="margin-top:8px">
-      <div class="stat"><div class="l">Connection</div><div class="v" style="font-size:12px">${conn?(conn.effectiveType||'—').toUpperCase():'—'}</div></div>
-      <div class="stat"><div class="l">Online</div><div class="v" style="font-size:12px;color:${navigator.onLine?'var(--ok)':'var(--danger)'}">${navigator.onLine?'YES':'NO'}</div></div>
-      <div class="stat"><div class="l">Wi-Fi name (SSID)</div><div class="v" style="font-size:11px">not readable by browsers</div></div>
+/* ---------- personal API keys (OpenAI-compatible /v1) ---------- */
+async function renderApiKeys(){
+  const box=$('#apiKeysBox'); if(!box) return;
+  if(!session){ box.innerHTML=''; return; }
+  box.innerHTML='<h3 class="ptitle" style="margin-top:16px">🔑 API keys <span class="muted">(build on OraCool)</span></h3><div class="muted">Loading…</div>';
+  const r=await post('/api/account/apikeys',{op:'list', email:session.user&&session.user.email, access_token:session.access_token}).catch(()=>({}));
+  if(r.error){ box.innerHTML='<h3 class="ptitle" style="margin-top:16px">🔑 API keys</h3><div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
+  const rows=(r.keys||[]).map(k=>`<div class="devrow" style="flex-wrap:wrap">
+      <div style="flex:1;min-width:160px"><b style="font-size:12.5px">${escapeHtml(k.name||'key')}</b>
+        <div class="muted" style="font-size:10px;font-family:ui-monospace,monospace">${escapeHtml((k.prefix||'sk-ora-')+'…'+escapeHtml(k.last4||''))} · created ${escapeHtml(String(k.created_at||'').slice(0,10))} · ${k.requests||0} requests</div></div>
+      ${k.revoked?'<span class="tag" style="color:var(--danger);border-color:var(--danger)">revoked</span>':`<button class="btn small ghost" data-revoke="${escapeHtml(k.id)}" style="color:var(--danger);border-color:var(--danger)">Revoke</button>`}
+    </div>`).join('');
+  box.innerHTML=`<h3 class="ptitle" style="margin-top:16px">🔑 API keys <span class="muted">(build on OraCool)</span></h3>
+    <div class="hint">Mint personal keys and call OraCool from <b>any OpenAI-compatible app</b> — same shape as the OpenAI platform / Grok:</div>
+    <div class="okbox" style="font-family:ui-monospace,monospace;font-size:11px;overflow:auto">BASE_URL&nbsp; ${escapeHtml(r.base_url||'https://oracoolai.com/v1')}<br>POST&nbsp;&nbsp;&nbsp;&nbsp; /v1/chat/completions &nbsp;·&nbsp; Authorization: Bearer sk-ora-…<br>GET&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; /v1/models</div>
+    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+      <input type="text" id="akNewName" placeholder="Key name (e.g. my-side-project)" style="flex:1;min-width:180px">
+      <button class="btn primary small" id="akNew">＋ Create key</button>
     </div>
-    <div class="row" style="margin-top:10px">
-      <button class="btn primary" id="btScan">🛜 Scan Bluetooth (8s)</button>
-      <button class="btn ghost" id="btPair">📲 Pick a Bluetooth device</button>
-    </div>
-    <div class="muted" style="font-size:10px;margin-top:4px">${escapeHtml(net)}</div>
-    <div id="radarList" class="foundgrid" style="margin-top:8px"></div>
-    <div class="hint" style="margin-top:6px">Tip: ask <b>"list my devices"</b> in chat after linking Home Assistant in Settings — that shows your actual smart devices by name.</div>`;
-  const paint=()=>{
-    const l=$('#radarList'); if(!l) return;
-    l.innerHTML = radarFound.length? radarFound.map(d=>`<div class="foundcard"><b>${escapeHtml(d.name)}</b><div class="muted" style="font-size:10px">${escapeHtml(d.kind||'Bluetooth LE')}${d.rssi!=null?' · '+d.rssi+' dBm':''}</div></div>`).join('')
-      : '<div class="muted">Scan finished — 0 BLE devices in range. That is usually honest: no powered-on Bluetooth devices around, adapter off, or (Android) Location permission off which disables BLE results. Try the picker button to pair-connect instead.</div>';
-  };
-  paint();
-  $('#btScan').onclick=async()=>{
-    const out=$('#radarList');
-    if(!navigator.bluetooth){ out.innerHTML='<div class="errbox">Web Bluetooth is blocked in this context — embedded previews and non-HTTPS pages can\'t reach the adapter. Open OraCool in a real browser tab (Chrome on Android with Location ON + Bluetooth ON, or desktop Chrome with a Bluetooth adapter), or install the PWA — then scan works.</div>'; return; }
-    try{
-      if(navigator.bluetooth.requestLEScan){
-        await navigator.bluetooth.requestLEScan({acceptAllAdvertisements:true});
-        out.innerHTML='<div class="muted">Scanning air for 8 seconds…</div>';
-        const onAdv=(ev)=>{ const n=(ev.name||ev.device&&ev.device.name||'').trim();
-          if(n && !radarFound.find(x=>x.name===n)){ radarFound.push({name:n, kind:'Bluetooth LE', rssi:ev.rssi}); paint(); } };
-        navigator.bluetooth.addEventListener('advertisementreceived', onAdv);
-        setTimeout(async()=>{ try{ await navigator.bluetooth.stopScan(); }catch(e){}
-          try{ navigator.bluetooth.removeEventListener('advertisementreceived', onAdv); }catch(e){}
-          paint();
-          if(!radarFound.length){ $('#radarList').innerHTML='<div class="muted">Nothing advertising right now — move near a powered device (earbuds out of case, watch, speaker) and rescan.</div>'; }
-        }, 8000);
-      } else { throw new Error('unsupported'); }
-    }catch(e){
-      out.innerHTML='<div class="warnbox">Live scanning is restricted in this browser. Use "Pick a Bluetooth device" — the system picker lists every nearby device with its real name/model; choose one and it appears here.</div>';
-    }
-  };
-  $('#btPair').onclick=async()=>{
-    try{
-      const d=await navigator.bluetooth.requestDevice({acceptAllDevices:true});
-      if(d && !radarFound.find(x=>x.name===d.name)){ radarFound.push({name:d.name||d.id, kind:'Bluetooth device'}); }
-      paint(); addSystemNote('📡 Radar picked up <b>'+escapeHtml(d.name||'device')+'</b> — model as reported by the device itself.');
-    }catch(e){ }
+    <div class="result" id="akOut" style="margin-top:8px"></div>
+    <div style="margin-top:10px">${rows||'<div class="muted">No keys yet — create your first one above.</div>'}</div>
+    <div class="hint" style="margin-top:8px">Daily request limits follow your plan: Free 100 · Starter 1,000 · Pro 5,000 · Ultra 20,000 · Enterprise unlimited. The full key is shown <b>once</b> at creation — store it somewhere safe.</div>`;
+  box.querySelectorAll('[data-revoke]').forEach(b=>{ b.onclick=async()=>{ if(!confirm('Revoke this key? Apps using it stop working immediately.')) return;
+    await post('/api/account/apikeys',{op:'revoke', id:b.dataset.revoke, email:session.user&&session.user.email, access_token:session.access_token});
+    addSystemNote('API key revoked.'); renderApiKeys(); }; });
+  $('#akNew').onclick=async()=>{
+    const out=$('#akOut'); out.innerHTML='<div style="text-align:center;padding:8px"><span class="spinner"></span></div>';
+    const rr=await post('/api/account/apikeys',{op:'create', name:$('#akNewName').value, email:session.user&&session.user.email, access_token:session.access_token});
+    if(rr.error){ out.innerHTML='<div class="errbox">'+escapeHtml(rr.error)+'</div>'; return; }
+    out.innerHTML=`<div class="okbox" style="word-break:break-all;font-family:ui-monospace,monospace">COPY IT NOW — shown once:<br><b>${escapeHtml(rr.key)}</b></div>
+      <div class="hint" style="margin-top:6px">Use with base URL <b>${escapeHtml(rr.note? (r.base_url||''):'')}</b> in any OpenAI-compatible client.</div>`;
+    setTimeout(renderApiKeys, 15000);
   };
 }
 
@@ -4620,31 +4666,6 @@ function startCamera(){
   showView('devices');
   setTimeout(()=>{ const b=$('#camOpen'); if(b) b.click(); }, 200);
 }
-async function scanDevices(){
-  const out=$('#devout'); out.innerHTML='<div style="text-align:center;padding:16px"><span class="spinner"></span></div>';
-  const r=await post('/api/home/states',{ha_url:settings.haUrl,ha_token:settings.haToken});
-  if(r.error){ out.innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
-  const entities=r.data||[];
-  const controllable=entities.filter(e=>/^(light|switch|fan|lock|media_player|cover|climate|scene|script)\./.test(e.entity_id));
-  if(!controllable.length){ out.innerHTML=`<div class="muted">Connected, but no controllable entities found (${entities.length} total).</div>`; return; }
-  out.innerHTML=controllable.map(e=>{
-    const on=['on','playing','unlocked','open','heat','cool'].includes(e.state);
-    const id=e.entity_id.replace(/[^a-z0-9_.-]/gi,'_');
-    return `<div class="devrow" data-id="${escapeHtml(e.entity_id)}"><span class="name">${escapeHtml((e.attributes&&e.attributes.friendly_name)||e.entity_id)}</span><span class="st">${escapeHtml(e.state)}</span><div class="switch ${on?'on':''}" id="sw-${id}"></div></div>`;
-  }).join('');
-  out.querySelectorAll('.switch').forEach(sw=>{ sw.onclick=async()=>{
-    const id=sw.closest('.devrow').dataset.id; sw.style.opacity='.4';
-    await post('/api/home/service',{ha_url:settings.haUrl,ha_token:settings.haToken,domain:id.split('.')[0],service:'toggle',entity_id:id});
-    sw.classList.toggle('on'); sw.style.opacity='1';
-  }; });
-}
-function showDemoDevices(){
-  const demo=[['Living room lights','on'],['Arc reactor floor lamp','on'],['Lab monitor','off'],['Thermostat','off'],['Main speakers','off'],['Security feed','on']];
-  $('#devout').innerHTML=`<div class="hint" style="margin-bottom:8px">Demo mode — link Home Assistant above to control real devices.</div>`+
-    demo.map(([n,s])=>{ const id='demo'+n.replace(/\W/g,''); return `<div class="devrow"><span class="name">${n}</span><span class="st">${s}</span><div class="switch ${s==='on'?'on':''}" id="${id}"></div></div>`; }).join('');
-  document.querySelectorAll('#devout .switch').forEach(sw=>{ sw.onclick=()=>sw.classList.toggle('on'); });
-}
-
 /* ---------- code (GitHub) ---------- */
 function renderCode(){
   const gk = srv && srv.auth && srv.auth.github;
