@@ -46,7 +46,7 @@ def _cleanup():
 
 class Marker(unittest.TestCase):
     def test_build_bumped(self):
-        self.assertEqual(SRV.count('"patch61-user-wallet"'), 2)
+        self.assertEqual(SRV.count('"patch62-real-payouts"'), 2)
 
     def test_frontend(self):
         self.assertIn('id="gRef"', APP)          # signup gate referral box

@@ -14,7 +14,7 @@ SQL = open(os.path.join(ROOT, "supabase_patch54_security_console.sql"), encoding
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch61-user-wallet"'), 2)
+        self.assertEqual(SRV.count('"patch62-real-payouts"'), 2)
         self.assertIn("/api/security/console", SRV)
         self.assertIn("security_console_exec", SRV)
         self.assertIn("have_nmap", SRV)
