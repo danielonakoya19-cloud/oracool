@@ -114,13 +114,14 @@
   .drawerhead{display:flex; align-items:center; justify-content:space-between; gap:8px; padding:14px 14px 10px;
     border-bottom:1px solid rgba(0,229,255,.14); letter-spacing:1px;}
   .sesslist{flex:1; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:6px;}
-  .sess{position:relative; border:1px solid var(--line); border-radius:12px; padding:14px 40px 14px 14px; cursor:pointer;
-    background:rgba(6,20,30,.5); transition:border-color .15s ease, background .15s ease;}
-  .sess:hover{border-color:rgba(0,229,255,.45); background:rgba(8,30,44,.6);}
-  .sess.on{border-color:var(--cyan2); box-shadow:0 0 12px rgba(0,229,255,.16);}
-  .sess .st{font-size:15.5px; font-weight:600; line-height:1.4; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .sess .sp{font-size:12.5px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:4px;}
-  .sess .sm{font-size:11.5px; color:var(--dim); margin-top:4px;}
+  .sessgrp{font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--dim); padding:12px 12px 4px;}
+  .sess{position:relative; border-radius:10px; padding:10px 38px 10px 12px; cursor:pointer;
+    transition:background .12s ease;}
+  .sess:hover{background:rgba(0,229,255,.09);}
+  .sess.on{background:rgba(0,229,255,.14); box-shadow:inset 2px 0 0 var(--cyan2);}
+  .sess .st{font-size:14.5px; font-weight:500; line-height:1.45; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .sess .sp{font-size:12px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:2px;}
+  .sess .sm{display:none;}
   .sess .sdel{position:absolute; right:6px; top:50%; transform:translateY(-50%); background:transparent; border:0;
     color:var(--dim); font-size:13px; cursor:pointer; padding:6px; min-width:30px; min-height:30px;}
   .sess .sdel:hover{color:var(--danger);}
@@ -740,7 +741,7 @@
     <button class="side-new" id="newChatBtn" title="Start a new chat">＋ <span class="slbl">New chat</span><span class="slbl-ic">＋</span></button>
     <div class="sidebar-scroll">
     <div class="side-label">Chats</div>
-    <div class="sesslist" id="sessList" style="max-height:46vh"><div class="muted" style="padding:8px;font-size:11px">Sign in to keep your chat history across devices.</div></div>
+    <div class="sesslist" id="sessList" style="max-height:none;flex:1 1 auto;overflow-y:auto"><div class="muted" style="padding:8px;font-size:11px">Sign in to keep your chat history across devices.</div></div>
     <div class="side-label">Menu</div>
     <nav class="side-nav" id="sideNav">
       <div class="side-item active" data-v="chat"><span class="sic">💬</span><span class="slbl">Chat</span></div>
@@ -2010,11 +2011,23 @@ async function ensureSession(){
   try{ const r=await post('/api/chat/session/new',{email:myEmail(), token:proToken||''}); if(r && r.id){ setSessionId(r.id); return r.id; } }catch(e){}
   setSessionId('local-'+Date.now().toString(36)); return sessionId;
 }
+function _sessDay(u){
+  try{
+    const d=new Date(String(u).replace(' ','T')+'Z'); if(isNaN(d)) return 'Older';
+    const now=new Date(); const day=86400000;
+    const d0=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
+    const t=d.getTime()+ (d.getTimezoneOffset()? 0:0);
+    if(t>=d0) return 'Today';
+    if(t>=d0-day) return 'Yesterday';
+    if(t>=d0-7*day) return 'Previous 7 days';
+    if(t>=d0-30*day) return 'Previous 30 days';
+    return 'Older';
+  }catch(e){ return 'Older'; }
+}
 function _sessRow(c){
   return `<div class="sess ${c.id===sessionId?'on':''}" data-id="${escapeHtml(c.id)}">
     <div class="st">${escapeHtml(c.title||'New chat')}</div>
     <div class="sp">${escapeHtml((c.preview||'').slice(0,90))}</div>
-    <div class="sm">${escapeHtml(String(c.updated||'').slice(0,16))} · ${c.count||0} messages</div>
     <button class="sdel" data-del="${escapeHtml(c.id)}" title="Delete this chat">🗑</button></div>`;
 }
 async function loadSessions(){
@@ -2023,8 +2036,14 @@ async function loadSessions(){
   const r=await post('/api/chat/sessions',{email:myEmail(), token:proToken||''}).catch(()=>({}));
   if(r.error){box.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>';return;}
   const rows=r.sessions||[];
-  box.innerHTML=rows.length?rows.map(_sessRow).join(''):
-    '<div class="muted" style="padding:10px;font-size:12px">No saved chats yet — send a message and it appears here.</div>';
+  let html='';
+  if(rows.length){
+    let lastGrp='';
+    rows.forEach(c=>{ const g=_sessDay(c.updated||c.created||'');
+      if(g!==lastGrp){ html+='<div class="sessgrp">'+g+'</div>'; lastGrp=g; }
+      html+=_sessRow(c); });
+  } else html='<div class="muted" style="padding:10px;font-size:12px">No saved chats yet — send a message and it appears here.</div>';
+  box.innerHTML=html;
   box.querySelectorAll('.sess').forEach(el=>{ el.onclick=(e)=>{ if(e.target.closest('.sdel'))return; openSession(el.dataset.id); }; });
   box.querySelectorAll('.sdel').forEach(b=>{ b.onclick=async(e)=>{ e.stopPropagation();
     await post('/api/chat/session/delete',{email:myEmail(), token:proToken||'', id:b.dataset.del}).catch(()=>{});
