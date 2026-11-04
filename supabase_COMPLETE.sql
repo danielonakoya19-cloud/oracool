@@ -645,25 +645,15 @@ as $$
   select v from public.case_store where k = 'security_tools:patch52'
 $$;
 
-create or replace view public.security_tool_runs_recent as
-select
-  id,
-  created_at,
-  actor_email,
-  tool,
-  target,
-  authorized,
-  status,
-  result_sha256,
-  result ->> 'risk' as risk,
-  result -> 'flagged_parameters' as flagged_parameters,
-  source
-from public.security_tool_runs
-order by created_at desc
-limit 500;
+-- NOTE: the security_tool_runs_recent view is created ONCE, further below in
+-- the patch54 section, with its final columns (including tool_name).
+-- Creating it here first with an older column order would make the later
+-- CREATE OR REPLACE fail with: cannot change name of view column "source".
+drop view if exists public.security_tool_runs_recent;
 
 grant usage on schema public to authenticated, service_role;
-grant select on public.security_tool_runs_recent to authenticated, service_role;
+-- (the grant on security_tool_runs_recent lives with the CREATE below in the
+-- patch54 section - the view does not exist yet at this point)
 grant select on public.case_store to authenticated;
 grant all on public.case_store to service_role;
 grant all on public.security_tool_runs to service_role;
