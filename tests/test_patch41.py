@@ -15,7 +15,7 @@ MD = open(os.path.join(ROOT, "md.js"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch67-arena-history"'), 2)
+        self.assertEqual(SRV.count('"patch68-ios15-history"'), 2)
         self.assertNotIn("patch40-studio", SRV)
         self.assertIn('/md.js?v=41', APP)
 

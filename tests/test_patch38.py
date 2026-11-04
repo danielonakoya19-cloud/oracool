@@ -17,7 +17,7 @@ LAND = open(ROOT / 'landing.html', encoding='utf-8').read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch67-arena-history"'), 2)
+        self.assertEqual(SRV.count('"patch68-ios15-history"'), 2)
         self.assertNotIn('patch38-direct', SRV)
 
 

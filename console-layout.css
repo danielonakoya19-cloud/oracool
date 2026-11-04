@@ -1,7 +1,7 @@
 /* Spacious console; detailed settings live in modal side drawers, not the chat. */
 :root{--panel:rgba(14,23,38,.88);--line:rgba(105,155,185,.23)}
 body{background:#080f1c}.scanline{display:none}#app>header{background:rgba(11,20,35,.96);padding:12px 22px}#app{display:flex;flex-direction:row;height:100dvh;overflow:hidden}
-.sidebar{width:282px;flex:none;display:flex;flex-direction:column;gap:4px;padding:14px 12px 12px;background:linear-gradient(180deg,#0a1626,#081120);border-right:1px solid rgba(105,155,185,.23);overflow:hidden;min-height:0}
+.sidebar{width:320px;flex:none;display:flex;flex-direction:column;gap:4px;padding:14px 12px 12px;background:linear-gradient(180deg,#0a1626,#081120);border-right:1px solid rgba(105,155,185,.23);overflow:hidden;min-height:0}
 .sb-brand{display:flex;gap:10px;align-items:center;padding:2px 6px 8px}
 .sb-brand .reactor{width:34px;height:34px}
 .sb-title{font-size:15px;font-weight:800;letter-spacing:2px;color:#eaf6ff}
@@ -53,7 +53,7 @@ chatwrap{border-radius:20px;background:linear-gradient(150deg,#0b1b29,#0b1424)}.
 @media(max-width:1100px){
 body{height:100dvh;overflow:hidden}
 #app{height:100dvh}
-.sidebar{position:fixed;top:0;left:0;bottom:0;z-index:99997;width:min(300px,88vw);transform:translateX(-103%);transition:transform .22s ease;box-shadow:24px 0 70px rgba(0,0,0,.6)}
+.sidebar{position:fixed;top:0;left:0;bottom:0;z-index:99997;width:min(330px,90vw);transform:translateX(-103%);transition:transform .22s ease;box-shadow:24px 0 70px rgba(0,0,0,.6)}
 #app.menu-open .sidebar{transform:none}
 #app.menu-open .app-main::after{content:'';position:fixed;inset:0;background:rgba(3,8,15,.55);z-index:99996}
 .app-main{height:100dvh}

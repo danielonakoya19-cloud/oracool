@@ -47,7 +47,7 @@ class FakeSSE:
 class BuildMarkerTests(unittest.TestCase):
     def test_patch21_marker(self):
         src = (ROOT / "server.py").read_text(errors="ignore")
-        self.assertIn('"build": "patch67-arena-history"', src)
+        self.assertIn('"build": "patch68-ios15-history"', src)
 
 
 class CascadeOrderTests(unittest.TestCase):
