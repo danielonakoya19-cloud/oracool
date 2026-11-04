@@ -44,7 +44,7 @@
   function isSepRow(l) { return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l) && l.indexOf('-') >= 0; }
   function splitRow(l) {
     var t = l.trim(); if (t[0] === '|') t = t.slice(1); if (t[t.length - 1] === '|') t = t.slice(0, -1);
-    return t.split(/(?<!\\)\|/).map(function (c) { return c.trim().replace(/\\\|/g, '|'); });
+    return t.replace(/\\\|/g, '\u0001').split('|').map(function (c) { return c.trim().replace(/\u0001/g, '|'); });
   }
   function render(text) {
     var lines = String(text || '').replace(/\r\n?/g, '\n').split('\n'), out = [], i = 0, n = lines.length;

@@ -1,14 +1,19 @@
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('oracool-') && k !== 'oracool-v4').map(k => caches.delete(k)))));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('oracool-') && k !== 'oracool-v5').map(k => caches.delete(k)))));
   return self.clients.claim();
 });
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   if (new URL(e.request.url).pathname.startsWith('/api/')) return;
+  /* pages must always come fresh from the network so updates reach every device */
+  if (e.request.mode === 'navigate') {
+    e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
+    return;
+  }
   e.respondWith(
     fetch(e.request).then(r => {
-      const c = caches.open('oracool-v4').then(c => { c.put(e.request, r.clone()); return r; });
+      const c = caches.open('oracool-v5').then(c => { c.put(e.request, r.clone()); return r; });
       return r;
     }).catch(() => caches.match(e.request))
   );

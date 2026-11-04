@@ -11,7 +11,7 @@ JS = open(ROOT / 'apps.js', encoding='utf-8').read()
 
 class StaticWiring(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch68-ios15-history"'), 2)
+        self.assertEqual(SRV.count('"patch69-ios15-live"'), 2)
 
     def test_server_serves_apps_js(self):
         self.assertIn('elif path == "/apps.js":', SRV)

@@ -187,7 +187,7 @@
     try{speechSynthesis.speak(u);}catch(e){finish();}
   }
   function enqueue(text){const clean=speechClean(_cleanReply(text));if(!clean||!settings.ttsOn)return;
-    if(clean.length<=220){speechQueue.push(clean);}else{let cur='';clean.split(/(?<=[.!?…])\s+|\n+/).forEach(p=>{p=p.trim();if(!p)return;if((cur+' '+p).length>200&&cur){speechQueue.push(cur);cur=p;}else cur=cur?cur+' '+p:p;});if(cur)speechQueue.push(cur);}
+    if(clean.length<=220){speechQueue.push(clean);}else{let cur='';clean.replace(/([.!?…]+)\s+/g,'$1\n').split(/\n+/).forEach(p=>{p=p.trim();if(!p)return;if((cur+' '+p).length>200&&cur){speechQueue.push(cur);cur=p;}else cur=cur?cur+' '+p:p;});if(cur)speechQueue.push(cur);}
     pump();}
   window.OraVoice={
     get enabled(){return enabled;},

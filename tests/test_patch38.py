@@ -17,7 +17,7 @@ LAND = open(ROOT / 'landing.html', encoding='utf-8').read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch68-ios15-history"'), 2)
+        self.assertEqual(SRV.count('"patch69-ios15-live"'), 2)
         self.assertNotIn('patch38-direct', SRV)
 
 
@@ -196,7 +196,7 @@ console.log(ok?'OK':'FAIL '+h);
         self.assertEqual(r.stdout.strip(), "OK", r.stdout + r.stderr)
 
     def test_client_wiring(self):
-        self.assertIn('<script src="/md.js?v=41"></script>', APP)
+        self.assertIn('<script src="/md.js?v=42"></script>', APP)
         self.assertIn('elif path == "/md.js":', SRV)
         self.assertIn("if(window.OraMd){ el.classList.add('md'); s = OraMd.render(text||''); }", APP)
         self.assertIn(".bubble .md-table th{", APP); self.assertIn(".bubble .md{white-space:normal;}", APP)

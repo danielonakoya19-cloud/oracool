@@ -705,7 +705,7 @@
 .oc-cdl{font-size:12px;letter-spacing:.14em;color:#94a3b8;text-transform:uppercase}.oc-cdr{display:flex;gap:14px;justify-content:center;margin-top:8px}
 .oc-cdn{font-size:26px;font-weight:800;color:#00e5ff;font-variant-numeric:tabular-nums}.oc-cdu{font-size:9px;color:#64748b}
 </style>
-<link rel="stylesheet" href="/console-layout.css">
+<link rel="stylesheet" href="/console-layout.css?v=69">
 </head>
 <body>
 <div class="scanline"></div>
@@ -747,6 +747,7 @@
     <div class="sesslist" id="sessList" style="flex:1 1 auto; min-height:44vh; overflow-y:auto"><div class="muted" style="padding:8px;font-size:11px">Sign in to keep your chat history across devices.</div></div>
     <div class="side-label menulbl" id="menuToggle" style="margin-top:6px">Menu <span id="menuCaret" style="float:right">▸</span></div>
     <nav class="side-nav collapsed" id="sideNav">
+    <div id="buildTag" style="padding:8px 14px 4px; font-size:10.5px; letter-spacing:.6px; color:var(--dim); opacity:.8; -webkit-user-select:none; user-select:none;"></div>
       <div class="side-item active" data-v="chat"><span class="sic">💬</span><span class="slbl">Chat</span></div>
       <div class="side-item" data-v="community" id="communityTab"><span class="sic">👥</span><span class="slbl">Community</span><span class="tabbadge" id="commTabBadge"></span></div>
       <div class="side-item" data-v="create"><span class="sic">✨</span><span class="slbl">Create</span></div>
@@ -1375,7 +1376,7 @@ function speak(text){
     speechSynthesis.cancel();
     const clean=speechClean(text)||''; if(!clean.trim()) return;
     const chunks=[]; let cur='';
-    clean.split(/(?<=[.!?…])\s+|\n+/).forEach(p=>{ p=p.trim(); if(!p) return; if((cur+' '+p).length>200 && cur){ chunks.push(cur); cur=p; } else cur=cur?cur+' '+p:p; });
+    clean.replace(/([.!?…]+)\s+/g,'$1\n').split(/\n+/).forEach(p=>{ p=p.trim(); if(!p) return; if((cur+' '+p).length>200 && cur){ chunks.push(cur); cur=p; } else cur=cur?cur+' '+p:p; });
     if(cur) chunks.push(cur);
     const epoch=(window.__speakEpoch=(window.__speakEpoch||0)+1);
     let i=0;
@@ -6440,6 +6441,7 @@ document.addEventListener('click', function(e){
 })();
 async function init(){
   try{ srv=await fetch('/api/config').then(r=>r.json()); }catch(e){}
+  try{ var _bt=document.getElementById('buildTag'); if(_bt && srv && srv.build) _bt.textContent='OraCool build '+srv.build; }catch(e){}
   try{ const rq=new URLSearchParams(location.search); const rv=(rq.get('ref')||'').toUpperCase(); if(rv){ localStorage.setItem('oracool_ref', rv); history.replaceState({},'',location.pathname); } }catch(e){}
   // Email verification: if the Supabase confirmation link landed us here with a
   // token_hash, confirm it and log the user straight in.
@@ -6556,11 +6558,11 @@ window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); _def
 window.addEventListener('appinstalled', () => { _deferredInstall = null; _pwaHideInstall(); });
 _pwaRefreshInstall();
 </script>
-<script src="/md.js?v=41"></script>
+<script src="/md.js?v=42"></script>
 <script src="/apps.js?v=39"></script>
 <script>/* patch41: these hooks must attach AFTER apps.js loads — the main script runs before it, so option taps never reached send() */
 if(window.OraApps){ OraApps.onSay=(t)=>{ try{ addAI(t); history.push({role:'assistant',content:t}); speak(t); }catch(e){} }; OraApps.onAsk=(t)=>{ try{ send(t); }catch(e){} }; }</script>
-<script src="/voice-reminders.js?v=40"></script>
-<script src="/communications.js"></script>
+<script src="/voice-reminders.js?v=41"></script>
+<script src="/communications.js?v=69"></script>
 </body>
 </html>
