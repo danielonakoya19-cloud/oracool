@@ -41,7 +41,7 @@ def _cleanup():
 
 class Marker(unittest.TestCase):
     def test_build_bumped(self):
-        self.assertEqual(SRV.count('"patch65-botfather-chat"'), 2)
+        self.assertEqual(SRV.count('"patch66-bigger-history"'), 2)
 
     def test_frontend_pieces(self):
         self.assertIn("oracool_ref", APP)

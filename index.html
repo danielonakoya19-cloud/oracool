@@ -114,13 +114,13 @@
   .drawerhead{display:flex; align-items:center; justify-content:space-between; gap:8px; padding:14px 14px 10px;
     border-bottom:1px solid rgba(0,229,255,.14); letter-spacing:1px;}
   .sesslist{flex:1; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:6px;}
-  .sess{position:relative; border:1px solid var(--line); border-radius:10px; padding:9px 34px 9px 11px; cursor:pointer;
+  .sess{position:relative; border:1px solid var(--line); border-radius:12px; padding:14px 40px 14px 14px; cursor:pointer;
     background:rgba(6,20,30,.5); transition:border-color .15s ease, background .15s ease;}
   .sess:hover{border-color:rgba(0,229,255,.45); background:rgba(8,30,44,.6);}
   .sess.on{border-color:var(--cyan2); box-shadow:0 0 12px rgba(0,229,255,.16);}
-  .sess .st{font-size:13px; font-weight:600; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .sess .sp{font-size:11px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:2px;}
-  .sess .sm{font-size:10px; color:var(--dim); margin-top:3px;}
+  .sess .st{font-size:15.5px; font-weight:600; line-height:1.4; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .sess .sp{font-size:12.5px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:4px;}
+  .sess .sm{font-size:11.5px; color:var(--dim); margin-top:4px;}
   .sess .sdel{position:absolute; right:6px; top:50%; transform:translateY(-50%); background:transparent; border:0;
     color:var(--dim); font-size:13px; cursor:pointer; padding:6px; min-width:30px; min-height:30px;}
   .sess .sdel:hover{color:var(--danger);}
@@ -740,7 +740,7 @@
     <button class="side-new" id="newChatBtn" title="Start a new chat">＋ <span class="slbl">New chat</span><span class="slbl-ic">＋</span></button>
     <div class="sidebar-scroll">
     <div class="side-label">Chats</div>
-    <div class="sesslist" id="sessList" style="max-height:34vh"><div class="muted" style="padding:8px;font-size:11px">Sign in to keep your chat history across devices.</div></div>
+    <div class="sesslist" id="sessList" style="max-height:46vh"><div class="muted" style="padding:8px;font-size:11px">Sign in to keep your chat history across devices.</div></div>
     <div class="side-label">Menu</div>
     <nav class="side-nav" id="sideNav">
       <div class="side-item active" data-v="chat"><span class="sic">💬</span><span class="slbl">Chat</span></div>
@@ -2013,7 +2013,7 @@ async function ensureSession(){
 function _sessRow(c){
   return `<div class="sess ${c.id===sessionId?'on':''}" data-id="${escapeHtml(c.id)}">
     <div class="st">${escapeHtml(c.title||'New chat')}</div>
-    <div class="sp">${escapeHtml((c.preview||'').slice(0,64))}</div>
+    <div class="sp">${escapeHtml((c.preview||'').slice(0,90))}</div>
     <div class="sm">${escapeHtml(String(c.updated||'').slice(0,16))} · ${c.count||0} messages</div>
     <button class="sdel" data-del="${escapeHtml(c.id)}" title="Delete this chat">🗑</button></div>`;
 }
