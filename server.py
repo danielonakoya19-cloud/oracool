@@ -4832,7 +4832,8 @@ def build_site(email, name, prompt):
             "template": template, "files": [f["path"] for f in clean], "provider": prov,
             "coins_spent": COIN_COST_BUILD, "coins_left": coins_left,
             "build_saved": bool(bsaved), "qa": _qa, "bytes": len(_idx["content"]),
-            "note": "Live preview is in the card above (auto-saved to the account vault — it survives app updates). "
+            "note": "INTERNAL RESULT — the app already shows the live preview card; never repeat this JSON or note in the reply. "
+                    "Live preview is in the card above (auto-saved to the account vault — it survives app updates). "
                     "If the user asks to publish, run the publish tool and report the exact url it returns "
                     "(https://oracoolai.com/sites/<name>/ — opens instantly on every device); do NOT invent a "
                     "<name>.oracoolai.com link. Publishing is free. 'How to deploy' also offers Netlify / Vercel / "
@@ -8593,7 +8594,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch70-creator-domains",
+        "build": "patch71-real-builds",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -9571,7 +9572,9 @@ _NAME_RX = re.compile(r"(?:called|named|titled)\s+[\"\u201c\u2018']?([A-Za-z0-9&
 
 
 _SITE_NOUN_RX = re.compile(r"\b(?:web ?site|web ?app|webapp|web ?page|webpage|homepage|landing ?page|online store|"
-                           r"e-?commerce|portfolio|dashboard|blog|shop|store|app|application|saas|platform|site for)\b")
+                           r"e-?commerce|portfolio|dashboard|blog|shop|store|app|application|saas|platform|site for|"
+                           r"game|games|quiz|quizzes|tool|tools|tracker|timer|calculator|planner|simulator|"
+                           r"companion|assistant|chat ?bot|ai|a\.i)\b")
 _MEDIA_NOUN_RX = re.compile(r"\b(?:images?|pictures?|photos?|art|artwork|logos?|posters?|banners?|icons?|graphics?|"
                             r"illustrations?|drawings?|renders?|avatars?|wallpapers?|mockups?|flyers?|videos?|clips?|animations?)\b")
 _QUESTION_RX = re.compile(r"^\s*(?:(?:please|pls|hey|hi|hello|yo|ok|okay|so|now|also|and|just)[\s,]+)*"
@@ -9611,7 +9614,9 @@ def _looks_slow_tool(text):
     if not verb:
         return False
     return bool(re.search(r"\b(?:web ?site|web ?app|webapp|web ?page|webpage|homepage|landing ?page|online store|"
-                          r"e-?commerce|portfolio|dashboard|blog|shop|store|images?|pictures?|photos?|art|artwork|logos?|"
+                          r"e-?commerce|portfolio|dashboard|blog|shop|store|game|games|quiz|quizzes|tool|tools|tracker|"
+                          r"timer|calculator|planner|simulator|companion|assistant|chat ?bot|ai|a\.i|"
+                          r"images?|pictures?|photos?|art|artwork|logos?|"
                           r"posters?|banners?|wallpapers?|illustrations?|videos?|clips?|animations?)\b", low))
 
 
@@ -9671,9 +9676,12 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     _mb = re.search(r"\b(?:build|create|make|design|generate|code|develop)\s+(?:me\s+)?(?:an?\s+|the\s+|my\s+)?"
                     r"(?:(?!(?:for|of|with|that|which|about|using|out|into)\b)[\w\x27-]+\s+){0,4}?"
                     r"(?:website|web\s*site|web\s*app|webapp|web\s*page|webpage|homepage|landing\s*page|"
-                    r"site|app|apps|portfolio|online\s*store|e-?commerce|shop|store|blog|dashboard)\b", low)
+                    r"site|app|apps|portfolio|online\s*store|e-?commerce|shop|store|blog|dashboard|"
+                    r"game|games|quiz|quizzes|tool|tools|tracker|timer|calculator|planner|simulator|"
+                    r"companion|assistant|chat\s?bot|ai|a\.i)\b", low)
     _site_ish = (bool(re.search(r"\b(?:web ?site|web ?app|webapp|web ?page|webpage|homepage|landing page|"
-                                r"online store|e-?commerce|portfolio|dashboard)\b", low))
+                                r"online store|e-?commerce|portfolio|dashboard|game|games|quiz|quizzes|tool|tools|"
+                                r"tracker|timer|calculator|planner|simulator|companion|assistant|chat ?bot|ai|a\.i)\b", low))
                  and bool(re.search(r"\b(?:build|create|make|design|generate|code|develop|launch|rebuild|redesign)\b", low))
                  and not re.search(r"\b(?:images?|pictures?|photos?|art|artwork|logos?|posters?|banners?|icons?|"
                                     r"graphics?|illustrations?|drawings?|renders?|avatars?|wallpapers?|mockups?|"
@@ -10422,13 +10430,29 @@ def tool_context(tools):
     if not tools:
         return None
     parts = []
+    _BUILDY = ("build", "edit", "publish", "github_push")
     for t in tools:
-        parts.append("Tool %s (%s) returned: %s" % (t["tool"], t["label"], t["result"]))
+        res = t["result"]
+        if t["tool"] in _BUILDY:
+            try:  # patch71: the model gets a digest, never the full JSON — weak models used to echo it
+                r = json.loads(res) if isinstance(res, str) else (res if isinstance(res, dict) else {})
+                dig = {k: r[k] for k in ("name", "slug", "url", "path_url", "template", "bytes",
+                                         "coins_spent", "provider", "build_saved") if k in r}
+                if r.get("error"): dig["error"] = r["error"]
+                parts.append("Tool %s (%s) returned this INTERNAL digest — for your information only, "
+                             "NEVER quote it or the JSON in the reply: %s" % (t["tool"], t["label"], json.dumps(dig)))
+                continue
+            except Exception:
+                pass
+        parts.append("Tool %s (%s) returned: %s" % (t["tool"], t["label"], res))
     return ("OraCool just ran these live tools itself. The results below are REAL, current data. "
             "Answer using them, in your calm JARVIS voice, and mention the key figures.\n"
             "The app ALREADY renders these results to the user as cards (build preview, publish link). "
-            "So NEVER paste, repeat or wrap up the raw JSON in your reply, and NEVER invent a URL: when you "
-            "mention a link, quote the exact url field a tool returned (its 'note' tells you the right one).\n"
+            "So NEVER paste, repeat or wrap up the raw JSON or any tool 'note' text in your reply — "
+            "for a finished build write ONE short proud sentence (name + the best feature) and offer a next step. "
+            "NEVER invent a URL: when you "
+            "mention a link, quote the exact url field a tool returned (its 'note' tells you the right one)."
+            " If you did not actually run a build tool this turn, NEVER claim something is built or live.\n"
             "If a tool result has have_nmap, have_sqlmap, have_wireshark, have_john, have_hydra or have_image_generation set true, "
             "or is labeled Nmap/SQLMap/Wireshark/John/Hydra, you DO have that tool. Never say you don't have nmap — the id "
             "secscan means Nmap, but never write 'secscan' (or pcap/mediainspect) to the user; use the human names. "
@@ -12154,7 +12178,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch70-creator-domains",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch71-real-builds",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})

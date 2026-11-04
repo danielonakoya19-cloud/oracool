@@ -13,7 +13,7 @@ import server as s  # noqa: E402
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
-MARK = "patch70-creator-domains"
+MARK = "patch71-real-builds"
 
 
 class Marker(unittest.TestCase):

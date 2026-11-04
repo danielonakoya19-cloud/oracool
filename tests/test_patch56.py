@@ -12,7 +12,7 @@ APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch70-creator-domains"'), 2)
+        self.assertEqual(SRV.count('"patch71-real-builds"'), 2)
         self.assertNotIn("KALI_PS1", SRV)
         self.assertNotIn("kali㉿oracool", SRV)
         self.assertNotIn("drawSecConsole", APP)

@@ -2855,7 +2855,7 @@ async function send(text){
   if(coreNames.length){ const who=b.querySelector('.who'); if(who) who.textContent='ORA-COOL · '+[...new Set(coreNames)].join(' + '); }
   body.innerHTML='<span class="dots"></span>';
   const _mode=chatMode();
-  let _steps=null; try{ if(session && (_mode==='build' || wantsBuild(text)||wantsEdit(text))) _steps=stepsCard(b); }catch(e){}
+  let _steps=null; let _builtCard=false; try{ if(session && (_mode==='build' || wantsBuild(text)||wantsEdit(text))) _steps=stepsCard(b); }catch(e){}
   const msgs=[{role:'system',content:systemPrompt()+(coreExtra?('\n\n'+coreExtra):'')},...history];
   try{
     let acc='';
@@ -2890,7 +2890,7 @@ async function send(text){
               if(j.error){ _streamErr=new Error(String(j.error).slice(0,240)); finished=true; break outer; }
               if(j.__progress && !_steps && session){ try{ _steps=stepsCard(b); }catch(e){} }
               if(j.__steps){ try{ if(!_steps) _steps=stepsCard(b,{push:true}); _steps.push(j.__steps); }catch(e){} }
-              if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build'){ if(x.coins_left!=null){ COINS=COINS||{}; COINS.balance=x.coins_left; renderCoinPill(); } if(x.url){ try{ buildCard(x); }catch(e){ addAI('<b>🏗 '+(x.name||'Your site')+'</b> is built — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the live preview here</a> (auto-saved to your vault).'); } } } if(x.tool==='edit'&&x.url){ try{ buildCard(x); }catch(e){ addAI('<b>✏️ '+(x.name||'Your site')+' updated</b> — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the new preview</a>.'); } } if(x.tool==='publish'){ try{ addAI(x.url?('🌐 Published — live at <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener">'+escapeHtml(x.url)+'</a>'):''); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } }); }
+              if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build'){ if(x.coins_left!=null){ COINS=COINS||{}; COINS.balance=x.coins_left; renderCoinPill(); } if(x.url){ _builtCard=true; try{ buildCard(x); }catch(e){ addAI('<b>🏗 '+(x.name||'Your site')+'</b> is built — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the live preview here</a> (auto-saved to your vault).'); } } } if(x.tool==='edit'&&x.url){ _builtCard=true; try{ buildCard(x); }catch(e){ addAI('<b>✏️ '+(x.name||'Your site')+' updated</b> — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the new preview</a>.'); } } if(x.tool==='publish'){ try{ addAI(x.url?('🌐 Published — live at <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener">'+escapeHtml(x.url)+'</a>'):''); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } }); }
               if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
               if(j.__media && j.__media.length){ streamMedia=streamMedia.concat(j.__media); }
               const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; const _shown=_noApp(_cleanReply(acc)); body.textContent=_shown+(acc.indexOf('```')>=0&&_shown.length<_cleanReply(acc).length?' ✨ drawing it for you…':''); if(turnSpeaker)turnSpeaker.feed(_shown); scrollChat(); }
@@ -2915,6 +2915,34 @@ async function send(text){
         body.appendChild(n);
       });
     }
+    try{ /* patch71: a model that echoes the tool JSON never reaches the user — the real card shows instead */
+      if(!_builtCard){
+        const _bm=acc.match(/(?:•\s*)?(?:build|edit)\s*·\s*[^:\n]{0,30}:\s*(\{"ok"\s*:\s*true[\s\S]*?"note"[\s\S]*?\})/);
+        if(_bm){ let _pj=null; try{ _pj=JSON.parse(_bm[1]); }catch(e){}
+          acc=acc.replace(_bm[0], _pj?('<b>'+escapeHtml(_pj.name||'Your site')+'</b> is ready — the live preview card is below.'):'✅ The build finished — the live preview card is below.');
+          renderRich(body, acc);
+          if(_pj&&(_pj.url||_pj.slug)){ try{ buildCard(_pj); _builtCard=true; }catch(e){} } }
+      }
+    }catch(e){}
+    try{ /* patch71: an invented app block becomes a REAL build — no more fake "Done" */
+      if(!_builtCard){
+        body.querySelectorAll('pre').forEach(pre=>{
+          if(_builtCard||!pre.parentNode) return;
+          const tx=(pre.textContent||'').trim();
+          if(tx.indexOf('"app"')<0 || (tx.indexOf('"build"')<0 && tx.indexOf("'build'")<0)) return;
+          let meta=null; try{ meta=JSON.parse(tx); }catch(e){ const mt=tx.match(/"title"\s*:\s*"([^"]*)"/); const md=tx.match(/"description"\s*:\s*"([^"]*)"/); if(mt||md) meta={title:mt?mt[1]:'', description:md?md[1]:''}; }
+          if(!meta) return;
+          _builtCard=true;
+          pre.innerHTML='<span style="color:var(--dim)">🏗 OraCool is building this for real — watch the live steps…</span>';
+          const feed=stepsCard(body);
+          post('/api/builds',{name:String(meta.title||'').slice(0,40), message:String((meta.title?meta.title+': ':'')+(meta.description||'')).slice(0,300)})
+            .then(r=>{ try{ feed.finish(); }catch(e){}
+              if(r&&r.ok){ pre.remove(); try{ buildCard(r); }catch(e){} }
+              else { pre.innerHTML='⚠ The build did not complete'+((r&&r.error)?(' — '+String(r.error).slice(0,120)):'')+'. Ask again and it runs for real.'; } })
+            .catch(()=>{ try{ feed.finish(); }catch(e){} pre.innerHTML='⚠ The build could not start — try again.'; });
+        });
+      }
+    }catch(e){}
     history.push({role:'assistant',content:acc}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
     if(_steps){ try{ _steps.finish(); }catch(e){} _steps=null; }
     attachActions(b, acc);

@@ -20,7 +20,7 @@ def _http_err(code, msg):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch70-creator-domains"'), 2)
+        self.assertEqual(SRV.count('"patch71-real-builds"'), 2)
         self.assertNotIn("patch43-modes", SRV)
 
 
