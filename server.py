@@ -4574,6 +4574,31 @@ def _site_quality_issues(html):
     return issues
 
 
+_APP_RX = re.compile(r"\b(app|game|tool|calculator|quiz|chat\s?bot|ai\b|dashboard|tracker|timer|planner|simulator|generator|editor|player|todo|to-do|notes?\b|budget|converter|widget|counter|flashcards?|arcade|puzzle|companion|assistant)\b", re.I)
+
+
+def _creative_direction(prompt, name):
+    """patch70: imagination pass — invents one original concept (idea, palette,
+    fonts, signature moment, section plan, copy voice) before the build."""
+    try:
+        who = ((name + " — ") if (name and name.lower() not in ("my-site", "site", "website")) else "")
+        sysd = ("You are the design director of a top studio. Invent ONE original, memorable concept "
+                "for this brief. No cliches (no generic blue/purple SaaS gradients), no corporate filler. "
+                "Answer with EXACTLY six short lines, each in the form WORD: max 14 words:\n"
+                "CONCEPT: the one-line idea with a twist that makes it unforgettable\n"
+                "PALETTE: 5 hex colors that fit this industry and mood (dark or light — your call)\n"
+                "FONTS: a Google Fonts pairing (display + body) that fits the brand\n"
+                "SIGNATURE: one interaction or visual moment visitors will remember\n"
+                "SECTIONS: 6-8 section names in order, comma-separated\n"
+                "COPY_VOICE: how the words should sound (e.g. warm Lagos hospitality, brutalist poet)")
+        c, _p, _f = _llm_text(sysd, who + prompt[:600], max_tokens=320, effort="low")
+        if c and all(k in c for k in ("CONCEPT:", "PALETTE:", "SECTIONS:")) and len(c) < 2400:
+            return c.strip()[:2200]
+    except Exception:
+        pass
+    return ""
+
+
 def build_site(email, name, prompt):
     """Arena-style builder (patch27): designs a complete, professional static
     website matched to the brief — Lovable/Base44-grade template, real copy,
@@ -4636,8 +4661,33 @@ def build_site(email, name, prompt):
     _generic = (not name) or name.strip().lower() in ("my-site", "site", "website", "app", "landing page", "page")
     _bpt = _brief_blueprint(prompt)
     _bp_step(email, "Art direction", _bpt.split("|")[0].replace("industry:", "").strip())
-    _bp_step(email, "Collecting licensed photos", "Pexels · Openverse · Wikimedia Commons")
-    _imgs = _build_image_library(prompt, _bpt)
+    # patch70: the imagination pass — a design director invents the concept
+    # BEFORE a line of code is written (what the best studios actually do)
+    _dir = _creative_direction(prompt, None if _generic else name)
+    if _dir:
+        _con0 = _dir.split("CONCEPT:", 1)[-1].split("\n")[0].strip()
+        _bp_step(email, "Imagination", _con0[:90] or "concept locked")
+    _is_app = bool(_APP_RX.search(prompt) or _APP_RX.search(name or ""))
+    if _is_app:
+        _bp_step(email, "Mode", "web app — building the real working thing")
+        _imgs = []
+    else:
+        _bp_step(email, "Collecting licensed photos", "Pexels · Openverse · Wikimedia Commons")
+        _imgs = _build_image_library(prompt, _bpt)
+    if _dir:
+        system = system + (" CREATIVE DIRECTION (the design director concept — execute it faithfully; "
+                           "you may refine details, never the soul; keep hex palette and fonts as CSS custom properties): "
+                           + _dir.replace("\n", " | "))
+    if _is_app:
+        system = system + (" APP MODE: this brief is an interactive WEB APP or GAME, not a marketing page — build the "
+                           "real working thing: complete functioning logic in vanilla JS (state, events, validation, "
+                           "persistence via localStorage where it makes sense); EVERY button and control genuinely works "
+                           "offline; include a compact how-to hint inside the UI; keep the visual bar of a landing page "
+                           "(branded header/hero, focused layout, no filler sections about pricing or testimonials). "
+                           "If the brief is an AI/companion/assistant, implement a REAL self-contained brain in JavaScript "
+                           "(personality, in-page conversation memory, rules/markov/retrieval — it must genuinely respond, "
+                           "never a fake placeholder). Same strict output format (TEMPLATE line, TITLE line, BEGIN "
+                           "index.html, full file, END).")
     _bp_step(email, "Photos collected", "%d images ready" % len(_imgs))
     _img_block = ""
     if _imgs:
@@ -4774,6 +4824,7 @@ def build_site(email, name, prompt):
                   "files": [f["path"] for f in clean], "t": _now(), "template": template}
     _builds_save(meta)
     bsaved = builds_sup_save(slug, clean)
+    _version_store(slug, _idx["content"], "initial build")
     _BUILD_DAILY.setdefault(email, []).append(now)
     st = coins_charge(email, COIN_COST_BUILD)
     coins_left = None if (not st or st.get("unlimited")) else st.get("balance")
@@ -4868,6 +4919,7 @@ def build_edit(email, slug, instructions):
     if len(new) < max(600, int(len(old) * 0.55)):
         _bp_done(email, False, "edit would have cut the page short")
         return {"error": "That edit would have cut the page short (reply limit) — split it into two smaller changes."}
+    _version_store(slug, old, "before: " + instructions[:120])
     _bp_step(email, "Saving the workspace", "%.1f KB → data/builds · vault mirror" % (len(new) / 1024.0), kind="save")
     try:
         os.makedirs(dest, exist_ok=True)
@@ -4892,6 +4944,88 @@ def build_edit(email, slug, instructions):
             "build_saved": bool(saved),
             "note": "The updated site is in the preview card above and in the Websites panel. Edits are free. "
                     "Say 'publish' (or tap the publish button) and the SAME live address updates — no new link."}
+
+
+# ------------------------------------------------------- build versions (patch70)
+_BUILD_VERSIONS = 5  # rolling history per build
+
+
+def _supabase_kv_del(k):
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    if not url or not svc:
+        return False
+    try:
+        http_fetch(url.rstrip("/") + "/rest/v1/case_store?k=eq." + urllib.parse.quote(k, safe=""),
+                   method="DELETE",
+                   headers={"apikey": svc, "Authorization": "Bearer " + svc}, timeout=15)
+        return True
+    except Exception:
+        return False
+
+
+def _version_store(slug, html, note):
+    """Rolling version history for a build (durable in Supabase case_store)."""
+    try:
+        idx = supabase_kv_get("bcver:" + slug) or {}
+        n = int(idx.get("n") or 0) + 1
+        supabase_kv_put("bcver:" + slug + ":" + str(n),
+                        {"t": _now(), "note": (note or "")[:160], "html": html})
+        supabase_kv_put("bcver:" + slug, {"n": n})
+        old_n = n - _BUILD_VERSIONS
+        if old_n > 0:
+            _supabase_kv_del("bcver:" + slug + ":" + str(old_n))
+        return n
+    except Exception:
+        return 0
+
+
+def build_versions(email, slug):
+    slug = os.path.basename(str(slug or ""))
+    meta = _builds_load(); b = meta.get(slug)
+    if not b:
+        return {"error": "No saved build with that name."}
+    if (b.get("owner") or "").lower() != (email or "").lower() and not is_admin(email):
+        return {"error": "That build belongs to a different account."}
+    n = int((supabase_kv_get("bcver:" + slug) or {}).get("n") or 0)
+    out = []
+    for i in range(n, max(0, n - _BUILD_VERSIONS), -1):
+        v = supabase_kv_get("bcver:" + slug + ":" + str(i))
+        if isinstance(v, dict) and v.get("t"):
+            out.append({"v": i, "t": v.get("t"), "note": (v.get("note") or "")[:120],
+                        "bytes": len(v.get("html") or "")})
+    return {"ok": True, "slug": slug, "versions": out}
+
+
+def build_restore(email, slug, ver):
+    slug = os.path.basename(str(slug or ""))
+    try:
+        ver = int(ver or 0)
+    except Exception:
+        ver = 0
+    meta = _builds_load(); b = meta.get(slug)
+    if not b:
+        return {"error": "No saved build with that name."}
+    if (b.get("owner") or "").lower() != (email or "").lower() and not is_admin(email):
+        return {"error": "That build belongs to a different account."}
+    v = supabase_kv_get("bcver:" + slug + ":" + str(ver))
+    html = (v or {}).get("html") if isinstance(v, dict) else None
+    if not html or "</html>" not in html.lower():
+        return {"error": "That version is not available any more."}
+    dest = os.path.normpath(os.path.join(_BUILDS_DIR, slug))
+    try:
+        os.makedirs(dest, exist_ok=True)
+        with open(os.path.join(dest, "index.html"), "w", encoding="utf-8") as fh:
+            fh.write(html)
+    except Exception as e:
+        return {"error": "Could not restore: " + str(e)[:120]}
+    _version_store(slug, html, "restored from v" + str(ver))
+    builds_sup_save(slug, [{"path": "index.html", "content": html}])
+    meta2 = _builds_load(); ent = meta2.get(slug) or b
+    ent["t"] = _now(); ent["edited"] = "restored from v" + str(ver)
+    meta2[slug] = ent; _builds_save(meta2)
+    return {"ok": True, "slug": slug, "url": "/builds/" + slug + "/", "restored": ver,
+            "name": ent.get("name") or slug,
+            "note": "Restored version " + str(ver) + ". Preview updated; Publish (Update live) pushes it to the same live address."}
 
 
 def builds_sup_delete(slug):
@@ -5493,9 +5627,170 @@ def site_domain_set(email, sub, domain):
     if not domain:
         return {"ok": True, "note": "Custom domain removed — the site stays live on its OraCool subdomain."}
     return {"ok": True, "domain": domain,
-            "note": "Attached. At your domain registrar, add a CNAME for 'www' pointing to oracoolai.com "
-                    "and an A/ALIAS record for '@' pointing to oracoolai.com — once DNS resolves (minutes to "
-                    "hours), https://" + domain + " serves your site automatically. Keep the subdomain live too."}
+            "records": [
+                {"type": "CNAME", "name": "www", "value": "oracoolai.com",
+                 "note": "serves www." + domain},
+                {"type": "ALIAS / ANAME (or A)", "name": "@", "value": "oracoolai.com",
+                 "note": "serves the bare " + domain + " — use ALIAS/ANAME where the registrar offers it"}],
+            "note": "Attached — Step 2: add the two records at your registrar (exact values below), "
+                    "then Step 3: tap Check DNS. Until it settles (minutes-48h) your OraCool link keeps "
+                    "working. Routing + HTTPS certificate are handled automatically."}
+
+
+_DOMAIN_TLDS = [("com", "≈$11.99/yr"), ("com.ng", "≈$6.99/yr"), ("net", "≈$13.99/yr"),
+                ("org", "≈$13.99/yr"), ("io", "≈$34.99/yr"), ("co", "≈$27.99/yr"),
+                ("xyz", "≈$9.99/yr"), ("online", "≈$7.99/yr"), ("shop", "≈$8.99/yr"),
+                ("app", "≈$16.99/yr"), ("ng", "≈$24.99/yr"), ("africa", "≈$8.99/yr")]
+
+
+def _dns_query(name, rtype):
+    """DNS-over-HTTPS via Google — no key needed."""
+    try:
+        st, raw, _h = http_fetch("https://dns.google/resolve?name=" +
+                                 urllib.parse.quote(name, safe="") + "&type=" + rtype, timeout=8)
+        if st == 200:
+            j = json.loads(raw)
+            if isinstance(j, dict):
+                return j
+    except Exception:
+        pass
+    return {}
+
+
+def domain_search(email, name, want=None):
+    """patch70: Base44-style domain finder — honest availability via RDAP
+    (rdap.org) with a DNS-over-HTTPS fallback. Searching is free; nothing
+    is charged and nothing is invented."""
+    name = (name or "").strip().lower().replace(" ", "")
+    name = re.sub(r"^https?://", "", name).split("/")[0].split(".")[0]
+    name = re.sub(r"[^a-z0-9-]", "", name)[:63]
+    if len(name) < 2:
+        return {"error": "Type a name to search, e.g. becfomstudio."}
+    want = str(want or "").strip().lower()
+    tlds = [w.strip().lstrip(".") for w in want.split(",") if w.strip()] if want else [t for t, _p in _DOMAIN_TLDS]
+    tlds = [t for t in tlds if re.fullmatch(r"[a-z.]{2,12}", t or "")][:8] or ["com"]
+
+    def _one(tld):
+        full = name + "." + tld
+        taken = None
+        try:
+            st, raw, _h = http_fetch("https://rdap.org/domain/" + full, timeout=9)
+            if st == 404:
+                taken = False
+            elif st == 200:
+                taken = True
+        except Exception:
+            taken = None
+        if taken is None:
+            j = _dns_query(full, "NS")
+            if j.get("Status") == 3:
+                taken = False
+            elif j.get("Status") == 0 and (j.get("Answer") or j.get("Authority")):
+                taken = True
+        if taken is None:
+            return None
+        price = next((pr for t, pr in _DOMAIN_TLDS if t == tld), "—")
+        return {"domain": full, "available": (not taken), "price": price}
+
+    from concurrent.futures import ThreadPoolExecutor
+    try:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            res = [r for r in ex.map(_one, tlds) if r]
+    except Exception:
+        res = []
+    if not res:
+        return {"error": "Domain lookup is unreachable right now — try again in a moment."}
+    res.sort(key=lambda r: (not r["available"], r["domain"]))
+    return {"ok": True, "name": name, "results": res}
+
+
+def domain_order(email, domain, years):
+    """patch70: Base44-style buy-on-site, honest edition — places a concierge
+    purchase request. The OraCool team registers the domain and wires it to
+    the user site; nothing is charged online and the user keeps ownership."""
+    email = (email or "").strip().lower()
+    domain = re.sub(r"^https?://", "", str(domain or "").strip().lower()).split("/")[0].strip(".")
+    if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+", domain):
+        return {"error": "That does not look like a registrable domain."}
+    try:
+        years = min(3, max(1, int(years or 1)))
+    except Exception:
+        years = 1
+    price = next((pr for t, pr in _DOMAIN_TLDS
+                  if domain.rsplit(".", 1)[-1] == t or domain.endswith("." + t)), "≈$12/yr")
+    rec = {"email": email, "domain": domain, "years": years, "price_hint": price,
+           "status": "requested", "t": _now()}
+    okv = supabase_kv_put("domord:" + email + ":" + str(int(time.time())), rec)
+    audit_log(email, "domain_order", domain + " " + str(years) + "y")
+    if not okv:
+        return {"error": "Could not record the order — try again in a moment."}
+    return {"ok": True, "order": rec,
+            "note": "Order placed for " + domain + " (" + price + ", " + str(years) +
+                    "yr). The OraCool team registers it and connects it to your site — you get a chat "
+                    "message when it is live. You keep full ownership; nothing is charged here."}
+
+
+def domain_orders(email):
+    email = (email or "").strip().lower()
+    adm = is_admin(email)
+    url = key("SUPABASE_URL"); svc = key("SUPABASE_SERVICE_KEY")
+    out = []
+    if url and svc:
+        try:
+            pat = "domord:" if adm else ("domord:" + email + ":")
+            _, raw, _h = http_fetch(url.rstrip("/") + "/rest/v1/case_store?k=like." +
+                                    urllib.parse.quote(pat + "*", safe="*") +
+                                    "&select=k,v&order=k.desc&limit=100",
+                                    headers={"apikey": svc, "Authorization": "Bearer " + svc}, timeout=15)
+            for row in json.loads(raw or "[]"):
+                v = row.get("v") or {}
+                if isinstance(v, str):
+                    try:
+                        v = json.loads(v)
+                    except Exception:
+                        v = {}
+                if isinstance(v, dict) and v.get("domain"):
+                    if adm or (v.get("email") or "").lower() == email:
+                        out.append(v)
+        except Exception:
+            pass
+    return {"ok": True, "orders": out[:50]}
+
+
+def site_dns_status(email, sub):
+    """patch70: Render-style domain health — the server checks the user DNS
+    records (DoH) and probes whether the domain already serves the site."""
+    sub = (sub or "").strip().lower()
+    reg = _sites_load(); cur = reg.get(sub)
+    if not cur:
+        return {"error": "No published site under that name."}
+    if (cur.get("owner") or "").lower() != (email or "").lower() and not is_admin(email):
+        return {"error": "Only the owner can check that site domain."}
+    dom = (cur.get("custom_domain") or "").strip().lower()
+    if not dom:
+        return {"ok": True, "sub": sub, "domain": "", "stage": "none",
+                "note": "No custom domain attached yet."}
+    www = _dns_query("www." + dom, "CNAME")
+    www_val = ""
+    for a in (www.get("Answer") or []):
+        if str(a.get("data", "")).rstrip(".").endswith("oracoolai.com"):
+            www_val = str(a["data"]).rstrip(".")
+    apex = _dns_query(dom, "A")
+    apex_a = bool(apex.get("Answer"))
+    serving = False; http_code = 0
+    for probe in ("https://" + dom + "/", "https://www." + dom + "/"):
+        try:
+            st, raw, _h = http_fetch(probe, timeout=10)
+            http_code = st
+            if st == 200 and "<html" in (raw or "")[:2000].lower():
+                serving = True
+                break
+        except Exception:
+            continue
+    stage = "live" if serving else ("dns" if (www_val or apex_a) else "pending")
+    return {"ok": True, "sub": sub, "domain": dom, "stage": stage,
+            "www_cname": www_val, "apex_a": apex_a, "http_code": http_code,
+            "serving": serving, "checked_at": _now()}
 
 
 def sites_list(email):
@@ -8298,7 +8593,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch69-ios15-live",
+        "build": "patch70-creator-domains",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -11859,7 +12154,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch69-ios15-live",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch70-creator-domains",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -11887,7 +12182,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "This account is suspended by an administrator. Access is locked until an administrator lifts the block.",
                                  "suspended": True, "blocked": True}, 403)
                 return
-        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/comms/", "/api/community/", "/api/builds", "/api/sites", "/api/coins", "/api/github", "/api/security/")) or path in ("/api/image", "/api/video")
+        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/comms/", "/api/community/", "/api/builds", "/api/sites", "/api/domains", "/api/coins", "/api/github", "/api/security/")) or path in ("/api/image", "/api/video")
         if protected:
             em = request_identity(self, body, require_supabase=path.startswith(("/api/voice/", "/api/comms/")))
             if not em:
@@ -12075,6 +12370,10 @@ class Handler(BaseHTTPRequestHandler):
                                                str(body.get("instructions") or "")))
                 elif _bact == "delete":
                     self._send_json(build_delete(body.get("email"), str(body.get("slug") or "")))
+                elif _bact == "versions":
+                    self._send_json(build_versions(body.get("email"), str(body.get("slug") or "")))
+                elif _bact == "restore":
+                    self._send_json(build_restore(body.get("email"), str(body.get("slug") or ""), body.get("version") or 0))
                 else:
                     _bm = (body.get("message") or body.get("brief") or "").strip()
                     _bname = (body.get("name") or "").strip()
@@ -12109,8 +12408,19 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(site_unpublish(_em, str(body.get("sub") or "")))
                 elif _act == "domain":
                     self._send_json(site_domain_set(_em, str(body.get("sub") or ""), str(body.get("domain") or "")))
+                elif _act == "domain_status":
+                    self._send_json(site_dns_status(_em, str(body.get("sub") or "")))
                 else:
                     self._send_json(sites_list(_em))
+            elif path == "/api/domains":
+                _em = body.get("email") or ""
+                _dact = str(body.get("action") or "search").strip().lower()
+                if _dact == "order":
+                    self._send_json(domain_order(_em, str(body.get("domain") or ""), body.get("years") or 1))
+                elif _dact == "orders":
+                    self._send_json(domain_orders(_em))
+                else:
+                    self._send_json(domain_search(_em, str(body.get("name") or ""), body.get("tlds")))
             elif path == "/api/coins":
                 self._send_json(coins_state(body.get("email") or ""))
             elif path == "/api/github":

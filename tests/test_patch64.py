@@ -17,7 +17,7 @@ SQL = open(os.path.join(ROOT, "supabase_patch64_bots.sql"), encoding="utf-8").re
 
 class Marker(unittest.TestCase):
     def test_build(self):
-        self.assertEqual(SRV.count('"patch69-ios15-live"'), 2)
+        self.assertEqual(SRV.count('"patch70-creator-domains"'), 2)
 
     def test_wallet_gone(self):
         for needle in ("/api/wallet", "wallet_withdraw", "referral_mark_used",
@@ -35,7 +35,7 @@ class Marker(unittest.TestCase):
 
     def test_custom_domain_intact(self):
         self.assertIn("def site_domain_set", SRV)
-        self.assertIn("pubDomGo", APP)
+        self.assertIn("pubDomOpen", APP)  # patch70: domain portal button
 
     def test_bots_present(self):
         self.assertIn('path.startswith("/api/bot/v1/")', SRV)

@@ -13,7 +13,7 @@ APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch69-ios15-live"'), 2)
+        self.assertEqual(SRV.count('"patch70-creator-domains"'), 2)
         self.assertNotIn("patch42-feed", SRV)
 
 

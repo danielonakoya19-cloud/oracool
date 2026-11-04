@@ -19,7 +19,7 @@ WEATHER = [{"tool": "weather", "label": "weather in Lagos", "result": json.dumps
 
 class MarkerTest(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch69-ios15-live"'), 2)
+        self.assertEqual(SRV.count('"patch70-creator-domains"'), 2)
 
 
 class JunkUnitTests(unittest.TestCase):

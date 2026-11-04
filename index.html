@@ -1558,10 +1558,10 @@ async function renderWeb(){
   try{ const S=await post('/api/sites',{action:'list'}); if(S&&S.ok) WEB.sites=S.sites||[]; }catch(e){}
   const slugRe=s=>escapeHtml(s);
   let h='<div class="toolcard" style="padding:14px;border-radius:16px"><b>✨ Start a new site</b>'+
-    '<div class="hint" style="margin-top:4px">OraCool writes a professional self-contained page, keeps a <b>live preview that never expires</b> (auto-saved to your vault), and publishes it on oracoolai.com for free. Ask in chat any time to edit it.</div>'+
+    '<div class="hint" style="margin-top:4px">OraCool imagines a concept, collects licensed photos and writes it — a professional <b>website or a working web app</b> (games, tools, AI companions) — with a <b>live preview that never expires</b> (auto-saved to your vault), free publishing, version history and free edits in chat.</div>'+
     '<div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">'+
     '<input id="webName" class="pub-in" maxlength="40" placeholder="Site name — e.g. Becfom Hotel" style="flex:1;min-width:170px">'+
-    '<input id="webBrief" class="pub-in" maxlength="300" placeholder="What is it about? (rooms, prices, location, vibe…)" style="flex:2;min-width:220px">'+
+    '<input id="webBrief" class="pub-in" maxlength="300" placeholder="What is it about? — a hotel site, a delivery app, a quiz game…" style="flex:2;min-width:220px">'+
     '<button class="btn primary" id="webGo" style="min-height:42px">🏗 Build</button></div>'+
     '<div id="webProg" class="hint" style="margin-top:8px"></div></div>';
   h+='<h3 class="ptitle" style="margin-top:18px">🗂 My builds <span class="muted" style="font-size:12px;font-weight:400">— live previews, editable, publish/update anytime</span></h3>';
@@ -1585,7 +1585,7 @@ async function renderWeb(){
       '<div class="webcard" style="padding:12px"><div class="webname">'+escapeHtml(s.name||s.sub)+'</div>'+
       '<div class="muted" style="font-size:11px;margin:4px 0 8px">👁 '+Number(s.hits||0).toLocaleString()+' views'+(s.custom_domain?(' · own domain: <b>'+escapeHtml(s.custom_domain)+'</b>'):'')+'</div>'+
       '<div class="row" style="gap:6px;flex-wrap:wrap"><a class="btn ghost small" style="min-height:36px;text-decoration:none" href="'+escapeHtml(s.path_url||('/sites/'+s.sub+'/'))+'" target="_blank" rel="noopener">↗ Open</a>'+
-      '<button class="btn gold small" data-ws="'+escapeHtml(s.sub)+'" style="min-height:36px">⚙ Manage</button></div></div>').join('')+'</div>';
+      '<button class="btn gold small" data-ws="'+escapeHtml(s.sub)+'" style="min-height:36px">⚙ Manage</button><button class="btn ghost small" data-wd="'+escapeHtml(s.sub)+'" style="min-height:36px">🌍 Domain</button></div></div>').join('')+'</div>';
   }
   box.innerHTML=h;
   const go=box.querySelector('#webGo');
@@ -1618,7 +1618,121 @@ async function renderWeb(){
   };});
   box.querySelectorAll('[data-ws]').forEach(btn=>{ btn.onclick=()=>{
     const s=WEB.sites.find(v=>v.sub===btn.dataset.ws);
-    if(s) publishModal({slug:s.source_slug||'',url:s.source_slug?('/builds/'+encodeURIComponent(s.source_slug)+'/'):'',name:s.name}); };});
+    if(s) publishModal({slug:s.source_slug||'',url:s.source_slug?('/builds/'+encodeURIComponent(s.source_slug)+'/'):'',name:s.name}); }
+  });
+  box.querySelectorAll('[data-wd]').forEach(btn=>{ btn.onclick=()=>{
+    const s2=WEB.sites.find(v=>v.sub===btn.dataset.wd);
+    if(s2) domainModal({sub:s2.sub, custom_domain:s2.custom_domain||'', name:s2.name||s2.sub}); }
+  });
+}
+function domainModal(s){
+  const sub=s.sub||'';
+  let m=document.getElementById('domOv'); if(m) m.remove();
+  m=document.createElement('div'); m.id='domOv'; m.className='modal open pubov';
+  m.innerHTML='<div class="modalcard pubcard" style="max-width:640px">'+
+    '<div class="pub-head"><span>🌍 <b>Custom domain — '+escapeHtml(s.name||sub)+'</b></span><button class="btn ghost small" id="domX">✕</button></div>'+
+    '<div class="pub-body" id="domBody"><span class="spinner"></span></div></div>';
+  document.body.appendChild(m);
+  const B=m.querySelector('#domBody');
+  m.querySelector('#domX').onclick=()=>m.remove();
+  m.addEventListener('click',e=>{ if(e.target===m) m.remove(); });
+  const copyBtn=(btn,txt)=>{ btn.onclick=async()=>{ try{ await navigator.clipboard.writeText(txt);}catch(e){ const t=document.createElement('textarea'); t.value=txt; document.body.appendChild(t); t.select(); try{document.execCommand('copy');}catch(e2){} t.remove(); } btn.textContent='✔'; setTimeout(()=>{btn.textContent='📋';},1200); }; };
+  const recCard=(r)=>'<div style="border:1px solid rgba(126,148,193,.28);border-radius:10px;padding:9px 10px;margin-top:6px">'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b style="min-width:118px;font-size:12px">'+escapeHtml(r.type)+'</b>'+
+    '<code style="font-size:12px">Name: <b>'+escapeHtml(r.name)+'</b></code><code style="font-size:12px">Value: <b>'+escapeHtml(r.value)+'</b></code>'+
+    '<button class="btn ghost small" style="min-height:30px;margin-left:auto">📋</button></div>'+
+    '<div class="hint" style="margin-top:4px">'+escapeHtml(r.note||'')+'</div></div>';
+  const recsFor=(dom)=>[{type:'CNAME',name:'www',value:'oracoolai.com',note:'makes www.'+dom+' work'},
+                        {type:'ALIAS / ANAME (or A)',name:'@',value:'oracoolai.com',note:'makes the bare '+dom+' work — use ALIAS/ANAME if the registrar offers it'}];
+  B.addEventListener('click',e=>{ const cb=e.target.closest('button'); if(cb&&cb.textContent==='📋'&&cb.parentElement&&cb.parentElement.parentElement){ const code=cb.parentElement.querySelector('code b'); if(code) copyBtn(cb,code.textContent); } });
+  let poll=null;
+  const checkStatus=async()=>{ if(!document.getElementById('domOv')){ if(poll) clearTimeout(poll); return; }
+    const bd=document.getElementById('domBadge'); if(!bd) return; bd.innerHTML='<span class="spinner"></span> checking DNS…';
+    const r=await post('/api/sites',{action:'domain_status',sub:sub}).catch(e=>({error:String(e)}));
+    const det=document.getElementById('domDetail');
+    if(!r.ok){ bd.textContent='⚠ '+(r.error||'check failed'); return; }
+    if(r.stage==='live'){ bd.innerHTML='🟢 <b style="color:#25d366">LIVE</b>'; if(det) det.innerHTML='✅ <a href="https://'+escapeHtml(r.domain)+'/" target="_blank" rel="noopener">https://'+escapeHtml(r.domain)+'</a> is serving your site with HTTPS. Done!'; if(poll) clearTimeout(poll); }
+    else if(r.stage==='dns'){ bd.innerHTML='🟡 <b>DNS seen</b>'; if(det) det.innerHTML='Records are visible — HTTPS certificate + routing finish automatically (usually under an hour). This page: <b>⟳ Check DNS</b> in a bit.'; if(poll) poll=setTimeout(checkStatus,20000); }
+    else { bd.innerHTML='⏳ <b>Pending</b>'; if(det) det.innerHTML='Records not visible yet (www CNAME: '+escapeHtml(r.www_cname||'not found')+' · @ A record: '+(r.apex_a?'found':'not found')+'). DNS can take up to 48h — your OraCool link works meanwhile.'; if(poll) poll=setTimeout(checkStatus,20000); } };
+  const renderConnected=(dom)=>{
+    if(poll) clearTimeout(poll);
+    B.innerHTML='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><b>🌐 '+escapeHtml(dom)+'</b><span id="domBadge" class="hint"></span>'+
+      '<button class="btn ghost small" id="domRecheck" style="min-height:32px;margin-left:auto">⟳ Check DNS</button>'+
+      '<button class="btn ghost small" id="domRemove" style="min-height:32px;color:#ff7b93">Remove</button></div>'+
+      '<div class="hint" style="margin:8px 0 2px"><b>Step 2 — add these records at your registrar</b> (GoDaddy → My Products → DNS · Namecheap → Advanced DNS · Cloudflare → DNS; if Cloudflare asks about proxying, start with DNS only):</div>'+
+      '<div id="domRecs">'+recsFor(dom).map(recCard).join('')+'</div>'+
+      '<div class="hint" style="margin-top:8px"><b>Step 3 — verify:</b> DNS can take minutes to 48h. When it settles, '+escapeHtml(dom)+' serves this site automatically with HTTPS. Your OraCool link keeps working meanwhile.</div>'+
+      '<div id="domDetail" class="hint" style="margin-top:6px"></div>'+
+      '<details style="margin-top:8px"><summary class="hint" style="cursor:pointer">Use a different domain instead</summary>'+
+      '<div class="row" style="gap:6px;margin-top:6px"><input id="domNew" class="pub-in" placeholder="mybrand.com"><button class="btn ghost small" style="min-height:38px" id="domNewGo">Attach</button></div><div id="domNewNote" class="hint"></div></details>';
+    m.querySelector('#domRecheck').onclick=checkStatus;
+    m.querySelector('#domRemove').onclick=async()=>{ if(!confirm('Remove '+dom+' from this site?')) return;
+      const r=await post('/api/sites',{action:'domain',sub:sub,domain:''}); if(r.ok){ renderSetup(); try{ renderWeb(); }catch(e){} } };
+    m.querySelector('#domNewGo').onclick=()=>attachDom(m.querySelector('#domNew').value,m.querySelector('#domNewNote'));
+    checkStatus(); };
+  const loadOrders=async()=>{ const o=document.getElementById('domOrders'); if(!o) return;
+    const r=await post('/api/domains',{action:'orders'}).catch(e=>null);
+    if(!r||!r.ok){ o.textContent=''; return; }
+    o.innerHTML=r.orders&&r.orders.length?('📦 Your domain orders: '+r.orders.map(x=>'<b>'+escapeHtml(x.domain)+'</b> ('+escapeHtml(x.status||'requested')+', '+escapeHtml((x.t||'').slice(0,10))+')').join(' · ')):'';
+  };
+  const renderSetup=()=>{
+    if(poll) clearTimeout(poll);
+    B.innerHTML='<div class="hint"><b>Step 1 — add a domain you already own</b> (bought anywhere: Namecheap, GoDaddy, Whogohost, Qservers, Cloudflare…)</div>'+
+      '<div class="row" style="gap:6px;margin-top:8px"><input id="domIn" class="pub-in" placeholder="mybrand.com or www.mybrand.com" style="flex:1;min-width:200px"><button class="btn primary" id="domGo" style="min-height:40px">Attach domain</button></div>'+
+      '<div id="domNote" class="hint" style="margin-top:6px"></div>'+
+      '<div style="display:flex;align-items:center;gap:10px;margin:14px 0 8px"><div style="flex:1;height:1px;background:rgba(126,148,193,.25)"></div><span class="hint">or</span><div style="flex:1;height:1px;background:rgba(126,148,193,.25)"></div></div>'+
+      '<div class="hint"><b>Don\u2019t have a domain? Find one right here</b> — real availability search, then order through OraCool: the team registers it for you and connects it to this site. You keep full ownership.</div>'+
+      '<div class="row" style="gap:6px;margin-top:8px"><input id="domFind" class="pub-in" placeholder="e.g. becfomstudio" style="flex:1;min-width:200px"><button class="btn ghost" id="domFindGo" style="min-height:40px">🔍 Search</button></div>'+
+      '<div id="domResults" style="margin-top:8px"></div>'+
+      '<div id="domOrders" class="hint" style="margin-top:10px"></div>';
+    m.querySelector('#domGo').onclick=()=>attachDom(m.querySelector('#domIn').value,m.querySelector('#domNote'));
+    m.querySelector('#domIn').onkeydown=e=>{ if(e.key==='Enter') attachDom(m.querySelector('#domIn').value,m.querySelector('#domNote')); };
+    m.querySelector('#domFindGo').onclick=async()=>{ const v=(m.querySelector('#domFind').value||'').trim().toLowerCase().replace(/^https?:\/\//,'').split('/')[0].split('.')[0];
+      const res=m.querySelector('#domResults'); const fb=m.querySelector('#domFindGo'); fb.disabled=true;
+      res.innerHTML='<span class="spinner"></span> checking availability…';
+      const r=await post('/api/domains',{action:'search',name:v}).catch(e=>({error:String(e)})); fb.disabled=false;
+      if(!r.ok){ res.innerHTML='⚠ '+escapeHtml(r.error||'search failed'); return; }
+      res.innerHTML=r.results.map(x=>'<div style="display:flex;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid rgba(126,148,193,.15)">'+
+        (x.available?('🟢 <b>'+escapeHtml(x.domain)+'</b><span class="hint">'+escapeHtml(x.price||'')+'</span><button class="btn gold small" data-ord="'+escapeHtml(x.domain)+'" data-price="'+escapeHtml(x.price||'')+'" style="min-height:30px;margin-left:auto">Order via OraCool</button>')
+                    :('🔴 <span style="opacity:.65">'+escapeHtml(x.domain)+'</span><span class="hint" style="margin-left:auto">taken</span>'))+'</div>').join('');
+      res.querySelectorAll('[data-ord]').forEach(b=>{ b.onclick=async()=>{ const dom=b.dataset.ord;
+        if(!confirm('Order '+dom+' ('+(b.dataset.price||'')+ ') through OraCool?\n\nThe team registers it for you and connects it to this site. You keep full ownership — the team confirms the exact yearly price with you before any payment.')) return;
+        b.disabled=true; b.textContent='ordering…';
+        const rr=await post('/api/domains',{action:'order',domain:dom,years:1}).catch(e=>({error:String(e)}));
+        if(rr.ok){ b.textContent='✅ ordered'; loadOrders(); } else { b.textContent='⚠ failed'; res.insertAdjacentHTML('beforeend','<div class="hint">⚠ '+escapeHtml(rr.error||'order failed')+'</div>'); } }; });
+    };
+    loadOrders(); };
+  const attachDom=async(v,noteEl)=>{ v=(v||'').trim().toLowerCase().replace(/^https?:\/\//,'').split('/')[0].replace(/\.$/,'');
+    if(noteEl&&noteEl.parentElement) noteEl=noteEl; 
+    if(!v||v.indexOf('.')<0){ if(noteEl) noteEl.textContent='Type a real domain first, e.g. mybrand.com'; return; }
+    if(noteEl) noteEl.innerHTML='<span class="spinner"></span> attaching…';
+    const r=await post('/api/sites',{action:'domain',sub:sub,domain:v}).catch(e=>({error:String(e)}));
+    if(r.ok){ try{ renderWeb(); }catch(e){} renderConnected(r.domain||v); } else { if(noteEl) noteEl.textContent='⚠ '+(r.error||'failed'); } };
+  (s.custom_domain? renderConnected(s.custom_domain) : renderSetup());
+}
+function versionsModal(slug, name){
+  let m=document.getElementById('verOv'); if(m) m.remove();
+  m=document.createElement('div'); m.id='verOv'; m.className='modal open pubov';
+  m.innerHTML='<div class="modalcard pubcard" style="max-width:520px">'+
+    '<div class="pub-head"><span>🕘 <b>History — '+escapeHtml(name||slug)+'</b></span><button class="btn ghost small" id="verX">✕</button></div>'+
+    '<div class="pub-body" id="verBody"><span class="spinner"></span></div></div>';
+  document.body.appendChild(m);
+  const B=m.querySelector('#verBody');
+  m.querySelector('#verX').onclick=()=>m.remove();
+  m.addEventListener('click',e=>{ if(e.target===m) m.remove(); });
+  const load=async()=>{ const r=await post('/api/builds',{action:'versions',slug:slug}).catch(e=>({error:String(e)}));
+    if(!r.ok){ B.innerHTML='<div class="hint">⚠ '+escapeHtml(r.error||'failed')+'</div>'; return; }
+    if(!r.versions||!r.versions.length){ B.innerHTML='<div class="hint">No history yet — from now on, every edit automatically keeps the previous version here. Restore any time.</div>'; return; }
+    B.innerHTML=r.versions.map(v=>'<div style="display:flex;gap:8px;align-items:center;padding:8px 4px;border-bottom:1px solid rgba(126,148,193,.15)">'+
+      '<b style="min-width:34px">v'+v.v+'</b><span class="hint" style="flex:1">'+escapeHtml(v.note||'')+'<br><span style="opacity:.7">'+escapeHtml(v.t||'')+' · '+Math.round((v.bytes||0)/102.4)/10+' KB</span></span>'+
+      '<button class="btn ghost small" data-res="'+v.v+'" style="min-height:32px">Restore</button></div>').join('');
+    B.querySelectorAll('[data-res]').forEach(b=>{ b.onclick=async()=>{ if(!confirm('Restore version v'+b.dataset.res+'? (The current version is saved to history first — nothing is lost.)')) return;
+      b.disabled=true; b.textContent='restoring…';
+      const rr=await post('/api/builds',{action:'restore',slug:slug,version:Number(b.dataset.res)}).catch(e=>({error:String(e)}));
+      if(rr.ok){ b.textContent='✅ restored'; setTimeout(()=>{ try{ renderWeb(); }catch(e){} },300); setTimeout(load,900); }
+      else { b.disabled=false; b.textContent='Restore'; B.insertAdjacentHTML('beforeend','<div class="hint">⚠ '+escapeHtml(rr.error||'failed')+'</div>'); } }; });
+  };
+  load();
 }
 function editModal(x){
   const slug=(x.slug || (x.url||'').replace(/^\/builds\//,'').replace(/\/$/,'')) || '';
@@ -1628,12 +1742,14 @@ function editModal(x){
     '<div class="pub-head"><span>✏️ <b>Edit '+(x.name?escapeHtml(x.name):'your site')+'</b></span><button class="btn ghost small" id="editX">✕</button></div>'+
     '<div class="pub-body"><div class="hint">Tell OraCool what to change — it edits the SAME site (preview updates instantly, nothing is rebuilt from scratch). Examples: "make the hero deep navy with gold accents", "change the phone to +234 801 234 5678", "add a WhatsApp button".</div>'+
     '<textarea id="editMsg" rows="3" class="pub-in" style="width:100%;margin-top:10px;resize:vertical;font-family:inherit;font-size:14px" placeholder="Type your change request…"></textarea>'+
-    '<div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn primary" id="editGo" style="min-height:40px">🪄 Apply edit (free)</button><a class="btn ghost" style="min-height:40px;text-decoration:none" href="/builds/'+encodeURIComponent(slug)+'/" target="_blank" rel="noopener">↗ Open current preview</a></div>'+
+    '<div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn primary" id="editGo" style="min-height:40px">🪄 Apply edit (free)</button><button class="btn ghost" id="editHist" style="min-height:40px">🕘 History</button><a class="btn ghost" style="min-height:40px;text-decoration:none" href="/builds/'+encodeURIComponent(slug)+'/" target="_blank" rel="noopener">↗ Open current preview</a></div>'+
     '<div id="editNote" class="hint" style="margin-top:8px"></div></div></div>';
   document.body.appendChild(m);
   const close=()=>m.remove(); m.querySelector('#editX').onclick=close;
   m.addEventListener('click',e=>{ if(e.target===m) close(); });
   const goB=m.querySelector('#editGo');
+  const histB=m.querySelector('#editHist');
+  if(histB) histB.onclick=()=>versionsModal(slug, x.name);
   goB.onclick=async()=>{
     const v=(m.querySelector('#editMsg').value||'').trim();
     if(!v){ m.querySelector('#editNote').textContent='Write what to change first.'; return; }
@@ -1681,14 +1797,11 @@ function publishModal(x){
       '<button class="btn ghost small" style="min-height:38px" id="pubCopy">📋 Copy link</button>'+
       (typeof s.hits==='number'?'<span class="pub-hits">👁 '+Number(s.hits).toLocaleString()+' views</span>':'')+
       '</div>'+
-      '<div class="pub-dom"><div class="hint" style="margin-bottom:4px"><b>Your own domain</b> (buy it anywhere — Namecheap, GoDaddy, Whogohost…):</div>'+
-      '<div class="row" style="gap:6px"><input id="pubDom" class="pub-in" placeholder="mystudio.com" value="'+escapeHtml(s.custom_domain||'')+'"><button class="btn ghost small" style="min-height:38px" id="pubDomGo">Attach</button></div>'+
-      '<div id="pubDomNote" class="hint" style="margin-top:4px">'+(s.custom_domain?('Currently serving on '+escapeHtml(s.custom_domain)):'Attach after publishing — then point a CNAME for www → oracoolai.com (and ALIAS/A for @) at your registrar. OraCool routes it automatically.')+'</div></div>'+
+      '<div class="pub-dom"><div class="hint" style="margin-bottom:6px"><b>Custom domain:</b> '+(s.custom_domain?('connected — <b>'+escapeHtml(s.custom_domain)+'</b>'):'none yet — connect one you own, or find and order one right here')+'</div>'+
+      '<div class="row" style="gap:6px"><button class="btn ghost small" style="min-height:38px" id="pubDomOpen">🌐 '+(s.custom_domain?'Manage domain':'Connect or buy a domain')+'</button></div></div>'+
       '<div class="row" style="gap:8px;margin-top:12px"><button class="btn ghost small" style="min-height:38px" id="pubRe">⟳ Re-publish latest build</button><button class="btn ghost small" style="min-height:38px;color:#ff7b93" id="pubOff">🛑 Unpublish</button></div>';
     m.querySelector('#pubCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText(main); }catch(e){ const t=document.createElement('textarea'); t.value=main; document.body.appendChild(t); t.select(); try{document.execCommand('copy');}catch(e2){} t.remove(); } m.querySelector('#pubCopy').textContent='✔ Copied'; };
-    m.querySelector('#pubDomGo').onclick=async()=>{ const v=(m.querySelector('#pubDom').value||'').trim();
-      const r=await post('/api/sites',{action:'domain',sub:s.sub,domain:v});
-      const n2=m.querySelector('#pubDomNote'); if(n2) n2.textContent = r.ok ? ('✔ '+r.note) : ('⚠ '+(r.error||'failed')); };
+    m.querySelector('#pubDomOpen').onclick=()=>{ m.remove(); domainModal({sub:s.sub, custom_domain:s.custom_domain||'', name:s.name||s.sub}); };
     m.querySelector('#pubRe').onclick=async()=>{ const r=await post('/api/sites',{action:'publish',slug,sub:s.sub});
       if(r.ok){ renderLive(r,true); } else { const n2=m.querySelector('#pubDomNote'); if(n2) n2.textContent='⚠ '+(r.error||'failed'); } };
     m.querySelector('#pubOff').onclick=async()=>{ const r=await post('/api/sites',{action:'unpublish',sub:s.sub});
