@@ -102,6 +102,11 @@ def _ts(s):
         return 0.0
 
 
+def _isots(t=None):
+    """Proper UTC ISO timestamp for timestamptz columns (never '0.0')."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t if t is not None else time.time()))
+
+
 def _hid(*parts):
     return hashlib.sha1("|".join(parts).encode()).hexdigest()[:20]
 
@@ -346,10 +351,10 @@ class Service:
         if len(title) < 4:
             return {"error": "Give the AMA a real title (4+ characters)."}
         for r in self.store.get("comm_amas", "host_email=eq." + email + "&status=eq.live"):
-            self.store.patch("comm_amas", "id=eq." + str(r.get("id")), {"status": "ended", "ended_at": _ts(time.time())})
+            self.store.patch("comm_amas", "id=eq." + str(r.get("id")), {"status": "ended", "ended_at": _isots()})
         row = self.store.insert("comm_amas", {"host_email": email, "title": title,
                                               "description": _clean(description, 400), "status": "live",
-                                              "created_at": _ts(time.time()), "started_at": _ts(time.time())})
+                                              "created_at": _isots(), "started_at": _isots()})
         self.d["notify_admins"]("community", "AMA started", email + " — " + title)
         return {"ok": True, "ama": row}
 
@@ -388,7 +393,7 @@ class Service:
             return {"error": "That AMA is not live."}
         row = self.store.insert("comm_ama_questions", {"ama_id": ama_id, "asker_email": email,
                                                        "body": text, "votes": 0, "answered": False,
-                                                       "created_at": _ts(time.time())})
+                                                       "created_at": _isots()})
         return {"ok": True, "question": self._ama_q_view(row or {})}
 
     def ama_vote(self, email, q_id):
@@ -411,7 +416,7 @@ class Service:
             return {"error": "Only the AMA host can answer questions."}
         self.store.patch("comm_ama_questions", "id=eq." + str(q_id),
                          {"answered": True, "answer_text": _clean(text, 1200),
-                          "answered_at": _ts(time.time())})
+                          "answered_at": _isots()})
         return {"ok": True}
 
     def ama_end(self, email, ama_id):
@@ -420,7 +425,7 @@ class Service:
         ama = self.store.one("comm_amas", "id=eq." + str(ama_id))
         if not ama or (ama.get("host_email") or "").lower() != email:
             return {"error": "Only the host can end this AMA."}
-        self.store.patch("comm_amas", "id=eq." + str(ama_id), {"status": "ended", "ended_at": _ts(time.time())})
+        self.store.patch("comm_amas", "id=eq." + str(ama_id), {"status": "ended", "ended_at": _isots()})
         return {"ok": True}
 
     def showcase_share(self, email, title, url, description=""):
@@ -433,7 +438,7 @@ class Service:
             return {"error": "Paste the link to your published build."}
         row = self.store.insert("comm_showcase", {"email": email, "title": _clean(title or "My build", 90),
                                                   "url": url[:300], "description": _clean(description, 240),
-                                                  "likes": 0, "created_at": _ts(time.time())})
+                                                  "likes": 0, "created_at": _isots()})
         return {"ok": True, "item": row}
 
     def showcase(self, email=""):
@@ -465,7 +470,7 @@ class Service:
             return {"ok": True, "likes": int(row.get("likes") or 0), "already": True}
         try:
             self.store.insert("comm_showcase_likes", {"item_id": item_id, "voter_email": email,
-                                                      "created_at": _ts(time.time())})
+                                                      "created_at": _isots()})
         except Exception:
             return {"ok": True, "likes": int(row.get("likes") or 0), "already": True}
         likes = int(row.get("likes") or 0) + 1
@@ -514,7 +519,7 @@ class Service:
                                  "token_prefix": token[:12], "token_last4": token[-4:],
                                  "brain": _clean(brain, 1200), "greeting": _clean(greeting, 300),
                                  "enabled": True, "replies": 0,
-                                 "created_at": _ts(time.time())})
+                                 "created_at": _isots()})
         if not row:
             return {"error": "Could not save the bot — try again."}
         try:
@@ -572,6 +577,55 @@ class Service:
         if f:
             self.store.patch("comm_bots", "id=eq." + str(bot_id), f)
         return {"ok": True}
+
+    def bot_program(self, email, token, bot_id, description):
+        """The Bot Builder assistant: developer pastes their bot's API token
+        (or owns the bot) and describes what the bot should do — the assistant
+        writes the brain (personality + rules) and greeting with the LLM."""
+        self._need()
+        email = (email or "").lower()
+        row = None
+        if token:
+            row = self.bot_by_token("Bearer " + str(token).strip())
+            if not row:
+                return {"error": "That bot API token does not match any bot. Copy it from BotFather → /mybots → 🔑 New token."}
+        elif bot_id:
+            for r in self.store.get("comm_bots", "select=*&order=created_at.desc&limit=200"):
+                if str(r.get("id")) == str(bot_id) and (r.get("owner_email") or "").lower() == email:
+                    row = r
+                    break
+        if not row:
+            return {"error": "Send me your bot's API token first (BotFather → /mybots → copy the token), then tell me what it should do."}
+        desc = _clean(description, 2000)
+        if len(desc) < 8:
+            return {"error": "Tell me more — what is the bot FOR? e.g. 'a patient WAEC study tutor that quizzes me daily'."}
+        _q = ("You configure chat bots for OraCool's community. The developer describes a bot. "
+              "Write its configuration as two short lines in this exact format:\n"
+              "BRAIN: <2-4 sentences defining the bot's name-use, personality, purpose and hard rules>\n"
+              "GREETING: <one warm sentence the bot opens with>\n"
+              "Developer's description: " + desc)
+        text, err = self.d["llm_complete"]([{"role": "system", "content": _q}], t=0.6, mx=350)
+        brain, greeting = "", ""
+        if text:
+            for line in str(text).splitlines():
+                ls = line.strip()
+                if ls.upper().startswith("BRAIN:"):
+                    brain = ls[6:].strip()
+                elif ls.upper().startswith("GREETING:"):
+                    greeting = ls[9:].strip()
+        if not brain:
+            brain = desc[:1000]           # fall back to the raw description
+        if not greeting:
+            greeting = "Hi! Mention me and I will do my job."
+        self.store.patch("comm_bots", "id=eq." + str(row.get("id")),
+                         {"brain": _clean(brain, 1200), "greeting": _clean(greeting, 300)})
+        try:
+            self.d["notify_admins"]("community", "Bot programmed", (row.get("owner_email") or "") + " → @" + str(row.get("username")))
+        except Exception:
+            pass
+        return {"ok": True, "bot": {"id": row.get("id"), "name": row.get("name"), "username": row.get("username")},
+                "brain": _clean(brain, 1200), "greeting": _clean(greeting, 300),
+                "note": "@" + str(row.get("username")) + " reprogrammed. Mention it in any room to test."}
 
     def bot_reset_token(self, email, bot_id):
         self._need()

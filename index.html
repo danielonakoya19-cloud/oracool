@@ -739,6 +739,8 @@
     </div>
     <button class="side-new" id="newChatBtn" title="Start a new chat">＋ <span class="slbl">New chat</span><span class="slbl-ic">＋</span></button>
     <div class="sidebar-scroll">
+    <div class="side-label">Chats</div>
+    <div class="sesslist" id="sessList" style="max-height:34vh"><div class="muted" style="padding:8px;font-size:11px">Sign in to keep your chat history across devices.</div></div>
     <div class="side-label">Menu</div>
     <nav class="side-nav" id="sideNav">
       <div class="side-item active" data-v="chat"><span class="sic">💬</span><span class="slbl">Chat</span></div>
@@ -758,8 +760,6 @@
       <div class="side-item" data-v="admin" id="adminTab" style="display:none"><span class="sic">🛡</span><span class="slbl">Admin</span></div>
       <div class="side-item" data-v="settings"><span class="sic">⚙</span><span class="slbl">Settings</span></div>
     </nav>
-    <div class="side-label">Chats</div>
-    <div class="sesslist" id="sessList"><div class="muted" style="padding:8px;font-size:11px">Sign in to keep your chat history across devices.</div></div>
     </div>
     <div class="sb-foot">
       <div class="side-user" id="acctChip" title="Account">
@@ -3026,74 +3026,138 @@ function waDateLabel(t){
 function commActive(){ return UI.view==='community' && !isBlockedSession(); }
 function fmtCommTime(t){ try{ const sx=String(t||''); const d=/T/.test(sx)?new Date(sx):new Date(sx.replace(' ','T')+'Z'); if(isNaN(d)) return sx||''; const now=new Date(); const same=d.toDateString()===now.toDateString(); return (same?'':d.toLocaleDateString([], {month:'short',day:'numeric'})+' ')+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }catch(e){ return t||''; } }
 function updateCommBadge(n){ const b=$('#commTabBadge'); if(!b) return; n=Number(n)||0; b.textContent=n>99?'99+':String(n); b.classList.toggle('on', n>0); const d=$('#commDmBadge'); if(d) d.innerHTML=n>0?`<span class="cunread">${n}</span>`:''; }
-/* ---------- Bots (BotFather-style, patch64) ---------- */
+/* ---------- BotFather chat (patch65) ---------- */
+COMM.bf={msgs:[],step:'',data:{}};
+function bfPush(who,text,html){
+  COMM.bf.msgs.push({who,text,html:!!html});
+  const box=$('#bfMsgs'); if(!box) return;
+  const d=document.createElement('div');
+  d.className='logline';
+  d.style.cssText='display:block;margin-bottom:8px;line-height:1.55;'+(who==='me'?'text-align:right':'');
+  d.innerHTML= who==='me'
+    ? `<span class="tag" style="display:inline-block;text-align:left;max-width:85%;white-space:normal;color:var(--text);border-color:var(--line2);background:rgba(0,229,255,.08)">${escapeHtml(text)}</span>`
+    : `<span style="display:inline-block;text-align:left;max-width:88%;font-size:12.5px">${html?text:escapeHtml(text)}</span>`;
+  box.appendChild(d); box.scrollTop=box.scrollHeight;
+}
+function bfBotSay(text,html){ bfPush('bf',text,html); }
+async function bfHandle(raw){
+  const t=(raw||'').trim(); if(!t) return;
+  bfPush('me',t);
+  const bf=COMM.bf, step=bf.step;
+  try{
+    if(step==='newbot:name'){ bf.data.name=t.slice(0,40); bf.step='newbot:user';
+      bfBotSay('Good. Now choose a USERNAME for your bot. It must be 5-32 characters and <b>end in "bot"</b> — e.g. <b>studyhelper_bot</b>.'); return; }
+    if(step==='newbot:user'){
+      const r=await post('/api/community/bots/create',{name:bf.data.name,username:t,brain:bf.data.brain||'',greeting:'Hi! Mention me and I will help.'});
+      if(r.error){ bfBotSay('⚠ '+escapeHtml(r.error)+' Try another username:'); return; }
+      bf.step=''; bf.data={};
+      bfBotSay(`Done! Congratulations, your bot is live: <b>@${escapeHtml(r.bot.username)}</b> 🎉`);
+      bfBotSay(`Use this token to access the HTTP API — <b>copy it now, shown only once</b>:<br><span style="font-family:ui-monospace,monospace;color:var(--gold)">${escapeHtml(r.token)}</span>`);
+      bfBotSay('Next: send <b>/program</b> and my builder bot will write its brain from your description. Or send /help.');
+      renderBfSide(); return; }
+    if(step==='program:token'){
+      bf.data.token=t.trim(); bf.step='program:what';
+      bfBotSay('Token received ✓ Now tell me: <b>what should your bot do?</b> Describe it like you would to a developer — personality, purpose, any rules.'); return; }
+    if(step==='program:what'||step==='program:what2'){
+      bfBotSay('🛠 Teaching your bot…');
+      const r=await post('/api/community/bots/program', step==='program:what2'
+        ? {bot_id:bf.data.bot_id, description:t}
+        : {token:bf.data.token, description:t});
+      bf.step=''; bf.data={};
+      if(r.error){ bfBotSay('⚠ '+escapeHtml(r.error)+' Send /program to try again.'); return; }
+      bfBotSay(`Done! <b>@${escapeHtml(r.bot.username)}</b> has been reprogrammed.`);
+      bfBotSay(`<b>Its brain now:</b> ${escapeHtml(r.brain)}<br><b>Opens with:</b> ${escapeHtml(r.greeting)}`);
+      bfBotSay('Mention <b>@'+escapeHtml(r.bot.username)+'</b> in any room to test it. /help for more.');
+      renderBfSide(); return; }
+    if(t.startsWith('/newbot')){ bf.step='newbot:name'; bf.data={};
+      bfBotSay("Alright, a new bot. What is its <b>NAME</b>? (people will see this — e.g. \"Study Helper\")"); return; }
+    if(t.startsWith('/program')){ bf.step='program:token'; bf.data={};
+      bfBotSay('My builder bot at your service. First, paste your bot\'s <b>API token</b> (from when we created it — or /mybots → 🔑 New token).'); return; }
+    if(t.startsWith('/mybots')){ await renderBfSide();
+      const r=await post('/api/community/bots',{});
+      const mine=(r.mine||[]);
+      bfBotSay(mine.length?('Your bots ('+mine.length+'/5):<br>'+mine.map(b=>'• <b>@'+escapeHtml(b.username)+'</b> — '+(b.enabled===false?'disabled':(b.replies||0)+' replies')).join('<br>')+'<br>Send <b>/program</b> to teach one, or manage buttons below.'):
+        'You have no bots yet. Send <b>/newbot</b> to create one.'); return; }
+    if(t.startsWith('/start')||t.startsWith('/help')){
+      bfBotSay("I can help you create and manage OraCool community bots. Just like Telegram.<br><br>Commands:<br><b>/newbot</b> — create a bot (you get its API token)<br><b>/program</b> — my builder bot writes your bot's brain from a description (asks for the bot's API token)<br><b>/mybots</b> — list your bots<br><br>You can also just type <b>/newbot</b> to begin.");
+      return; }
+    bfBotSay("I'm the BotFather 🤖 — send <b>/newbot</b> to create a bot, <b>/program</b> to teach one what to do, or <b>/help</b>.");
+  }catch(e){ bfBotSay('⚠ Something went wrong — try again.'); }
+}
 async function renderCommBots(){
   const body=$('#commBody'); if(!body) return;
-  body.innerHTML='<div class="muted">Loading bots…</div>';
-  const r=await post('/api/community/bots',{});
-  if(r.error){ body.innerHTML='<div class="errbox">'+escapeHtml(r.error)+'</div>'; return; }
-  const apiBase=r.api_base||'https://oracoolai.com/api/bot/v1';
-  const botRow=b=>`<div class="logline" style="display:block;line-height:1.5;margin-bottom:8px">
+  const r=await post('/api/community/bots',{}).catch(()=>({}));
+  COMM.bf.mine=(r&&r.mine)||[];
+  const apiBase=(r&&r.api_base)||'https://oracoolai.com/api/bot/v1';
+  body.innerHTML=`
+    <div style="border:1px solid var(--line);border-radius:14px;display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(0,229,255,.05),transparent);overflow:hidden">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)">
+        <span class="avatar" style="width:36px;height:36px">🤖</span>
+        <div style="flex:1"><b>BotFather</b><div class="muted" style="font-size:10px">community bot manager · always online</div></div>
+        <button class="btn small primary" id="bfNew">/newbot</button>
+      </div>
+      <div id="bfMsgs" style="padding:12px 14px;overflow-y:auto;max-height:46vh;min-height:220px"></div>
+      <div style="display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line)">
+        <input type="text" id="bfIn" placeholder="Message BotFather — /newbot · /program · /mybots · /help" style="flex:1">
+        <button class="btn primary small" id="bfSend">Send</button>
+      </div>
+    </div>
+    <div id="bfMine" style="margin-top:12px"></div>
+    <div class="okbox" style="font-family:ui-monospace,monospace;font-size:11px;margin-top:10px;overflow:auto">BOT API (like Telegram's Bot API)<br>BASE&nbsp;&nbsp;&nbsp; ${escapeHtml(apiBase)}<br>HEADERS Authorization: Bearer &lt;your bot token&gt;<br>POST&nbsp;&nbsp;&nbsp; /getMe<br>POST&nbsp;&nbsp;&nbsp; /sendMessage&nbsp; body: {"room":"lounge","text":"Hello!"}<br>IN-CHAT your bot auto-replies whenever someone types @yourbot in any room</div>`;
+  if(!COMM.bf.msgs.length){
+    bfBotSay("I can help you create and manage OraCool community bots. Just like Telegram.<br><br>Commands:<br><b>/newbot</b> — create a bot (you get its API token, shown once)<br><b>/program</b> — my builder bot asks for your bot's API token, then writes its brain from what you describe<br><b>/mybots</b> — list your bots");
+  }
+  const box=$('#bfMsgs');
+  COMM.bf.msgs.forEach(m=>{ const d=document.createElement('div');
+    d.className='logline'; d.style.cssText='display:block;margin-bottom:8px;line-height:1.55;'+(m.who==='me'?'text-align:right':'');
+    d.innerHTML= m.who==='me'
+      ? `<span class="tag" style="display:inline-block;text-align:left;max-width:85%;white-space:normal;color:var(--text);border-color:var(--line2);background:rgba(0,229,255,.08)">${escapeHtml(m.text)}</span>`
+      : `<span style="display:inline-block;text-align:left;max-width:88%;font-size:12.5px">${m.html?m.text:escapeHtml(m.text)}</span>`;
+    box.appendChild(d); });
+  box.scrollTop=box.scrollHeight;
+  const send=()=>{ const i=$('#bfIn'); const v=i.value; i.value=''; bfHandle(v); };
+  $('#bfSend').onclick=send;
+  $('#bfIn').addEventListener('keydown',e=>{ if(e.key==='Enter') send(); });
+  $('#bfNew').onclick=()=>bfHandle('/newbot');
+  renderBfSide();
+}
+async function renderBfSide(){
+  const box=$('#bfMine'); if(!box) return;
+  const r=await post('/api/community/bots',{}).catch(()=>({}));
+  const mine=(r.mine||[]);
+  box.innerHTML=`<div class="ptitle" style="font-size:13px;margin-bottom:6px">🧩 My bots (${mine.length}/5)</div>`+
+    (mine.map(b=>`<div class="logline" style="display:block;line-height:1.5;margin-bottom:8px">
       <b style="color:var(--cyan2)">${escapeHtml(b.name||'bot')}</b> <span class="muted">@${escapeHtml(b.username||'')}</span>
       ${b.enabled===false?'<span class="tag" style="color:var(--danger);border-color:var(--danger)">disabled</span>':'<span class="tag" style="color:var(--ok);border-color:var(--ok)">live</span>'}
       <span class="muted" style="font-size:10px">· ${b.replies||0} replies · token ${escapeHtml(b.prefix||'')}</span>
-      <div class="muted" style="font-size:11px;margin-top:2px">${b.brain?escapeHtml(String(b.brain).slice(0,120)):('Brain not written yet — people who mention @'+escapeHtml(b.username||'')+' get a default greeting.')}</div>
       <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
-        <button class="btn small ghost" data-bbrain="${escapeHtml(String(b.id))}">🧠 Brain</button>
+        <button class="btn small ghost" data-bprog="${escapeHtml(String(b.id))}">🛠 Program</button>
         <button class="btn small ghost" data-btok="${escapeHtml(String(b.id))}">🔑 New token</button>
         <button class="btn small ghost" data-btog="${escapeHtml(String(b.id))}" data-on="${b.enabled===false?'0':'1'}">${b.enabled===false?'Enable':'Disable'}</button>
         <button class="btn small ghost" data-bdel="${escapeHtml(String(b.id))}" style="color:var(--danger);border-color:var(--danger)">Delete</button>
-      </div></div>`;
-  body.innerHTML=`
-    <div style="border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px;background:linear-gradient(140deg,rgba(0,229,255,.06),transparent)">
-      <b style="font-size:14px">🤖 BotFather</b> <span class="muted" style="font-size:11px">— I can help you create and manage community bots. Just like Telegram.</span>
-      <div class="hint" style="margin-top:6px">1) <b>New bot</b> → pick a name → pick a username that <b>ends in "bot"</b> (e.g. studyhelper_bot) → I issue your bot's <b>HTTP API token, shown once</b>. 2) Write its <b>brain</b> (who it is, how it answers). 3) Anyone who types <b>@yourbot</b> in any room gets a reply in-character. 4) Developers can drive it with the Bot API below.</div>
-      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-        <button class="btn primary small" id="botNew">＋ /newbot</button>
-        <span class="muted" style="font-size:10px;align-self:center">Bots per member: 5</span>
-      </div>
-      <div class="result" id="botOut" style="margin-top:8px"></div>
-    </div>
-    <div class="ptitle" style="font-size:13px;margin-bottom:6px">🧩 My bots (${(r.mine||[]).length})</div>
-    ${(r.mine||[]).map(botRow).join('')||'<div class="muted" style="margin-bottom:8px">No bots yet — tap /newbot above.</div>'}
-    <div class="ptitle" style="font-size:13px;margin:10px 0 6px">🌐 Community bots</div>
-    ${(r.all||[]).filter(b=>!b.mine).slice(0,20).map(b=>`<div class="logline"><b style="color:var(--cyan2)">${escapeHtml(b.name||'bot')}</b> <span class="muted">@${escapeHtml(b.username||'')}</span> — mention them in any room to talk</div>`).join('')||'<div class="muted">None yet.</div>'}
-    <div class="okbox" style="font-family:ui-monospace,monospace;font-size:11px;margin-top:10px;overflow:auto">BOT API (like Telegram's Bot API)<br>BASE&nbsp;&nbsp;&nbsp; ${escapeHtml(apiBase)}<br>HEADERS Authorization: Bearer &lt;your bot token&gt;<br>POST&nbsp;&nbsp;&nbsp; /getMe<br>POST&nbsp;&nbsp;&nbsp; /sendMessage&nbsp; body: {"room":"lounge","text":"Hello!"}<br>IN-CHAT Your bot auto-replies whenever someone types @yourbot</div>`;
-  const nb=$('#botNew');
-  if(nb) nb.onclick=async()=>{
-    const name=(prompt('BotFather: Alright, a new bot. What is its NAME? (people will see this, e.g. "Study Helper")','')||'').trim();
-    if(name.length<2) return;
-    const username=(prompt('Good. Now choose a USERNAME. It must end in "bot" (e.g. studyhelper_bot):','')||'').trim();
-    if(!username) return;
-    const brain=(prompt('What does it DO? Describe its personality & purpose — this becomes its brain (you can edit later):','')||'').trim();
-    const out=$('#botOut'); if(out) out.innerHTML='<div style="text-align:center;padding:8px"><span class="spinner"></span></div>';
-    const rr=await post('/api/community/bots/create',{name,username,brain,greeting:'Hi! Mention me and I will help.'});
-    if(rr.error){ if(out) out.innerHTML='<div class="errbox">'+escapeHtml(rr.error)+'</div>'; return; }
-    if(out) out.innerHTML=`<div class="okbox" style="word-break:break-all;font-family:ui-monospace,monospace">Done! Congratulations, your bot is live: <b>@${escapeHtml(rr.bot.username)}</b><br><br>COPY YOUR BOT TOKEN NOW — shown only once, like BotFather:<br><b>${escapeHtml(rr.token)}</b></div>
-      <div class="hint" style="margin-top:6px">Mention <b>@${escapeHtml(rr.bot.username)}</b> in any room to talk to it. Developers: POST ${escapeHtml(apiBase)}/sendMessage with the Bearer token.</div>`;
-    setTimeout(renderCommBots, 12000);
-  };
-  body.querySelectorAll('[data-bbrain]').forEach(b=>{ b.onclick=async()=>{
-    const cur=(r.mine||[]).find(x=>String(x.id)===b.dataset.bbrain);
-    const brain=prompt('New brain for the bot (its personality & purpose):', (cur&&cur.brain)||'')||'';
-    const g=prompt('Greeting message (optional):', (cur&&cur.greeting)||'')||'';
-    const rr=await post('/api/community/bots/update',{bot_id:b.dataset.bbrain, brain, greeting:g});
-    if(rr.error) addErr('Bot: '+rr.error); else addSystemNote('🧠 Bot brain updated.');
-    renderCommBots(); }; });
-  body.querySelectorAll('[data-btok]').forEach(b=>{ b.onclick=async()=>{
+      </div></div>`).join('')||'<div class="muted">No bots yet — message BotFather above.</div>');
+  box.querySelectorAll('[data-bprog]').forEach(b=>{ b.onclick=()=>{
+    COMM.bf.step='program:token'; COMM.bf.data={bot_id:b.dataset.bprog};
+    bfBotSay('Builder bot here 🛠 — this bot is on your account, so I just need the brief: <b>what should it do?</b>'); }; });
+  box.querySelectorAll('[data-bprog]').forEach(b=>{ b.onmouseover=()=>{}; });
+  // program-by-bot_id path: step 'program:what' directly
+  box.querySelectorAll('[data-bprog]').forEach(b=>{ b.onclick=()=>{
+    COMM.bf.step='program:what2'; COMM.bf.data={bot_id:b.dataset.bprog};
+    bfBotSay('Builder bot here 🛠 — what should this bot do? Describe personality, purpose and rules.'); }; });
+  box.querySelectorAll('[data-btok]').forEach(b=>{ b.onclick=async()=>{
     if(!confirm('Issue a NEW token? The old one stops working immediately.')) return;
     const rr=await post('/api/community/bots/token',{bot_id:b.dataset.btok});
     if(rr.error){ addErr('Bot: '+rr.error); return; }
-    addSystemNote('🔑 New bot token (copy now, shown once): <b style="word-break:break-all">'+escapeHtml(rr.token)+'</b>'); }; });
-  body.querySelectorAll('[data-btog]').forEach(b=>{ b.onclick=async()=>{
+    bfBotSay('🔑 New token for your bot — <b>copy it now, shown only once</b>:<br><span style="font-family:ui-monospace,monospace;color:var(--gold)">'+escapeHtml(rr.token)+'</span>'); }; });
+  box.querySelectorAll('[data-btog]').forEach(b=>{ b.onclick=async()=>{
     await post('/api/community/bots/update',{bot_id:b.dataset.btog, enabled:b.dataset.on==='1'?false:true});
-    renderCommBots(); }; });
-  body.querySelectorAll('[data-bdel]').forEach(b=>{ b.onclick=async()=>{
+    renderBfSide(); }; });
+  box.querySelectorAll('[data-bdel]').forEach(b=>{ b.onclick=async()=>{
     if(!confirm('Delete this bot permanently?')) return;
     const rr=await post('/api/community/bots/delete',{bot_id:b.dataset.bdel});
-    if(rr.error) addErr('Bot: '+rr.error); renderCommBots(); }; });
+    if(rr.error) addErr('Bot: '+rr.error); renderBfSide(); }; });
 }
-/* ---------- AMA + Showcase (power ecosystem, patch60) ---------- */
+/* ---------- AMA + Showcase (power ecosystem, patch60) ---------- *//* ---------- AMA + Showcase (power ecosystem, patch60) ---------- */
 async function renderCommAma(){
   const body=$('#commBody'); if(!body) return;
   body.innerHTML='<div class="muted">Loading AMAs…</div>';

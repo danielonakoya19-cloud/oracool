@@ -8298,7 +8298,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch64-botfather-no-cash",
+        "build": "patch65-botfather-chat",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -11859,7 +11859,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch64-botfather-no-cash",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch65-botfather-chat",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -15621,6 +15621,8 @@ def community_route(action, body, self_host=""):
                                   body.get("name"), body.get("enabled"))
         if action == "bots/token":
             return svc.bot_reset_token(me, body.get("bot_id"))
+        if action == "bots/program":
+            return svc.bot_program(me, body.get("token"), body.get("bot_id"), body.get("description"))
         if action == "bots/delete":
             return svc.bot_delete(me, body.get("bot_id"))
         if action == "badge":

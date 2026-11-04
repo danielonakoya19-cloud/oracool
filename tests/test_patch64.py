@@ -17,7 +17,7 @@ SQL = open(os.path.join(ROOT, "supabase_patch64_bots.sql"), encoding="utf-8").re
 
 class Marker(unittest.TestCase):
     def test_build(self):
-        self.assertEqual(SRV.count('"patch64-botfather-no-cash"'), 2)
+        self.assertEqual(SRV.count('"patch65-botfather-chat"'), 2)
 
     def test_wallet_gone(self):
         for needle in ("/api/wallet", "wallet_withdraw", "referral_mark_used",
@@ -160,3 +160,39 @@ class Bots(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BotProgrammer(unittest.TestCase):
+    def test_program_by_token(self):
+        svc = _svc()
+        made = svc.bot_create("dev@example.com", "Tutor", "waec_tutor_bot", "", "")
+        r = svc.bot_program("dev@example.com", made["token"], None,
+                            "a patient WAEC study tutor that quizzes me daily on maths and never gives answers directly")
+        self.assertTrue(r["ok"], r)
+        row = svc.store._t("comm_bots")[0]
+        self.assertTrue(len(row["brain"]) > 20)
+        self.assertTrue(row["greeting"])
+        bad = svc.bot_program("dev@example.com", "wrong-token", None, "do stuff please")
+        self.assertIn("token", bad["error"])
+
+    def test_program_by_owner_bot_id(self):
+        svc = _svc()
+        made = svc.bot_create("dev@example.com", "Tutor", "waec_tutor_bot", "", "")
+        r = svc.bot_program("dev@example.com", "", made["bot"]["id"], "a friendly weather bot for Lagos fishers")
+        self.assertTrue(r["ok"], r)
+        other = svc.bot_program("stranger@example.com", "", made["bot"]["id"], "a friendly weather bot")
+        self.assertIn("error", other)
+
+
+class Timestamps(unittest.TestCase):
+    def test_isots_valid_for_pg(self):
+        import re as _re
+        v = c._isots()
+        self.assertRegex(v, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        self.assertNotEqual(v, "0.0")
+        # bot_create uses _isots for created_at
+        svc = _svc()
+        svc.bot_create("dev@example.com", "Timer Bot", "time_check_bot", "", "")
+        rows = svc.store._t("comm_bots")
+        self.assertTrue(rows, "bot row missing")
+        self.assertRegex(str(rows[0]["created_at"]), r"^\d{4}-\d{2}-\d{2}T")

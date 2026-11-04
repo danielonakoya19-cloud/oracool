@@ -15,7 +15,7 @@ LAND = open(os.path.join(ROOT, "landing.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch64-botfather-no-cash"'), 2)
+        self.assertEqual(SRV.count('"patch65-botfather-chat"'), 2)
         self.assertNotIn("patch48-people", SRV)
 
 
