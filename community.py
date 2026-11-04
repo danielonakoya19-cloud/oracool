@@ -32,6 +32,7 @@ CommunitySetup and the app shows a short "setting up" note instead of erroring.
 import hashlib
 import json
 import re
+import secrets
 import threading
 import time
 
@@ -471,6 +472,200 @@ class Service:
         self.store.patch("comm_showcase", "id=eq." + str(item_id), {"likes": likes})
         return {"ok": True, "likes": likes}
 
+    # ------------------------------------------------ bots (patch64, BotFather-style)
+    def _bot_uok(self, username):
+        u = (username or "").strip().lstrip("@").lower()
+        return bool(re.match(r"^[a-z0-9_]{5,32}$", u) and u.endswith("bot") and u != "botfather"), u
+
+    def _bots_store_ok(self):
+        try:
+            self.store.get("comm_bots", "select=id&limit=1")
+            return True
+        except Exception:
+            return False
+
+    def bot_create(self, email, name, username, brain="", greeting=""):
+        """Telegram BotFather flow: /newbot → name → username (must end in
+        'bot') → an HTTP API token shown ONCE, never stored in clear."""
+        self._need()
+        email = (email or "").lower()
+        if not self._bots_store_ok():
+            return {"error": "The bots database is not ready yet — run supabase_patch64_bots.sql, then retry."}
+        name = _clean(name, 40)
+        if len(name) < 2:
+            return {"error": "Give your bot a name people will see (2+ characters) — like BotFather asks."
+                    }
+        ok, un = self._bot_uok(username)
+        if not ok:
+            return {"error": "Usernames must be 5-32 characters and END with 'bot' (Telegram's rule) — e.g. studyhelper_bot."}
+        mine = self.store.get("comm_bots", "owner_email=eq." + email)
+        if len(mine) >= 5:
+            return {"error": "You already have 5 bots — that is the cap per member. Delete one to make room."}
+        try:
+            if self.store.one("comm_bots", "username=eq." + un):
+                return {"error": "That bot username is taken. Try another one."}
+        except Exception:
+            pass
+        tok_id = str(900_000_000 + (int(hashlib.sha1(un.encode()).hexdigest(), 16) % 99_000_000))
+        token = tok_id + ":" + "AA" + secrets.token_hex(17)
+        row = self.store.insert("comm_bots",
+                                {"owner_email": email, "name": name, "username": un,
+                                 "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+                                 "token_prefix": token[:12], "token_last4": token[-4:],
+                                 "brain": _clean(brain, 1200), "greeting": _clean(greeting, 300),
+                                 "enabled": True, "replies": 0,
+                                 "created_at": _ts(time.time())})
+        if not row:
+            return {"error": "Could not save the bot — try again."}
+        try:
+            self.d["notify_admins"]("community", "New bot created", email + " → @" + un)
+        except Exception:
+            pass
+        return {"ok": True, "bot": {"id": row.get("id"), "name": name, "username": un},
+                "token": token,
+                "note": "Copy this token NOW — it is shown only once, exactly like BotFather. "
+                        "Your bot answers when anyone @mentions @" + un + " in any room, and developers can call the Bot API with it."}
+
+    def bots(self, email=""):
+        self._need()
+        email = (email or "").lower()
+        if not self._bots_store_ok():
+            return {"ok": True, "mine": [], "all": [], "api_base": "https://oracoolai.com/api/bot/v1"}
+        try:
+            rows = self.store.get("comm_bots", "select=*&order=created_at.desc&limit=200")
+        except Exception:
+            rows = []
+        mine = [{"id": r.get("id"), "name": r.get("name"), "username": r.get("username"),
+                 "brain": r.get("brain") or "", "greeting": r.get("greeting") or "",
+                 "enabled": r.get("enabled") not in (False,), "replies": int(r.get("replies") or 0),
+                 "prefix": (r.get("token_prefix") or "") + "…" + (r.get("token_last4") or ""),
+                 "created_at": r.get("created_at")} for r in rows if (r.get("owner_email") or "").lower() == email]
+        everyone = [{"id": r.get("id"), "name": r.get("name"), "username": r.get("username"),
+                     "greeting": r.get("greeting") or "", "enabled": r.get("enabled") not in (False,),
+                     "mine": (r.get("owner_email") or "").lower() == email}
+                    for r in rows if r.get("enabled") not in (False,)]
+        return {"ok": True, "mine": mine, "all": everyone,
+                "api_base": "https://oracoolai.com/api/bot/v1"}
+
+    def _bot_row(self, email, bot_id):
+        for r in self.store.get("comm_bots", "select=*&order=created_at.desc&limit=200"):
+            if str(r.get("id")) == str(bot_id) and (r.get("owner_email") or "").lower() == (email or "").lower():
+                return r
+        return None
+
+    def bot_update(self, email, bot_id, brain=None, greeting=None, name=None, enabled=None):
+        self._need()
+        r = self._bot_row(email, bot_id)
+        if not r:
+            return {"error": "That is not one of your bots."}
+        f = {}
+        if brain is not None:
+            f["brain"] = _clean(brain, 1200)
+        if greeting is not None:
+            f["greeting"] = _clean(greeting, 300)
+        if name is not None:
+            nm = _clean(name, 40)
+            if len(nm) >= 2:
+                f["name"] = nm
+        if enabled is not None:
+            f["enabled"] = bool(enabled)
+        if f:
+            self.store.patch("comm_bots", "id=eq." + str(bot_id), f)
+        return {"ok": True}
+
+    def bot_reset_token(self, email, bot_id):
+        self._need()
+        r = self._bot_row(email, bot_id)
+        if not r:
+            return {"error": "That is not one of your bots."}
+        token = str(900_000_000 + (int(hashlib.sha1(str(r.get("username")).encode()).hexdigest(), 16) % 99_000_000)) \
+                + ":" + "AA" + secrets.token_hex(17)
+        self.store.patch("comm_bots", "id=eq." + str(bot_id),
+                         {"token_hash": hashlib.sha256(token.encode()).hexdigest(),
+                          "token_prefix": token[:12], "token_last4": token[-4:]})
+        return {"ok": True, "token": token,
+                "note": "Old token revoked. Shown once — copy it now."}
+
+    def bot_delete(self, email, bot_id):
+        self._need()
+        r = self._bot_row(email, bot_id)
+        if not r:
+            return {"error": "That is not one of your bots."}
+        self.store.delete("comm_bots", "id=eq." + str(bot_id))
+        return {"ok": True}
+
+    def bot_by_token(self, header):
+        m = re.match(r"^\s*Bearer\s+(\S+)\s*$", header or "", re.I)
+        if not m:
+            return None
+        h = hashlib.sha256(m.group(1).encode()).hexdigest()
+        try:
+            return self.store.one("comm_bots", "token_hash=eq." + h)
+        except Exception:
+            return None
+
+    def _bots_on_message(self, room, text):
+        """Any enabled bot @mentioned in a room replies with its own brain
+        (owner-written instructions + OraCool's LLM). Runs in a thread so the
+        sender's request never waits on it."""
+        try:
+            unames = set(re.findall(r"@([a-z0-9_]{5,32}bot)\b", (text or "").lower()))
+            if not unames:
+                return
+            try:
+                rows = self.store.get("comm_bots", "select=*&enabled=eq.true&limit=200")
+            except Exception:
+                rows = []
+            target = next((b for b in rows if str(b.get("username")) in unames), None)
+            if not target:
+                return
+            question = (text or "").strip()[:800]
+            brain = _clean(target.get("brain") or "", 1200)
+            name = target.get("name") or "bot"
+            try:
+                if brain:
+                    sysline = ("You are @" + str(target.get("username")) + " ("" + name + ""), a community bot on OraCool. "
+                               "PERSONALITY AND PURPOSE set by your creator: " + brain +
+                               " Reply in-character, helpful, 1-4 sentences, no markdown headings.")
+                else:
+                    sysline = ("You are @" + str(target.get("username")) + " (“" + name
+                               + "”), a friendly community bot on OraCool. Reply helpfully in 1-3 sentences.")
+                reply, err = self.d["llm_complete"](
+                    [{"role": "system", "content": sysline},
+                     {"role": "user", "content": question}], t=0.7, mx=300)
+            except Exception:
+                reply, err = None, "llm down"
+            if not reply:
+                reply = _clean(target.get("greeting") or "", 300) or ("Hi! I'm " + name + ". My creator hasn't taught me to talk yet — mention me again soon.")
+            self.store.insert("comm_messages",
+                              {"room_id": room.get("id"), "sender_email": "bot:" + str(target.get("username")),
+                               "body": _clean(reply, MSG_MAX), "kind": "chat", "media_url": ""})
+            self.store.patch("comm_bots", "id=eq." + str(target.get("id")),
+                             {"replies": int(target.get("replies") or 0) + 1})
+        except Exception:
+            pass
+
+    def bot_send(self, bot, room_slug, text):
+        """The Bot API: a developer's app posts into a room AS their bot."""
+        self._need()
+        r = self._room(str(room_slug or ""))
+        if not r:
+            return {"error": "Unknown room slug — sendMessage needs the room's slug (e.g. 'lounge')."}
+        if r.get("banned"):
+            return {"error": "That room is banned."}
+        body = _clean(text, MSG_MAX)
+        if not body:
+            return {"error": "text is required."}
+        m = self.store.insert("comm_messages",
+                              {"room_id": r["id"], "sender_email": "bot:" + str(bot.get("username")),
+                               "body": body, "kind": "chat", "media_url": ""})
+        if not m:
+            return {"error": "Message could not be saved."}
+        self.store.patch("comm_bots", "id=eq." + str(bot.get("id")),
+                         {"replies": int(bot.get("replies") or 0) + 1})
+        pros = {}
+        return {"ok": True, "message": self._view(m, "bot:" + str(bot.get("username")), pros)}
+
     def _online(self, email):
         return (time.time() - self.presence.get(email, 0)) < ONLINE_WINDOW
 
@@ -777,6 +972,10 @@ class Service:
             return {"id": m.get("id"), "username": MODERATOR_HANDLE, "number": None,
                     "body": m.get("body", ""), "t": m.get("created_at", ""),
                     "mine": False, "admin": False, "mod": True}
+        if sender.startswith("bot:"):
+            return {"id": m.get("id"), "username": sender[4:] + " \U0001f916", "number": None,
+                    "body": m.get("body", ""), "t": m.get("created_at", ""),
+                    "mine": False, "admin": False, "mod": False, "bot": True}
         row = (pros or {}).get(sender) or {}
         return {"id": m.get("id"), "username": row.get("username") or "member",
                 "number": row.get("oracool_number"), "avatar": row.get("avatar_url", ""),
@@ -878,6 +1077,7 @@ class Service:
         if not m:
             return {"error": "Message could not be saved. Try again."}
         pros = self._profiles_for([email])
+        threading.Thread(target=self._bots_on_message, args=(r, body), daemon=True).start()
         return {"ok": True, "message": self._view(m, email, pros)}
 
     # ------------------------------------------------------------ people

@@ -22,7 +22,7 @@ class Prompt(unittest.TestCase):
         self.assertIn("never write 'secscan'", SRV.lower().replace("write secscan", "never write 'secscan'") if False else "never write 'secscan'")
 
     def test_build_bumped(self):
-        self.assertEqual(SRV.count('"patch63-any-currency"'), 2)
+        self.assertEqual(SRV.count('"patch64-botfather-no-cash"'), 2)
 
 
 class Routing(unittest.TestCase):

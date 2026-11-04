@@ -41,7 +41,7 @@ def _cleanup():
 
 class Marker(unittest.TestCase):
     def test_build_bumped(self):
-        self.assertEqual(SRV.count('"patch63-any-currency"'), 2)
+        self.assertEqual(SRV.count('"patch64-botfather-no-cash"'), 2)
 
     def test_frontend_pieces(self):
         self.assertIn("oracool_ref", APP)

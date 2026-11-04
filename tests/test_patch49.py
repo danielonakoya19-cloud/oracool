@@ -21,7 +21,7 @@ def _handler():
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch63-any-currency"'), 2)
+        self.assertEqual(SRV.count('"patch64-botfather-no-cash"'), 2)
         self.assertNotIn("patch48b-creator", SRV)
 
 

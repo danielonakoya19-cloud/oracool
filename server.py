@@ -542,8 +542,8 @@ FEATURE_MATRIX = [
         ("AI image generation", "❌", "❌", "✅", "Unlimited", "Unlimited"),
         ("Refer & earn — 250,000 coins per friend · Advocate early access at 3", "✅", "✅", "✅", "✅", "✅"),
         ("Personal API keys — build on OraCool from any OpenAI-compatible app (/v1)", "100 req/day", "1,000/day", "5,000/day", "20,000/day", "Unlimited"),
-        ("OraCool Wallet — $1 per active referral · withdraw from $10 (bank/crypto)", "✅", "✅", "✅", "✅", "✅"),
         ("Community power features — host AMAs · Showcase your builds", "Ask & like", "Ask & like", "✅ host", "✅ host", "✅ host"),
+        ("Create community bots (BotFather-style) — token + bot API, replies on @mention", "✅", "✅", "✅", "✅", "✅"),
         ("AI video generation", "❌", "❌", "❌", "✅", "✅"),
         ("Licensed stock photos in builds (Pexels · Openverse · Wikimedia)", "✅", "✅", "✅", "✅", "✅"),
     ]),
@@ -1576,8 +1576,7 @@ def coins_gate(email, cost=COIN_COST_BUILD):
     if st.get("one_time"):
         msg = ("Your one-time Free allowance of {:,} build coins is used up — a site build costs {:,} coins and you have "
                "{:,} left. Free accounts do not refill automatically, but you can EARN more: refer friends "
-               "(Account → Refer & earn) and every signup through your link pays you 250,000 coins plus $1.00 "
-               "in your Wallet once they start using OraCool. "
+               "(Account → Refer & earn) and every signup through your link pays you 250,000 coins. "
                .format(st["grant"], cost, st["balance"]))
     else:
         msg = ("You are out of building coins for this week — a site build costs {:,} coins and you have "
@@ -1717,13 +1716,7 @@ def referral_credit(code, new_email):
     total = sum(r["coins"] for r in rewards)
     earned = _earned0 + total
     early = count >= REF_EARLY_ACCESS_AT
-    touch_user(owner, ref_code=code, ref_count=count, ref_coins_earned=earned, early_access=early,
-               wallet_pending_cents=int((load_users().get(owner) or supabase_get_flag(owner) or {}).get("wallet_pending_cents") or 0) + WALLET_REFERRAL_CENTS)
-    try:   # remember the pending payout even before the SQL lands (local mirror)
-        with _WALLET_LOCK:
-            _WALLET_LOCAL["pending"][new_email] = owner
-    except Exception:
-        pass
+    touch_user(owner, ref_code=code, ref_count=count, ref_coins_earned=earned, early_access=early)
     try:  # top the wallet up immediately
         tier = check_tier(owner)
         if not ((tier == "enterprise") or is_admin(owner)):
@@ -1733,7 +1726,7 @@ def referral_credit(code, new_email):
     except Exception:
         pass
     _referrals_log({"referrer_email": owner, "referred_email": new_email, "code": code,
-                    "coins_awarded": total, "status": "pending",
+                    "coins_awarded": total,
                     "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
     try:
         audit_log(owner, "referral.joined", new_email + " · +" + format(total, ",") + " coins")
@@ -1962,583 +1955,15 @@ def openai_compat_chat(body, auth_header):
 
 
 
-# ------------------------------------------------- real payouts (patch62)
-# Bank withdrawals send REAL naira through Paystack Transfers (source: balance)
-# when PAYSTACK_SECRET_KEY (or test key) is configured with Transfers enabled.
-# Crypto payouts stay manual from the admin queue.
-NGN_PER_USD = 1550
+
+# ------------------------------------------------- payout engine removed (patch64)
+# The money-gifting wallet was removed at the owner's request. _paystack_secret
+# stays because plan/badge payments still use Paystack.
 
 
 def _paystack_secret():
     return (key("PAYSTACK_TEST_SECRET") if key("PAYSTACK_TEST")
             else key("PAYSTACK_SECRET_KEY"))
-
-
-_PAYSTACK_BANK_CACHE = {"rows": [], "at": 0.0}
-
-
-def paystack_banks(force=False):
-    """NGN bank list [{name, code}] — cached 24h."""
-    if not force and _PAYSTACK_BANK_CACHE["rows"] and time.time() - _PAYSTACK_BANK_CACHE["at"] < 86400:
-        return _PAYSTACK_BANK_CACHE["rows"]
-    sec = _paystack_secret()
-    if not sec:
-        return []
-    try:
-        _, raw, _ = http_fetch("https://api.paystack.co/bank?currency=NGN&perPage=200",
-                               headers={"Authorization": "Bearer " + sec}, timeout=25)
-        d = json.loads(raw)
-        rows = [{"name": b.get("name"), "code": b.get("code")}
-                for b in (d.get("data") or []) if b.get("name") and b.get("code")]
-        if rows:
-            _PAYSTACK_BANK_CACHE["rows"] = rows
-            _PAYSTACK_BANK_CACHE["at"] = time.time()
-        return rows
-    except Exception:
-        return []
-
-
-_FX_CACHE = {"rows": {}, "at": 0.0}
-_FX_FALLBACK = {"NGN": 1550.0, "GHS": 15.2, "ZAR": 18.3, "KES": 129.0, "XOF": 605.0, "XAF": 605.0,
-                "USD": 1.0, "GBP": 0.78, "EUR": 0.92, "AED": 3.67, "CAD": 1.36}
-FX_ZERO_DECIMAL = {"JPY", "KRW", "VND", "CLP", "XOF", "XAF", "UGX", "RWF", "ISK"}
-_PAYSTACK_CURRENCIES = {"NGN", "GHS", "ZAR", "USD"}
-
-
-def fx_rates():
-    """Live USD-based FX table (open.er-api.com, no key), cached 1h; a small
-    built-in fallback keeps conversions working if the rate API is down."""
-    if _FX_CACHE["rows"] and time.time() - _FX_CACHE["at"] < 3600:
-        return _FX_CACHE["rows"]
-    try:
-        _, raw, _ = http_fetch("https://open.er-api.com/v6/latest/USD", timeout=20)
-        d = json.loads(raw)
-        rows = d.get("rates") or {}
-        if rows.get("NGN"):
-            rows["USD"] = 1.0
-            _FX_CACHE["rows"] = rows
-            _FX_CACHE["at"] = time.time()
-            return rows
-    except Exception:
-        pass
-    return dict(_FX_FALLBACK)
-
-
-def fx_convert(usd_amount, currency):
-    """USD → target currency. Returns (major_amount, rate) or (None, rate)."""
-    currency = str(currency or "NGN").strip().upper()[:3]
-    rows = fx_rates()
-    rate = rows.get(currency)
-    if not rate or rate <= 0:
-        rate = _FX_FALLBACK.get(currency)
-    if not rate:
-        return None, None
-    major = float(usd_amount) * float(rate)
-    if currency in FX_ZERO_DECIMAL:
-        major = float(round(major))
-    else:
-        major = round(major, 2)
-    return major, float(rate)
-
-
-_BANK_ALIASES = {
-    "gtbank": "guaranty trust bank", "gtb": "guaranty trust bank",
-    "uba": "united bank for africa", "fbn": "first bank of nigeria",
-    "firstbank": "first bank of nigeria", "zenith": "zenith bank",
-    "access": "access bank", "kuda": "kuda microfinance bank",
-    "mfb": "microfinance bank", "fcmb": "first city monument bank",
-    "fidelity": "fidelity bank", "sterling": "sterling bank",
-    "union": "union bank of nigeria", "wema": "wema bank",
-    "alat": "wema bank", "opay": "opay", "palmpay": "palmpay",
-    "moniepoint": "moniepoint", "paga": "paga", "paystack": "paystack",
-}
-
-
-def _paystack_resolve_bank(name):
-    """Match a user-typed bank name against Paystack's list: raw text first
-    (so 'gtbank' hits Paystack's own 'GTBank'), then the common-alias table
-    ('uba' → United Bank for Africa), then contains, then initials/acronym."""
-    raw = re.sub(r"[^a-z0-9 ]", "", str(name or "").lower()).strip()
-    if not raw:
-        return None, "Pick a bank (e.g. GTBank, Access, Moniepoint…)."
-    rows = paystack_banks()
-    if not rows:
-        return None, "Could not load the Nigerian bank list from Paystack (transfers may not be enabled on the secret key)."
-
-    def _bn(b):
-        return re.sub(r"[^a-z0-9 ]", "", str(b.get("name") or "").lower()).strip()
-
-    q = raw
-    for _pass in range(2):   # pass 1: raw text · pass 2: alias-expanded
-        for b in rows:
-            bn = _bn(b)
-            if bn == q or bn.startswith(q) or q.startswith(bn):
-                return b, None
-        for b in rows:
-            bn = _bn(b)
-            if q in bn or bn in q:
-                return b, None
-        if _pass == 0:
-            q = _BANK_ALIASES.get(raw, raw)
-            if q == raw:
-                break
-    for b in rows:
-        bn = _bn(b)
-        if len(raw) >= 2 and "".join(w[0] for w in bn.split()) == raw:
-            return b, None
-    return None, "That bank is not in Paystack's list — check the spelling (e.g. GTBank, Opay, Moniepoint, Access)."
-
-
-def paystack_create_recipient(account_name, account_number, bank_code):
-    sec = _paystack_secret()
-    if not sec:
-        return {"error": "Paystack secret key not configured."}
-    try:
-        _, raw, _ = http_fetch("https://api.paystack.co/transferrecipient", method="POST",
-                               headers={"Authorization": "Bearer " + sec, "Content-Type": "application/json"},
-                               json_body={"type": "nuban", "name": account_name[:60],
-                                          "account_number": re.sub(r"\D", "", str(account_number))[:10],
-                                          "bank_code": bank_code, "currency": "NGN"}, timeout=30)
-        d = json.loads(raw)
-        if d.get("status") and (d.get("data") or {}).get("recipient_code"):
-            return {"ok": True, "recipient_code": d["data"]["recipient_code"],
-                    "bank_name": ((d["data"].get("details") or {}).get("bank_name")) or ""}
-        return {"error": str(d.get("message") or "Paystack rejected the account details.")[:160]}
-    except Exception as e:
-        return {"error": str(e)[:160]}
-
-
-def paystack_ghs_recipient(account_name, network, phone):
-    """Ghana mobile-money recipient (MTN / Telecel(Vodafone) / AirtelTigo)."""
-    sec = _paystack_secret()
-    if not sec:
-        return {"error": "Paystack secret key not configured."}
-    net = str(network or "").strip().lower()
-    net = {"mtn": "mtn", "telecel": "telecel", "vodafone": "telecel",
-           "airteltigo": "atl", "airtel": "atl", "tigo": "atl", "atl": "atl"}.get(net, net)
-    if net not in ("mtn", "telecel", "atl"):
-        return {"error": "Pick the mobile-money network: MTN, Telecel (Vodafone) or AirtelTigo."}
-    try:
-        _, raw, _ = http_fetch("https://api.paystack.co/transferrecipient", method="POST",
-                               headers={"Authorization": "Bearer " + sec, "Content-Type": "application/json"},
-                               json_body={"type": "mobile_money", "name": account_name[:60],
-                                          "mobile_number": re.sub(r"[^0-9+]", "", str(phone))[:14],
-                                          "network": net, "currency": "GHS"}, timeout=30)
-        d = json.loads(raw)
-        if d.get("status") and (d.get("data") or {}).get("recipient_code"):
-            return {"ok": True, "recipient_code": d["data"]["recipient_code"], "bank_name": net.upper() + " MoMo"}
-        return {"error": str(d.get("message") or "Paystack rejected the mobile-money details.")[:160]}
-    except Exception as e:
-        return {"error": str(e)[:160]}
-
-
-def paystack_zar_recipient(account_name, bank_code, account_number):
-    """South African bank account (basa)."""
-    sec = _paystack_secret()
-    if not sec:
-        return {"error": "Paystack secret key not configured."}
-    try:
-        _, raw, _ = http_fetch("https://api.paystack.co/transferrecipient", method="POST",
-                               headers={"Authorization": "Bearer " + sec, "Content-Type": "application/json"},
-                               json_body={"type": "basa", "name": account_name[:60],
-                                          "account_number": re.sub(r"[^0-9]", "", str(account_number))[:20],
-                                          "bank_code": re.sub(r"[^0-9]", "", str(bank_code))[:6],
-                                          "currency": "ZAR"}, timeout=30)
-        d = json.loads(raw)
-        if d.get("status") and (d.get("data") or {}).get("recipient_code"):
-            return {"ok": True, "recipient_code": d["data"]["recipient_code"], "bank_name": "South Africa · " + str(bank_code)}
-        return {"error": str(d.get("message") or "Paystack rejected the account details.")[:160]}
-    except Exception as e:
-        return {"error": str(e)[:160]}
-
-
-def paystack_initiate_transfer(recipient_code, amount_minor, reason="", currency="NGN"):
-    """Send real money through Paystack Transfers. amount_minor is in the
-    recipient currency's smallest unit (kobo / pesewas / cents)."""
-    sec = _paystack_secret()
-    if not sec:
-        return {"error": "Paystack secret key not configured."}
-    try:
-        _, raw, _ = http_fetch("https://api.paystack.co/transfer", method="POST",
-                               headers={"Authorization": "Bearer " + sec, "Content-Type": "application/json"},
-                               json_body={"source": "balance", "amount": int(amount_minor),
-                                          "recipient": recipient_code,
-                                          "reason": (reason or "OraCool wallet withdrawal")[:100]}, timeout=40)
-        d = json.loads(raw)
-        if d.get("status") and (d.get("data") or {}).get("transfer_code"):
-            data = d["data"]
-            return {"ok": True, "transfer_code": data.get("transfer_code"),
-                    "status": data.get("status") or "processing",
-                    "amount_ngn": (data.get("amount") or int(amount_minor)) / 100.0}
-        return {"error": str(d.get("message") or "Paystack refused the transfer.")[:160], "paystack": True}
-    except Exception as e:
-        return {"error": str(e)[:160], "paystack": True}
-
-
-def paystack_verify_transfer(code_or_id):
-    sec = _paystack_secret()
-    if not sec:
-        return {"error": "Paystack secret key not configured."}
-    try:
-        _, raw, _ = http_fetch("https://api.paystack.co/transfer/" + urllib.parse.quote(str(code_or_id), safe=""),
-                               headers={"Authorization": "Bearer " + sec}, timeout=25)
-        d = json.loads(raw)
-        if d.get("status"):
-            return {"ok": True, "status": (d.get("data") or {}).get("status") or "unknown"}
-        return {"error": str(d.get("message") or "could not verify")[:160]}
-    except Exception as e:
-        return {"error": str(e)[:160]}
-
-
-# ------------------------------------------------------- wallet (patch61)
-# Every member has an OraCool Wallet: referral coins arrive instantly, and each
-# referred friend pays $1 — held as PENDING until that friend actually USES
-# OraCool (their first chat), then it becomes AVAILABLE to withdraw (from $10).
-# Withdrawals are paid out by the creator (bank transfer or crypto).
-WALLET_REFERRAL_CENTS = 100
-WALLET_MIN_WITHDRAW_CENTS = 1_000        # $10
-_WALLET_USED_MEMO = set()
-_WALLET_LOCAL = {"pending": {}, "earned": {}}   # referred_email -> referrer_email
-_WALLET_LOCK = threading.Lock()
-
-
-def _wallet_rec(email):
-    email = (email or "").strip().lower()
-    loc = load_users().get(email) or {}
-    cloud = supabase_get_flag(email) or {}
-    def _maxi(field):
-        try:
-            return max(int(loc.get(field) or 0), int(cloud.get(field) or 0))
-        except Exception:
-            return 0
-    return {"available_cents": _maxi("wallet_available_cents"),
-            "pending_cents": _maxi("wallet_pending_cents"),
-            "paidout_cents": _maxi("wallet_paidout_cents")}
-
-
-def _wallet_table_insert(row):
-    url = key("SUPABASE_URL")
-    if not url or not key("SUPABASE_SERVICE_KEY"):
-        return False
-    try:
-        http_fetch(url.rstrip("/") + "/rest/v1/wallet_withdrawals", method="POST",
-                   headers=_supabase_headers(), json_body=row, timeout=10)
-        return True
-    except Exception:
-        return False
-
-
-def _wallet_table_rows(email):
-    url = key("SUPABASE_URL")
-    if not url or not key("SUPABASE_SERVICE_KEY"):
-        return []
-    try:
-        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/wallet_withdrawals?select=*"
-                               "&email=eq." + urllib.parse.quote(email, safe="") +
-                               "&order=created_at.desc&limit=20",
-                               headers=_supabase_headers(), timeout=10)
-        return json.loads(raw) if raw else []
-    except Exception:
-        return []
-
-
-def _wallet_table_open():
-    url = key("SUPABASE_URL")
-    if not url or not key("SUPABASE_SERVICE_KEY"):
-        return []
-    try:
-        _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/wallet_withdrawals?select=*"
-                               "&status=in.(requested,processing)&order=created_at.asc",
-                               headers=_supabase_headers(), timeout=10)
-        return json.loads(raw) if raw else []
-    except Exception:
-        return []
-
-
-def _wallet_table_patch(wid, fields):
-    url = key("SUPABASE_URL")
-    if not url or not key("SUPABASE_SERVICE_KEY"):
-        return False
-    try:
-        http_fetch(url.rstrip("/") + "/rest/v1/wallet_withdrawals?id=eq." + str(wid),
-                   method="PATCH", headers=_supabase_headers(), json_body=fields, timeout=10)
-        return True
-    except Exception:
-        return False
-
-
-def wallet_state(email):
-    email = (email or "").strip().lower()
-    if not email:
-        return {"error": "Sign in to open your wallet."}
-    w = _wallet_rec(email)
-    try:
-        st = coins_state(email)
-        coins = st.get("balance")
-    except Exception:
-        coins = None
-    count, coins_earned, early = _ref_counters(email)
-    ws = _wallet_table_rows(email)
-    _rows = fx_rates()
-    return {"ok": True,
-            "fx_ngn_per_usd": _rows.get("NGN") or NGN_PER_USD,
-            "payout_currencies": "any of 160+ — NGN & GHS & ZAR are instant via Paystack, others by international transfer at the live rate; crypto pays USD (USDT)",
-            "available_usd": round(w["available_cents"] / 100.0, 2),
-            "pending_usd": round(w["pending_cents"] / 100.0, 2),
-            "withdrawn_usd": round(w["paidout_cents"] / 100.0, 2),
-            "referral_reward_usd": WALLET_REFERRAL_CENTS / 100.0,
-            "min_withdraw_usd": WALLET_MIN_WITHDRAW_CENTS / 100.0,
-            "coins": coins, "referrals": count, "coins_earned": coins_earned,
-            "history": [{"id": x.get("id"), "amount_usd": round(int(x.get("amount_cents") or 0) / 100.0, 2),
-                         "method": x.get("method"), "destination": x.get("destination"),
-                         "status": x.get("status"), "created_at": x.get("created_at"),
-                         "paid_at": x.get("paid_at")} for x in ws],
-            "note": "Each friend you refer locks in $1 the moment their account is created — it turns into "
-                    "withdrawable cash once they actually USE OraCool (first chat). Withdraw from $10 by bank "
-                    "transfer or crypto; the creator pays withdrawals personally, usually within 48 hours."}
-
-
-def wallet_withdraw(email, method, destination, account_name="", currency=""):
-    """Real money out. method=bank → instant Paystack naira transfer when the
-    secret key has Transfers enabled (real payout, status processing → paid);
-    otherwise — and always for crypto — the request joins the admin queue the
-    creator pays manually. Nothing here is simulated: the ledger is real and
-    the creator owes every naira shown."""
-    email = (email or "").strip().lower()
-    if not email:
-        return {"error": "Sign in first."}
-    method = str(method or "").strip().lower()
-    if method not in ("bank", "crypto"):
-        return {"error": "Pick a payout method: bank or crypto."}
-    destination = re.sub(r"\s+", " ", str(destination or "").strip())[:120]
-    if len(destination) < 6:
-        return {"error": "Add the payout destination (bank: account number + bank name · crypto: USDT TRC-20 wallet address)."}
-    w = _wallet_rec(email)
-    if w["available_cents"] < WALLET_MIN_WITHDRAW_CENTS:
-        have = w["available_cents"] / 100.0
-        return {"error": "You need at least $10.00 available to withdraw — you have $" + format(have, ".2f")
-                        + ". Keep referring: $1 per friend once they start using OraCool."}
-    amount = w["available_cents"]
-    currency = str(currency or ("NGN" if method == "bank" else "USD")).strip().upper()[:3]
-    if method == "crypto":
-        currency = "USD"   # USDT is dollar-based
-    major, rate = fx_convert(amount / 100.0, currency)
-    if currency not in _PAYSTACK_CURRENCIES and (major is None or rate is None):
-        return {"error": "I could not get today's exchange rate for " + currency + ". Try NGN/GHS/ZAR, or crypto."}
-    # ---- instant rails: Paystack Transfers (NGN bank · GHS mobile money · ZAR bank) ----
-    if method == "bank" and _paystack_secret() and currency in ("NGN", "GHS", "ZAR"):
-        acct_name = re.sub(r"\s+", " ", str(account_name or "").strip())[:60]
-        if len(acct_name) < 3:
-            return {"error": "Add the account NAME exactly as it appears at the bank (Paystack verifies it)."}
-        rec = {}
-        dest_txt = ""
-        if currency == "NGN":
-            parts = destination.split()
-            acct_no = next((x for x in parts if x.isdigit() and len(x) >= 10), "")
-            bank_txt = " ".join(x for x in parts if x is not acct_no).strip()
-            bank, berr = _paystack_resolve_bank(bank_txt)
-            if not bank:
-                return {"error": berr or "Could not resolve that bank."}
-            rec = paystack_create_recipient(acct_name, acct_no, bank["code"])
-            dest_txt = acct_no + " " + bank["name"] + " · " + acct_name
-        elif currency == "GHS":
-            net = next((x for x in destination.split() if not x.isdigit() and len(x) >= 3), "")
-            phone = next((x for x in destination.split() if x.isdigit() and len(x) >= 9), "")
-            rec = paystack_ghs_recipient(acct_name, net, phone)
-            dest_txt = net.upper() + " MoMo " + phone + " · " + acct_name
-        else:   # ZAR
-            parts = destination.split()
-            bank_code = next((x for x in parts if len(x) <= 6 and x.isdigit()), "")
-            acct_no = next((x for x in parts if x.isdigit() and len(x) >= 6 and x is not bank_code), "")
-            if not bank_code or not acct_no:
-                return {"error": "For South Africa give: branch code + account number + bank (e.g. 051001 123456789 Capitec)."}
-            rec = paystack_zar_recipient(acct_name, bank_code, acct_no)
-            dest_txt = acct_no + " · " + acct_name
-        if rec.get("error"):
-            return {"error": "Paystack: " + rec["error"]}
-        minor = int(round(major * 100))
-        tr = paystack_initiate_transfer(rec["recipient_code"], minor,
-                                        "OraCool wallet withdrawal · " + email, currency)
-        if tr.get("error"):
-            if tr.get("paystack"):
-                return {"ok": False, "error": "Transfer failed (" + tr["error"] + "). Nothing was deducted — check the OraCool Paystack balance covers payouts, then try again."}
-            return {"ok": False, "error": tr["error"]}
-        row = {"email": email, "amount_cents": amount, "method": "bank", "currency": currency,
-               "destination": dest_txt,
-               "status": "processing", "ngn_amount": tr.get("amount_ngn") or (minor / 100.0),
-               "local_amount": major, "fx_rate": rate,
-               "paystack_recipient": rec["recipient_code"],
-               "paystack_transfer_code": tr["transfer_code"],
-               "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-        _wallet_table_insert(row)
-        touch_user(email, wallet_available_cents=0)
-        try:
-            audit_log(email, "wallet.paystack_transfer", "$" + format(amount / 100.0, ".2f") + " → " + currency + " " + format(major, ",.2f") + " · " + dest_txt)
-            notify_admins("wallet", "REAL " + currency + " transfer sent", email + " · " + str(tr["transfer_code"]) + " · " + currency + " " + format(major, ",.2f") + " (" + tr["status"] + ")")
-        except Exception:
-            pass
-        return {"ok": True, "amount_usd": round(amount / 100.0, 2), "method": "bank",
-                "currency": currency, "local_amount": major, "fx_rate": rate,
-                "ngn_amount": tr.get("amount_ngn"), "transfer_code": tr["transfer_code"],
-                "paystack_status": tr["status"], "real": True,
-                "note": "REAL " + currency + " transfer sent through Paystack at today's rate (1 USD = " + format(rate, ",.2f") + " " + currency + ")" + (" — it lands minutes-to-hours." if tr["status"] in ("success", "processing") else " — status: " + str(tr["status"]) + ".") + " Track it in Account → Wallet."}
-    # ---- every other currency on earth: international payout at the live rate ----
-    if method == "bank":
-        row = {"email": email, "amount_cents": amount, "method": "bank (international)",
-               "currency": currency, "destination": destination + (" · " + acct_name_text if (acct_name_text := re.sub(r"\s+", " ", str(account_name or "").strip())) else ""),
-               "status": "requested", "local_amount": major, "fx_rate": rate,
-               "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-        _wallet_table_insert(row)
-        touch_user(email, wallet_available_cents=0)
-        try:
-            audit_log(email, "wallet.international_requested", "$" + format(amount / 100.0, ".2f") + " → " + currency + " " + format(major, ",.2f"))
-            notify_admins("wallet", "International payout requested", email + " · " + currency + " " + format(major, ",.2f") + " @ " + str(rate) + " · " + row["destination"])
-        except Exception:
-            pass
-        return {"ok": True, "amount_usd": round(amount / 100.0, 2), "method": "bank",
-                "currency": currency, "local_amount": major, "fx_rate": rate,
-                "note": "Withdrawal locked in at today's live rate (1 USD = " + format(rate, ",.2f") + " " + currency
-                        + ") = " + format(major, ",.2f") + " " + currency
-                        + ". Sent by international transfer within 48 hours — track it in Account → Wallet."}
-    email_row = {"email": email, "amount_cents": amount, "method": method, "currency": currency or "USD",
-                 "destination": destination, "status": "requested",
-                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    _wallet_table_insert(email_row)
-    try:
-        _local_path = os.path.join(DATA_DIR, "wallet_withdrawals.json")
-        rows = []
-        if os.path.exists(_local_path):
-            try:
-                rows = json.loads(open(_local_path, encoding="utf-8").read() or "[]")
-            except Exception:
-                rows = []
-        rows.append(email_row)
-        open(_local_path, "w", encoding="utf-8").write(json.dumps(rows[-200:], indent=1))
-    except Exception:
-        pass
-    touch_user(email, wallet_available_cents=0)
-    try:
-        audit_log(email, "wallet.withdraw_requested", "$" + format(amount / 100.0, ".2f") + " · " + method)
-        notify_admins("wallet", "Withdrawal requested", email + " · $" + format(amount / 100.0, ".2f") + " · " + method + " · " + destination)
-    except Exception:
-        pass
-    return {"ok": True, "amount_usd": round(amount / 100.0, 2), "method": method,
-            "note": "Request recorded. The creator pays withdrawals personally (bank transfer or crypto), usually within 48 hours. Track it in Account → Wallet."}
-
-
-def wallet_verify_withdrawal(withdrawal_id):
-    """Check a Paystack transfer's real status; mark paid on success, restore
-    the user's balance if the bank transfer finally failed."""
-    target = None
-    for r in _wallet_table_open():
-        if str(r.get("id")) == str(withdrawal_id):
-            target = r
-            break
-    if not target or not target.get("paystack_transfer_code"):
-        return {"error": "Not a Paystack transfer row (crypto is verified manually)."}
-    v = paystack_verify_transfer(target["paystack_transfer_code"])
-    if v.get("error"):
-        return {"error": v["error"]}
-    st = v.get("status")
-    if st == "success":
-        _wallet_table_patch(target.get("id"), {"status": "paid",
-                                               "paid_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                                               "paid_by": "paystack"})
-        _wallet_table_patch(target.get("id"), {"paystack_status": "success"})
-        return {"ok": True, "status": "success", "paid": target.get("email"),
-                "amount_usd": round(int(target.get("amount_cents") or 0) / 100.0, 2)}
-    if st in ("failed", "reversed", "cancelled"):
-        _wallet_table_patch(target.get("id"), {"status": "failed", "paystack_status": st})
-        try:
-            em = (target.get("email") or "").lower()
-            rec = load_users().get(em) or supabase_get_flag(em) or {}
-            touch_user(em, wallet_available_cents=int(rec.get("wallet_available_cents") or 0) + int(target.get("amount_cents") or 0))
-            emit_event(em, "wallet", "Withdrawal returned", "The bank transfer failed (" + st + ") — the money is back in your Wallet. Try again or switch method.")
-        except Exception:
-            pass
-        return {"ok": True, "status": st, "refunded": True}
-    _wallet_table_patch(target.get("id"), {"paystack_status": str(st)})
-    return {"ok": True, "status": st, "note": "still in flight"}
-
-
-def wallet_mark_paid(withdrawal_id, by=""):
-    rows = _wallet_table_open()
-    target = None
-    for r in rows:
-        if str(r.get("id")) == str(withdrawal_id):
-            target = r
-            break
-    if not target:
-        try:   # local fallback when Supabase is unreachable
-            _local_path = os.path.join(DATA_DIR, "wallet_withdrawals.json")
-            for r in json.loads(open(_local_path, encoding="utf-8").read() or "[]"):
-                if str(r.get("id")) == str(withdrawal_id) and r.get("status") == "requested":
-                    target = r
-                    break
-        except Exception:
-            pass
-    if not target:
-        return {"error": "That withdrawal request is not open (already paid?)."}
-    if str(target.get("status") or "") not in ("requested", "processing"):
-        return {"error": "That withdrawal request is not open (already paid?)."}
-    _wallet_table_patch(target.get("id"), {"status": "paid",
-                                           "paid_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                                           "paid_by": (by or "admin")[:60]})
-    try:
-        em = (target.get("email") or "").lower()
-        rec = load_users().get(em) or supabase_get_flag(em) or {}
-        touch_user(em, wallet_paidout_cents=int(rec.get("wallet_paidout_cents") or 0) + int(target.get("amount_cents") or 0))
-        emit_event(em, "wallet", "Withdrawal paid 🎉", "$" + format(int(target.get("amount_cents") or 0) / 100.0, ".2f") + " sent via " + str(target.get("method")))
-        audit_log(by or "admin", "wallet.paid", str(target.get("email")) + " · " + str(target.get("amount_cents")) + "c")
-    except Exception:
-        pass
-    return {"ok": True, "paid": str(target.get("email")), "amount_usd": round(int(target.get("amount_cents") or 0) / 100.0, 2)}
-
-
-def referral_mark_used(referred_email):
-    """The referred friend just USED OraCool (first chat): their referrer's $1
-    moves from pending to withdrawable. Runs at most once per account."""
-    email = (referred_email or "").strip().lower()
-    if not email or email in _WALLET_USED_MEMO:
-        return None
-    _WALLET_USED_MEMO.add(email)
-    referrer = ""
-    url = key("SUPABASE_URL")
-    if url and key("SUPABASE_SERVICE_KEY"):
-        try:
-            _, raw, _ = http_fetch(url.rstrip("/") + "/rest/v1/referrals?select=*&referred_email=eq."
-                                   + urllib.parse.quote(email, safe="") + "&status=eq.pending&limit=1",
-                                   headers=_supabase_headers(), timeout=10)
-            rows = json.loads(raw) if raw else []
-            if rows:
-                referrer = (rows[0].get("referrer_email") or "").lower()
-                http_fetch(url.rstrip("/") + "/rest/v1/referrals?id=eq." + str(rows[0].get("id")),
-                           method="PATCH", headers=_supabase_headers(),
-                           json_body={"status": "earned",
-                                      "earned_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
-                           timeout=10)
-        except Exception:
-            referrer = ""
-    if not referrer:
-        with _WALLET_LOCK:
-            referrer = _WALLET_LOCAL["pending"].get(email) or ""
-    if not referrer or referrer == email:
-        return None
-    with _WALLET_LOCK:
-        _WALLET_LOCAL["earned"][email] = referrer
-    try:
-        rec = load_users().get(referrer) or supabase_get_flag(referrer) or {}
-        pend = int(rec.get("wallet_pending_cents") or 0)
-        avail = int(rec.get("wallet_available_cents") or 0)
-        touch_user(referrer, wallet_pending_cents=max(0, pend - WALLET_REFERRAL_CENTS),
-                   wallet_available_cents=avail + WALLET_REFERRAL_CENTS)
-        emit_event(referrer, "wallet", "Referral reward unlocked 💰",
-                   email + " started using OraCool — $1.00 is now withdrawable in your Wallet.")
-        audit_log(referrer, "wallet.referral_earned", email + " · $1.00")
-    except Exception:
-        pass
-    return {"referrer": referrer, "referred": email, "cents": WALLET_REFERRAL_CENTS}
-
 
 # ---------------------------------------------------------------- GitHub
 
@@ -8873,7 +8298,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch63-any-currency",
+        "build": "patch64-botfather-no-cash",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -10070,10 +9495,6 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         term = " ".join(term.split())[:60] or "marketplace"
         out.append({"tool": "darkweb", "label": "dark-web · " + term,
                     "result": _shrink(osint_darkweb(term), 1800)})
-    # patch61: wallet — balance, pending referral dollars, withdrawals
-    if email and re.search(r"\bwallet\b|\bwithdraw\b|cash ?out|payout|my (?:\$|usd|money|balance)|earn (?:\$|money|cash)", low):
-        out.append({"tool": "wallet", "label": "wallet",
-                    "result": _shrink(wallet_state(email), 1200)})
     # patch60: personal API keys (OpenAI-compatible) — users mint their own keys
     if email and re.search(r"\bapi[\s_-]*keys?\b", low) and "vault" not in low and "anthropic" not in low \
             and any(k in low for k in ("create", "my", "get", "generate", "make", "personal", "have", "do i", "how", "key for")):
@@ -12438,7 +11859,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch63-any-currency",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch64-botfather-no-cash",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -12489,6 +11910,23 @@ class Handler(BaseHTTPRequestHandler):
                     _ae = ((verify_jwt(body["token"].strip(), key("JWT_SECRET") or "dev-secret")) or {}).get("sub", "")
                 _tail = path.split("/")[3] if path.count("/") > 3 else path.split("/")[-1]
                 audit_log(_ae, path.replace("/api/", ""), _tail)
+            if path.startswith("/api/bot/v1/"):
+                _bm = path[len("/api/bot/v1/"):].strip("/")
+                _bsvc = community_service()
+                _bot = _bsvc.bot_by_token(self.headers.get("Authorization") or "")
+                if not _bot:
+                    self._send_json({"ok": False, "error": "Unauthorized — Bearer <bot token> (from the OraCool BotFather flow).", "error_code": 401}); return
+                if _bot.get("enabled") in (False,):
+                    self._send_json({"ok": False, "error": "This bot is disabled by its creator."}); return
+                if _bm == "getMe":
+                    self._send_json({"ok": True, "result": {"id": _bot.get("id"), "username": _bot.get("username"),
+                                     "name": _bot.get("name"), "replies": int(_bot.get("replies") or 0),
+                                     "note": "Your bot answers @mentions of @" + str(_bot.get("username")) + " in any OraCool community room."}}); return
+                if _bm == "sendMessage":
+                    _r2 = _bsvc.bot_send(_bot, body.get("room") or body.get("room_slug") or "lounge",
+                                         body.get("text") or body.get("message") or "")
+                    self._send_json(_r2 if _r2.get("error") else {"ok": True, "result": _r2.get("message")}); return
+                self._send_json({"ok": False, "error": "Unknown method. Supported: getMe, sendMessage."}); return
             if path == "/v1/chat/completions":
                 _r = openai_compat_chat(body, self.headers.get("Authorization") or "")
                 if _r.get("stream"):
@@ -12820,17 +12258,6 @@ class Handler(BaseHTTPRequestHandler):
                 _adp = _require_admin(self, body)
                 if _adp:
                     self._send_json(admin_users_payload((_adp.get("sub") or "").lower()))
-            elif path == "/api/admin/wallet":
-                _adw = _require_admin(self, body)
-                if not _adw:
-                    return
-                if str(body.get("op") or "list") == "paid":
-                    self._send_json(wallet_mark_paid(body.get("id"), (_adw.get("sub") or body.get("email") or "admin")))
-                elif str(body.get("op")) == "verify":
-                    self._send_json(wallet_verify_withdrawal(body.get("id")))
-                else:
-                    self._send_json({"ok": True, "open": _wallet_table_open(),
-                                     "note": "Bank rows with a transfer code were already sent via Paystack — tap Verify. Crypto rows are paid manually, then Mark paid."})
             elif path == "/api/admin/users/resync":
                 _adp = _require_admin(self, body)
                 if _adp:
@@ -13033,19 +12460,6 @@ class Handler(BaseHTTPRequestHandler):
                     if _me.get("status") == 200 and isinstance(_me.get("data"), dict):
                         _rem = (_me["data"].get("email") or _rem).strip().lower()
                 self._send_json(referral_status(_rem) if _rem else {"error": "Sign in to get your referral link."})
-            elif path == "/api/wallet":
-                _at = body.get("access_token") or ""
-                _em = (body.get("email") or "").strip().lower()
-                if _at:
-                    _me = supabase_auth("/auth/v1/user", access_token=_at)
-                    if _me.get("status") == 200 and isinstance(_me.get("data"), dict):
-                        _em = (_me["data"].get("email") or _em).strip().lower()
-                if not _em:
-                    self._send_json({"error": "Sign in first."}); return
-                if str(body.get("op") or "status") == "withdraw":
-                    self._send_json(wallet_withdraw(_em, body.get("method"), body.get("destination"), body.get("account_name"), body.get("currency")))
-                else:
-                    self._send_json(wallet_state(_em))
             elif path == "/api/account/apikeys":
                 _at = body.get("access_token") or ""
                 _em = (body.get("email") or "").strip().lower()
@@ -13598,11 +13012,6 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         # ---- agentic tools: the AI runs live tools itself when the message asks for data
-        try:   # patch61: the referred friend's first chat unlocks the referrer's $1
-            if _conv_em:
-                referral_mark_used(_conv_em)
-        except Exception:
-            pass
         tool_runs = []
         tier = "free"
         chat_email = _conv_em
@@ -13745,16 +13154,17 @@ class Handler(BaseHTTPRequestHandler):
             "Asked 'do you have image generation' the answer is YES. If every engine fails, say the engines are busy "
             "and offer a retry — NEVER claim the tool does not exist. "
             "INTERNAL IDS: never write secscan, pcap, hashaudit, login_audit or mediainspect to the user; use the human tool names. "
-            "WALLET (real money): every member has an OraCool Wallet — Account → Wallet. Each referred friend locks in $1.00 "
-            "the moment their account is created (shown as PENDING) and it becomes WITHDRAWABLE once that friend actually "
-            "uses OraCool (their first chat). Withdrawals open at $10.00, paid by bank transfer or crypto, processed "
-            "personally within ~48 hours; quote the live wallet tool result for balances. "
             "PERSONAL API KEYS (developer platform): any member can mint personal API keys in Devices → API keys — they look like "
             "sk-ora-…, are shown once, and work with any OpenAI-compatible client against https://oracoolai.com/v1 "
             "(POST /v1/chat/completions, GET /v1/models). Daily limits follow the plan; never print or guess a full key. "
             "POWER COMMUNITY: members on Pro and above (and Advocates with early access) can host AMAs in the Community tab, "
             "and everyone can share their published builds in the Showcase — encourage word-of-mouth: 'host an AMA' / 'share "
             "your build'. "
+            "BOTS (BotFather-style): any member can create community bots in Community → 🤖 Bots — the flow mirrors "
+            "Telegram's BotFather: pick a name, pick a username that ends in 'bot', receive an HTTP API token shown "
+            "ONCE. Bots reply when @mentioned in any room, thinking with their creator's written brain; developers can "
+            "call POST /api/bot/v1/getMe and /api/bot/v1/sendMessage with the Bearer token. Help users build bots "
+            "step by step (suggest a purpose + brain text) and NEVER invent or repeat a bot token. "
             "REFERRAL PROGRAM (turn members into advocates): every signed-in member has a permanent referral link "
             "(Account → Refer & earn, oracoolai.com/app?ref=CODE). Each friend who creates an account through it pays the "
             "advocate +250,000 build coins instantly; 3 referrals = ADVOCATE status with EARLY ACCESS to new OraCool "
@@ -16201,6 +15611,18 @@ def community_route(action, body, self_host=""):
             return svc.showcase_share(me, body.get("title"), body.get("url"), body.get("description") or "")
         if action == "showcase/like":
             return svc.showcase_like(me, body.get("item_id"))
+        if action == "bots":
+            return svc.bots(me)
+        if action == "bots/create":
+            return svc.bot_create(me, body.get("name"), body.get("username"),
+                                  body.get("brain") or "", body.get("greeting") or "")
+        if action == "bots/update":
+            return svc.bot_update(me, body.get("bot_id"), body.get("brain"), body.get("greeting"),
+                                  body.get("name"), body.get("enabled"))
+        if action == "bots/token":
+            return svc.bot_reset_token(me, body.get("bot_id"))
+        if action == "bots/delete":
+            return svc.bot_delete(me, body.get("bot_id"))
         if action == "badge":
             return verified_status(me)
         if action == "badge/pay":
