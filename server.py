@@ -4577,6 +4577,57 @@ def _site_quality_issues(html):
 _APP_RX = re.compile(r"\b(app|game|tool|calculator|quiz|chat\s?bot|ai\b|dashboard|tracker|timer|planner|simulator|generator|editor|player|todo|to-do|notes?\b|budget|converter|widget|counter|flashcards?|arcade|puzzle|companion|assistant)\b", re.I)
 
 
+_APP_SYSTEM = (
+    "You are a senior GAME and WEB-APP engineer + designer (the level of award-winning indie devs). "
+    "OUTPUT FORMAT (strict — a machine reads it): line 1 'TEMPLATE: <family>' (invent a fitting name like "
+    "Neon Runner, Puzzle Vault, Arcade Deck, Companion Chat); line 2 'TITLE: <name>'; line 3 exactly 'BEGIN index.html'; "
+    "then the COMPLETE raw HTML file — no JSON, no markdown fences, no explanations, nothing after the file except 'END'. "
+    "The file starts with <!DOCTYPE html> and ends with </html>. "
+    "THIS IS A REAL, PLAYABLE/USABLE PRODUCT — not a page about it. HARD BANS: no pricing section, no FAQ, no "
+    "testimonials, no contact form, no 'features' marketing cards, no lorem, no TODOs, no placeholder buttons — "
+    "every control genuinely works.\n"
+    "FOR GAMES (all mandatory): a <canvas> game loop with requestAnimationFrame and delta-time movement; keyboard "
+    "AND on-screen touch controls (it must be fully playable on an iPhone: large touch zones / on-screen buttons, "
+    "no hover-only interactions); title/start screen; score + BEST score saved in localStorage; progressive difficulty "
+    "(speed/levels ramp); game-over state with instant restart; collision handling; juice (particles, screen shake or "
+    "flash, smooth animation) and sound effects via WebAudio unlocked on first tap (no external files).\n"
+    "FOR 'AI' APPS (companion/assistant/chatbot): implement a REAL self-contained JavaScript brain — personality, "
+    "in-page conversation memory (localStorage), intent matching / retrieval over a built-in knowledge base, varied "
+    "(non-repeating) responses — it must genuinely hold a conversation offline; chat UI with typing indicator.\n"
+    "FOR TOOLS/DASHBOARDS: complete working logic — real state, validation, persistence (localStorage), empty/error "
+    "states, and at least one data visual or summary computed from the user's input.\n"
+    "ALWAYS: cohesive CSS custom-property palette + display font (Google Fonts link allowed, must fall back to system); "
+    "mobile-first responsive layout; visible focus styles; prefers-reduced-motion respected; a tiny 'how to play/use' "
+    "hint inside the UI; nothing external except the font (all logic inline, works offline from file://). "
+    "LENGTH CONTRACT (hard): the file must be 22,000-38,000 characters, reached with REAL FEATURES AND POLISH — "
+    "more game depth (levels, enemy variety, power-ups, settings), more app capability — NEVER filler text or "
+    "marketing sections. Before finishing, count: under 22,000 = add another real feature until it is not.")
+
+
+def _app_quality_issues(html):
+    """patch72: app/game review — flags anything that smells like a landing page
+    masquerading as an app (the exact failure seen on 'jango game')."""
+    h = html or ""
+    low = h.lower()
+    issues = []
+    if len(h) < 18000:
+        issues.append("the file is only {:,} bytes — too thin; add real features (target 22-38KB)".format(len(h)))
+    if "<canvas" not in low and "game" in low:
+        issues.append("no <canvas> and no game loop — a game must render on canvas with requestAnimationFrame")
+    if "requestanimationframe" not in low.replace(" ", "") and "setinterval" not in low:
+        issues.append("no animation/update loop (requestAnimationFrame or setInterval) — the app feels dead")
+    touches = len(re.findall(r"keydown|keyup|pointerdown|touchstart|touchmove|mousedown|click", low))
+    if touches < 3:
+        issues.append("too few input handlers — must be fully playable/usable on a phone touchscreen")
+    if "localstorage" not in low:
+        issues.append("no localStorage — best score / user data must persist between visits")
+    if re.search(r"pricing|testimonials|frequently asked|<footer", low):
+        issues.append("landing-page sections present (pricing/testimonials/FAQ/footer) — BANNED in app mode; delete them")
+    if "game over" in low and not re.search(r"restart|play ?again", low):
+        issues.append("game-over exists but no restart/play-again control")
+    return issues
+
+
 def _creative_direction(prompt, name):
     """patch70: imagination pass — invents one original concept (idea, palette,
     fonts, signature moment, section plan, copy voice) before the build."""
@@ -4669,25 +4720,18 @@ def build_site(email, name, prompt):
         _bp_step(email, "Imagination", _con0[:90] or "concept locked")
     _is_app = bool(_APP_RX.search(prompt) or _APP_RX.search(name or ""))
     if _is_app:
-        _bp_step(email, "Mode", "web app — building the real working thing")
+        _bp_step(email, "Mode", "web app / game — building the real working thing")
+        system = _APP_SYSTEM + (" CREATIVE DIRECTION (execute it faithfully; keep hex palette and fonts as CSS "
+                                "custom properties): " + (_dir.replace("\n", " | ") if _dir else
+                                "none provided — invent a strong one yourself before coding."))
         _imgs = []
     else:
+        if _dir:
+            system = system + (" CREATIVE DIRECTION (the design director concept — execute it faithfully; "
+                               "you may refine details, never the soul; keep hex palette and fonts as CSS custom properties): "
+                               + _dir.replace("\n", " | "))
         _bp_step(email, "Collecting licensed photos", "Pexels · Openverse · Wikimedia Commons")
         _imgs = _build_image_library(prompt, _bpt)
-    if _dir:
-        system = system + (" CREATIVE DIRECTION (the design director concept — execute it faithfully; "
-                           "you may refine details, never the soul; keep hex palette and fonts as CSS custom properties): "
-                           + _dir.replace("\n", " | "))
-    if _is_app:
-        system = system + (" APP MODE: this brief is an interactive WEB APP or GAME, not a marketing page — build the "
-                           "real working thing: complete functioning logic in vanilla JS (state, events, validation, "
-                           "persistence via localStorage where it makes sense); EVERY button and control genuinely works "
-                           "offline; include a compact how-to hint inside the UI; keep the visual bar of a landing page "
-                           "(branded header/hero, focused layout, no filler sections about pricing or testimonials). "
-                           "If the brief is an AI/companion/assistant, implement a REAL self-contained brain in JavaScript "
-                           "(personality, in-page conversation memory, rules/markov/retrieval — it must genuinely respond, "
-                           "never a fake placeholder). Same strict output format (TEMPLATE line, TITLE line, BEGIN "
-                           "index.html, full file, END).")
     _bp_step(email, "Photos collected", "%d images ready" % len(_imgs))
     _img_block = ""
     if _imgs:
@@ -4699,15 +4743,25 @@ def build_site(email, name, prompt):
                                                               (" by " + x["author"]) if x.get("author") else "", x.get("license", "CC"), x.get("source", ""))
                                  for i, x in enumerate(_imgs)))
     _bp_step(email, "Building " + (name or "the site"), "thinking through the layout & copy…", kind="build")
-    user = ("Build this website now. " + ("Site name: " + name + ". " if not _generic else
-            "No brand name was given — invent a short fitting name and put it after 'TITLE: '. ") +
-            "Brief: " + prompt +
-            " Structure: header with nav, impactful hero, at least five distinct content sections a real "
-            "business in this brief would have, and a footer. Match the visual language to the industry. "
-            "Remember the strict output format: TEMPLATE line, TITLE line, BEGIN index.html, the complete "
-            "HTML file (18-34KB), END. DESIGN BLUEPRINT (art direction — follow it, adapting names/copy to the brief): "
-            + _bpt + ". Write like a top Awwwards studio: specific headlines, real-sounding "
-            "details (prices, hours, names, locations from the brief or plausible for it), polished micro-interactions." + _img_block)
+    if _is_app:
+        user = ("Build this app/game now — the REAL working product, not a page about it. " +
+                ("Name it: " + name + ". " if not _generic else
+                 "No name was given — invent a short fitting name and put it after 'TITLE: '. ") +
+                "Brief: " + prompt +
+                " Structure: the product itself front and centre — start screen with a clear Play/Start action, "
+                "the full experience, and its states (playing, paused, game over / empty, saved, error). "
+                "Match the visual language to the genre. ")
+    else:
+        user = ("Build this website now. " + ("Site name: " + name + ". " if not _generic else
+                "No brand name was given — invent a short fitting name and put it after 'TITLE: '. ") +
+                "Brief: " + prompt +
+                " Structure: header with nav, impactful hero, at least five distinct content sections a real "
+                "business in this brief would have, and a footer. Match the visual language to the industry. "
+                "Remember the strict output format: TEMPLATE line, TITLE line, BEGIN index.html, the complete "
+                "HTML file (18-34KB), END. DESIGN BLUEPRINT (art direction — follow it, adapting names/copy to the brief): "
+                + _bpt + ". Write like a top Awwwards studio: specific headlines, real-sounding "
+                "details (prices, hours, names, locations from the brief or plausible for it), polished micro-interactions."
+                + _img_block)
     c_raw, prov, finish = _llm_text_stream(system, user, max_tokens=16000, effort="medium", on_delta=_writer_progress(email))
     # the model can write past its single-reply token cap — continue the SAME
     # file where it stopped (how real AI builders stream long artifacts)
@@ -4724,9 +4778,11 @@ def build_site(email, name, prompt):
         prov, finish = prov2, fin2
     data = _parse_builder_reply(c_raw)
     if not data or (finish == "length" and not data):
-        c2, prov2, _f2 = _llm_text(system + " The previous reply was too long or malformed and got cut off. "
-                                           "This time keep the HTML file itself under 20KB (still professional: "
-                                           "cut words, not design).", user, max_tokens=16000)
+        _fb = (" The previous reply was too long or malformed and got cut off. This time keep the HTML file "
+               "itself under 20KB while staying a finished, playable product." if _is_app else
+               " The previous reply was too long or malformed and got cut off. This time keep the HTML file "
+               "itself under 20KB (still professional: cut words, not design).")
+        c2, prov2, _f2 = _llm_text(system + _fb, user, max_tokens=16000)
         d2 = _parse_builder_reply(c2)
         if d2:
             data, prov = d2, prov2
@@ -4753,31 +4809,33 @@ def build_site(email, name, prompt):
     # patch38: design review — when the first draft misses the bar on 2+ points,
     # one upgrade pass rewrites the complete file against the concrete gap list
     _idx = next(f for f in clean if f["path"] == "index.html")
-    _issues = _site_quality_issues(_idx["content"])
-    _qa = {"issues_before": len(_issues), "upgraded": False}
-    if c_raw and (len(_issues) >= 2 or len(_idx["content"]) < 16000):
+    _issues = _app_quality_issues(_idx["content"]) if _is_app else _site_quality_issues(_idx["content"])
+    _qa = {"issues_before": len(_issues), "upgraded": False, "mode": ("app" if _is_app else "site")}
+    if c_raw and (len(_issues) >= 1 or len(_idx["content"]) < 16000):
         _bp_step(email, "Design review", "%d gap(s) found — rewriting" % len(_issues))
         try:
             # the draft itself is NOT echoed back (fast providers cap prompt tokens per
             # minute); a compact summary + the concrete gap list steers the rewrite
             _h2s = re.findall(r"<h[12][^>]*>(.*?)</h[12]>", _idx["content"], re.I | re.S)
             _h2s = [re.sub(r"<[^>]+>", "", x).strip()[:40] for x in _h2s][:12]
-            _summary = ("Your previous draft (TEMPLATE {}, {:,} characters, headings: {}) FAILED the design review on: {}."
+            _summary = ("Your previous draft (TEMPLATE {}, {:,} characters) FAILED the {} review on: {}."
                         .format(str(data.get("template") or "?")[:40], len(_idx["content"]),
-                                " | ".join(_h2s) or "none", "; ".join(_issues) or "too little substance"))
+                                ("APP/GAME" if _is_app else "design"),
+                                "; ".join(_issues) or "too little substance"))
             _c3, _p3, _f3 = _llm_text(system, user, max_tokens=16000, effort="medium", extra_msgs=[
                 {"role": "assistant", "content": "(draft withheld — see review)"},
                 {"role": "user", "content": "DESIGN REVIEW — " + _summary + " Write the COMPLETE site again from scratch, "
-                                            "fixing every point: honour the LENGTH CONTRACT (20,000-30,000 characters of real "
+                                            "fixing every point: honour the LENGTH CONTRACT of the brief "
                                             "substance), keep the same brand, palette and section plan, same strict output format "
                                             "(TEMPLATE line, TITLE line, BEGIN index.html, full HTML, END). No fences, no commentary."}])
             _d3 = _parse_builder_reply(_c3)
             _f3s = (_d3 or {}).get("files") if isinstance(_d3, dict) else None
             _new = next((str(x.get("content") or "") for x in (_f3s or []) if isinstance(x, dict) and str(x.get("path") or "").strip().lstrip("/") == "index.html"), "")
-            if _new and "</html>" in _new.lower() and len(_site_quality_issues(_new)) < len(_issues):
+            _new_issues = (_app_quality_issues(_new) if _is_app else _site_quality_issues(_new))
+            if _new and "</html>" in _new.lower() and len(_new_issues) < len(_issues):
                 _idx["content"] = _new[:_BUILD_MAX_FILE]
                 _qa["upgraded"] = True
-                _qa["issues_after"] = len(_site_quality_issues(_new))
+                _qa["issues_after"] = len(_new_issues)
                 if isinstance(_d3, dict):
                     if _d3.get("template"):
                         data["template"] = _d3.get("template")
@@ -8594,7 +8652,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch71-real-builds",
+        "build": "patch72-app-quality",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -12178,7 +12236,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch71-real-builds",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch72-app-quality",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})

@@ -11,7 +11,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 SW = open(os.path.join(ROOT, "sw.js"), encoding="utf-8").read()
 
-MARK = "patch71-real-builds"
+MARK = "patch72-app-quality"
 
 
 class Marker(unittest.TestCase):

@@ -6564,6 +6564,20 @@ document.addEventListener('click', function(e){
   var c=document.getElementById('menuCaret');
   if(c) c.textContent = n.classList.contains('collapsed') ? '▸' : '▾';
 });
+/* patch72: build freshness — if OraCool ships a new build while this tab is
+   open, refresh once so users never work in an old version (skips mid-chat) */
+(function(){
+  var _b0 = (window.srv && srv.build) || null;
+  if(!_b0){ fetch('/api/config').then(function(r){ return r.json(); }).then(function(j){ try{ window.srv=j; _b0=j.build; }catch(e){} }).catch(function(){}); }
+  setInterval(function(){
+    if(document.hidden === false && !window.__chatAbort && busy !== true){
+      fetch('/api/config').then(function(r){ return r.json(); }).then(function(j){
+        if(j && j.build && _b0 && j.build !== _b0){ location.reload(); }
+        else if(j && j.build && !_b0){ _b0 = j.build; }
+      }).catch(function(){});
+    }
+  }, 90000);
+})();
 /* iOS 15 viewport fit: the URL bar changes what 100vh means, so the app always
    matches the ACTUAL visible height (keyboard changes are ignored). */
 (function(){

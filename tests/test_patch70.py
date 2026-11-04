@@ -13,7 +13,7 @@ import server as s  # noqa: E402
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
-MARK = "patch71-real-builds"
+MARK = "patch72-app-quality"
 
 
 class Marker(unittest.TestCase):
@@ -124,7 +124,7 @@ class CreationEngine(unittest.TestCase):
 
     def test_app_mode(self):
         self.assertIn("_APP_RX", SRV)
-        self.assertIn("APP MODE:", SRV)
+        self.assertIn("_APP_SYSTEM", SRV)  # patch72: dedicated app/game brain
         self.assertTrue(s._APP_RX.search("build me a delivery app for my shop"))
         self.assertTrue(s._APP_RX.search("create an AI companion"))
         self.assertFalse(s._APP_RX.search("a landing page for a coffee brand"))
