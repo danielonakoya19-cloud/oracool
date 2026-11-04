@@ -4596,6 +4596,17 @@ _APP_SYSTEM = (
     "(non-repeating) responses — it must genuinely hold a conversation offline; chat UI with typing indicator.\n"
     "FOR TOOLS/DASHBOARDS: complete working logic — real state, validation, persistence (localStorage), empty/error "
     "states, and at least one data visual or summary computed from the user's input.\n"
+    "GRAPHICS BAR (cinematic — this is how the game earns a 'wow'): flat colored rectangles are BANNED. "
+    "Render with the techniques modern engines use: a multi-layer PARALLAX background (gradient sky or nebula, "
+    "2-4 silhouette layers scrolling at different speeds); ADDITIVE GLOW — shadowBlur and "
+    "globalCompositeOperation='lighter' for neon bloom on the player, coins, projectiles and HUD; full PARTICLE "
+    "SYSTEMS (explosion sparks, engine trails, impact bursts, ambient dust, rain/snow/fog that fits the theme); "
+    "characters and obstacles drawn as SHADED shapes — gradients, rim light, squash-and-stretch, eased rotation — "
+    "never plain squares; motion trails behind fast objects; screen shake and hit-flash on impacts; a cinematic HUD "
+    "(glowing score, vignette/letterbox frame, animated transitions between title, playing and game-over states). "
+    "Aim for the look of a premium neon arcade trailer. If the brief explicitly asks for 3D, you may load Three.js "
+    "from CDN (https://unpkg.com/three@0.160.0/build/three.min.js) with lights, fog and shadows plus a graceful "
+    "fallback message if the CDN fails — otherwise stay canvas-2D-cinematic and fully offline. "
     "ALWAYS: cohesive CSS custom-property palette + display font (Google Fonts link allowed, must fall back to system); "
     "mobile-first responsive layout; visible focus styles; prefers-reduced-motion respected; a tiny 'how to play/use' "
     "hint inside the UI; nothing external except the font (all logic inline, works offline from file://). "
@@ -4625,6 +4636,13 @@ def _app_quality_issues(html):
         issues.append("landing-page sections present (pricing/testimonials/FAQ/footer) — BANNED in app mode; delete them")
     if "game over" in low and not re.search(r"restart|play ?again", low):
         issues.append("game-over exists but no restart/play-again control")
+    _gfx = sum(1 for k in ("parallax", "globalcompositeoperation", "shadowblur", "particle",
+                           "createlineargradient", "createradialgradient", "vignette",
+                           "screenshake", "trail", "lighter") if k in low)
+    if "game" in low and _gfx < 2:
+        issues.append("graphics are flat (UNREAL BAR unmet) — add at least 2 of: parallax layers, additive glow "
+                      "(shadowBlur / composite 'lighter'), particle systems, gradient shading, motion trails, "
+                      "vignette/cinematic HUD")
     return issues
 
 
@@ -8652,7 +8670,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch72-app-quality",
+        "build": "patch73-cinematic-games",
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -12236,7 +12254,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch72-app-quality",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch73-cinematic-games",
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})

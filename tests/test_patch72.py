@@ -13,7 +13,7 @@ import server as s  # noqa: E402
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
-MARK = "patch72-app-quality"
+MARK = "patch73-cinematic-games"
 
 
 class Marker(unittest.TestCase):
@@ -51,6 +51,8 @@ class AppReviewer(unittest.TestCase):
     def test_real_game_snippet_passes(self):
         game = ("<html><body><canvas id=c></canvas><script>"
                 "const c=document.getElementById('c');let score=0,best=localStorage.getItem('b')||0;"
+                "parallax layers scroll; ctx.shadowBlur=20; ctx.globalCompositeOperation='lighter';"
+                "particles explosion trail; vignette();"
                 "let last=0;function loop(t){requestAnimationFrame(loop);const dt=(t-last)/1000;last=t;"
                 "score+=dt;}requestAnimationFrame(loop);"
                 "addEventListener('keydown',e=>{});addEventListener('touchstart',e=>{});"
