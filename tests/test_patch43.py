@@ -13,7 +13,7 @@ APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch74-free-launch"'), 2)
+        self.assertEqual(SRV.count('"patch75-writing-domains"'), 2)
         self.assertNotIn("patch42-feed", SRV)
 
 
@@ -68,7 +68,7 @@ class Client(unittest.TestCase):
         for needle in ('id="modeBtn"', 'id="modeMenu"', 'data-mode="build"', 'data-mode="expert"', 'data-mode="fast"', 'data-mode="auto"',
                        "const MODES={auto:", "function setMode(m)", "chatMode:'auto'",
                        "if(session && (_mode==='build' || wantsBuild(text)||wantsEdit(text))) _steps=stepsCard(b);",
-                       "if(j.__progress && !_steps && session){ try{ _steps=stepsCard(b); }catch(e){} }",
+                       "if(j.__progress && !_steps && session){ try{ _steps=stepsCard(b); }catch(e){} body.innerHTML='🏗 Starting the build",  # patch75: writing bubble
                        "mode:_mode, tz:_tz, local_time:_lt};", "(_mode==='expert'?2200:900)"):
             self.assertIn(needle, APP, needle)
 

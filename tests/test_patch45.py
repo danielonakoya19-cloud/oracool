@@ -14,7 +14,7 @@ APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch74-free-launch"'), 2)
+        self.assertEqual(SRV.count('"patch75-writing-domains"'), 2)
         self.assertNotIn("patch44-vision", SRV)
 
 
@@ -126,7 +126,8 @@ class Names(unittest.TestCase):
 
 class Client(unittest.TestCase):
     def test_push_mode(self):
-        for needle in ("if(j.__steps){ try{ if(!_steps) _steps=stepsCard(b,{push:true}); _steps.push(j.__steps); }catch(e){} }",
+        for needle in ("the bubble WRITES while building",
+                        "if(!_steps) _steps=stepsCard(b,{push:true}); _steps.push(j.__steps)",
                        "const push=(p)=>{", "return {stop, push, finish:", "polling=!opts.push"):
             self.assertIn(needle, APP, needle)
 

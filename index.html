@@ -1643,7 +1643,7 @@ function domainModal(s){
     '<button class="btn ghost small" style="min-height:30px;margin-left:auto">📋</button></div>'+
     '<div class="hint" style="margin-top:4px">'+escapeHtml(r.note||'')+'</div></div>';
   const recsFor=(dom)=>[{type:'CNAME',name:'www',value:'oracoolai.com',note:'makes www.'+dom+' work'},
-                        {type:'ALIAS / ANAME (or A)',name:'@',value:'oracoolai.com',note:'makes the bare '+dom+' work — use ALIAS/ANAME if the registrar offers it'}];
+                        {type:'A',name:'@',value:'216.24.57.1',note:'makes the bare '+dom+' work (ALIAS/ANAME to oracoolai.com also works where the registrar offers it)'}];
   B.addEventListener('click',e=>{ const cb=e.target.closest('button'); if(cb&&cb.textContent==='📋'&&cb.parentElement&&cb.parentElement.parentElement){ const code=cb.parentElement.querySelector('code b'); if(code) copyBtn(cb,code.textContent); } });
   let poll=null;
   const checkStatus=async()=>{ if(!document.getElementById('domOv')){ if(poll) clearTimeout(poll); return; }
@@ -1652,13 +1652,15 @@ function domainModal(s){
     const det=document.getElementById('domDetail');
     if(!r.ok){ bd.textContent='⚠ '+(r.error||'check failed'); return; }
     if(r.stage==='live'){ bd.innerHTML='🟢 <b style="color:#25d366">LIVE</b>'; if(det) det.innerHTML='✅ <a href="https://'+escapeHtml(r.domain)+'/" target="_blank" rel="noopener">https://'+escapeHtml(r.domain)+'</a> is serving your site with HTTPS. Done!'; if(poll) clearTimeout(poll); }
-    else if(r.stage==='dns'){ bd.innerHTML='🟡 <b>DNS seen</b>'; if(det) det.innerHTML='Records are visible — HTTPS certificate + routing finish automatically (usually under an hour). This page: <b>⟳ Check DNS</b> in a bit.'; if(poll) poll=setTimeout(checkStatus,20000); }
+    else if(r.stage==='dns'){ bd.innerHTML='🟡 <b>DNS seen</b>'; if(det) det.innerHTML='Records are visible — routing + HTTPS certificate finish automatically'+(r.hosting_registered===false?' (the hosting hookup is being completed by the OraCool team)':' (usually under an hour)')+'. This page: <b>⟳ Check DNS</b> in a bit.'; if(poll) poll=setTimeout(checkStatus,20000); }
     else { bd.innerHTML='⏳ <b>Pending</b>'; if(det) det.innerHTML='Records not visible yet (www CNAME: '+escapeHtml(r.www_cname||'not found')+' · @ A record: '+(r.apex_a?'found':'not found')+'). DNS can take up to 48h — your OraCool link works meanwhile.'; if(poll) poll=setTimeout(checkStatus,20000); } };
-  const renderConnected=(dom)=>{
+  let _hosting=null;
+  const renderConnected=(dom,hosting)=>{ _hosting=hosting||null;
     if(poll) clearTimeout(poll);
     B.innerHTML='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><b>🌐 '+escapeHtml(dom)+'</b><span id="domBadge" class="hint"></span>'+
       '<button class="btn ghost small" id="domRecheck" style="min-height:32px;margin-left:auto">⟳ Check DNS</button>'+
       '<button class="btn ghost small" id="domRemove" style="min-height:32px;color:#ff7b93">Remove</button></div>'+
+      (_hosting?'<div class="hint" style="margin:2px 0 6px">'+(_hosting.registered?'🟢 Registered on the hosting layer — your HTTPS certificate is issued automatically (usually minutes after DNS resolves).':'⏳ '+escapeHtml(_hosting.note||'Queued for the hosting layer — your site stays live on its OraCool link meanwhile.'))+'</div>':'')+
       '<div class="hint" style="margin:8px 0 2px"><b>Step 2 — add these records at your registrar</b> (GoDaddy → My Products → DNS · Namecheap → Advanced DNS · Cloudflare → DNS; if Cloudflare asks about proxying, start with DNS only):</div>'+
       '<div id="domRecs">'+recsFor(dom).map(recCard).join('')+'</div>'+
       '<div class="hint" style="margin-top:8px"><b>Step 3 — verify:</b> DNS can take minutes to 48h. When it settles, '+escapeHtml(dom)+' serves this site automatically with HTTPS. Your OraCool link keeps working meanwhile.</div>'+
@@ -1707,7 +1709,7 @@ function domainModal(s){
     if(!v||v.indexOf('.')<0){ if(noteEl) noteEl.textContent='Type a real domain first, e.g. mybrand.com'; return; }
     if(noteEl) noteEl.innerHTML='<span class="spinner"></span> attaching…';
     const r=await post('/api/sites',{action:'domain',sub:sub,domain:v}).catch(e=>({error:String(e)}));
-    if(r.ok){ try{ renderWeb(); }catch(e){} renderConnected(r.domain||v); } else { if(noteEl) noteEl.textContent='⚠ '+(r.error||'failed'); } };
+    if(r.ok){ try{ renderWeb(); }catch(e){} renderConnected(r.domain||v, r.hosting); } else { if(noteEl) noteEl.textContent='⚠ '+(r.error||'failed'); } };
   (s.custom_domain? renderConnected(s.custom_domain) : renderSetup());
 }
 function versionsModal(slug, name){
@@ -2888,8 +2890,14 @@ async function send(text){
             try{
               const j=JSON.parse(data);
               if(j.error){ _streamErr=new Error(String(j.error).slice(0,240)); finished=true; break outer; }
-              if(j.__progress && !_steps && session){ try{ _steps=stepsCard(b); }catch(e){} }
-              if(j.__steps){ try{ if(!_steps) _steps=stepsCard(b,{push:true}); _steps.push(j.__steps); }catch(e){} }
+              if(j.__progress && !_steps && session){ try{ _steps=stepsCard(b); }catch(e){} body.innerHTML='🏗 Starting the build — imagining the concept, then writing it piece by piece <span class="dots"></span>'; }
+              if(j.__steps){ try{ if(!_steps) _steps=stepsCard(b,{push:true}); _steps.push(j.__steps); }catch(e){ }
+                try{ /* patch75: the bubble WRITES while building — no more silent dots */
+                  const _st=((j.__steps&&j.__steps.steps)||[]); const _cur=_st[_st.length-1];
+                  if(_cur&&_cur.title){ body.innerHTML='<div style="font-size:13.5px;line-height:1.55">🏗 <b>'+escapeHtml(String(_cur.title).slice(0,60))+'</b>'+
+                    (_cur.detail?' — <span style="opacity:.72">'+escapeHtml(String(_cur.detail).slice(0,90))+'</span>':'')+
+                    ' <span class="dots"></span></div>'; scrollChat(); }
+                }catch(e){} }
               if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build'){ if(x.coins_left!=null){ COINS=COINS||{}; COINS.balance=x.coins_left; renderCoinPill(); } if(x.url){ _builtCard=true; try{ buildCard(x); }catch(e){ addAI('<b>🏗 '+(x.name||'Your site')+'</b> is built — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the live preview here</a> (auto-saved to your vault).'); } } } if(x.tool==='edit'&&x.url){ _builtCard=true; try{ buildCard(x); }catch(e){ addAI('<b>✏️ '+(x.name||'Your site')+' updated</b> — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the new preview</a>.'); } } if(x.tool==='publish'){ try{ addAI(x.url?('🌐 Published — live at <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener">'+escapeHtml(x.url)+'</a>'):''); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } }); }
               if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
               if(j.__media && j.__media.length){ streamMedia=streamMedia.concat(j.__media); }

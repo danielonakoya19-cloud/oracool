@@ -5741,16 +5741,26 @@ def site_domain_set(email, sub, domain):
     except Exception:
         pass
     if not domain:
+        _rd = None
+        try:
+            api, sid = _render_cfg()
+            if api and sid:
+                http_fetch("https://api.render.com/v1/services/" + urllib.parse.quote(sid, safe="") +
+                           "/custom-domains/" + urllib.parse.quote(domain, safe=""), method="DELETE", timeout=15,
+                           headers={"Authorization": "Bearer " + api})
+        except Exception:
+            pass
         return {"ok": True, "note": "Custom domain removed — the site stays live on its OraCool subdomain."}
-    return {"ok": True, "domain": domain,
+    hosting = _render_register_domain(domain)
+    return {"ok": True, "domain": domain, "hosting": hosting,
             "records": [
                 {"type": "CNAME", "name": "www", "value": "oracoolai.com",
                  "note": "serves www." + domain},
-                {"type": "ALIAS / ANAME (or A)", "name": "@", "value": "oracoolai.com",
-                 "note": "serves the bare " + domain + " — use ALIAS/ANAME where the registrar offers it"}],
+                {"type": "A", "name": "@", "value": _RENDER_APEX_IP,
+                 "note": "serves the bare " + domain + " (ALIAS/ANAME to oracoolai.com also works where offered)"}],
             "note": "Attached — Step 2: add the two records at your registrar (exact values below), "
                     "then Step 3: tap Check DNS. Until it settles (minutes-48h) your OraCool link keeps "
-                    "working. Routing + HTTPS certificate are handled automatically."}
+                    "working. Routing + the HTTPS certificate are handled automatically, like Render does."}
 
 
 _DOMAIN_TLDS = [("com", "≈$11.99/yr"), ("com.ng", "≈$6.99/yr"), ("net", "≈$13.99/yr"),
@@ -5885,7 +5895,7 @@ def site_dns_status(email, sub):
     dom = (cur.get("custom_domain") or "").strip().lower()
     if not dom:
         return {"ok": True, "sub": sub, "domain": "", "stage": "none",
-                "note": "No custom domain attached yet."}
+                "hosting_registered": None, "note": "No custom domain attached yet."}
     www = _dns_query("www." + dom, "CNAME")
     www_val = ""
     for a in (www.get("Answer") or []):
@@ -5906,7 +5916,58 @@ def site_dns_status(email, sub):
     stage = "live" if serving else ("dns" if (www_val or apex_a) else "pending")
     return {"ok": True, "sub": sub, "domain": dom, "stage": stage,
             "www_cname": www_val, "apex_a": apex_a, "http_code": http_code,
-            "serving": serving, "checked_at": _now()}
+            "serving": serving, "hosting_registered": _render_domain_state(dom), "checked_at": _now()}
+
+
+_RENDER_APEX_IP = "216.24.57.1"  # Render's apex A record (their published anycast IP)
+
+
+def _render_cfg():
+    return key("RENDER_API_KEY"), key("RENDER_SERVICE_ID")
+
+
+def _render_register_domain(domain):
+    """patch75: register a user's custom domain on the Render service — exactly
+    what Render does when a user adds a domain — so the HTTPS certificate is
+    issued automatically once DNS points in. Best effort; honest result."""
+    api, sid = _render_cfg()
+    if not api or not sid:
+        return {"registered": False, "note": "queued for the hosting layer — the operator completes the "
+                                             "Render hookup (your site stays live on its OraCool link meanwhile)"}
+    try:
+        st, raw, _h = http_fetch("https://api.render.com/v1/services/" + urllib.parse.quote(sid, safe="") +
+                                 "/custom-domains", method="POST", timeout=15,
+                                 headers={"Authorization": "Bearer " + api, "Content-Type": "application/json"},
+                                 json_body={"name": domain})
+        if st in (200, 201):
+            return {"registered": True, "note": "registered on the hosting layer — the HTTPS certificate is "
+                                                "issued automatically (usually minutes after DNS resolves)"}
+        if st == 409:
+            return {"registered": True, "note": "already registered on the hosting layer"}
+        return {"registered": False, "note": "hosting replied " + str(st) + " — the operator will confirm the hookup"}
+    except Exception as e:
+        return {"registered": False, "note": "hosting unreachable (" + str(e)[:80] + ") — queued for the operator"}
+
+
+def _render_domain_state(domain):
+    """patch75: is the domain registered on the Render service? Best effort."""
+    api, sid = _render_cfg()
+    if not api or not sid:
+        return None
+    try:
+        st, raw, _h = http_fetch("https://api.render.com/v1/services/" + urllib.parse.quote(sid, safe="") +
+                                 "/custom-domains?limit=100", timeout=15,
+                                 headers={"Authorization": "Bearer " + api})
+        if st == 200:
+            j = json.loads(raw or "[]")
+            for item in (j if isinstance(j, list) else []):
+                d = (item.get("custom_domain") or {}) if isinstance(item, dict) else {}
+                if str(d.get("name") or "").lower() == domain.lower():
+                    return True
+            return False
+    except Exception:
+        pass
+    return None
 
 
 def sites_list(email):
@@ -8709,7 +8770,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch74-free-launch",
+        "build": "patch75-writing-domains",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -12294,7 +12355,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch74-free-launch", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch75-writing-domains", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})

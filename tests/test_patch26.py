@@ -70,7 +70,7 @@ def test_manifest_traversal_blocked():
 
 
 def test_health_marker_patch26():
-    assert '"build": "patch74-free-launch"' in open(os.path.join(ROOT, "server.py")).read()
+    assert '"build": "patch75-writing-domains"' in open(os.path.join(ROOT, "server.py")).read()
 
 
 # ---------------------------------------------------------------- client
