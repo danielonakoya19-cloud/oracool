@@ -10,7 +10,7 @@ os.chdir(ROOT)
 import server as s  # noqa: E402
 
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
-MARK = "patch79-forecast-composer"
+MARK = "patch80-trade-signals"
 
 
 class Marker(unittest.TestCase):

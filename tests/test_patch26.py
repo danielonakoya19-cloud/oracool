@@ -70,7 +70,7 @@ def test_manifest_traversal_blocked():
 
 
 def test_health_marker_patch26():
-    assert '"build": "patch79-forecast-composer"' in open(os.path.join(ROOT, "server.py")).read()
+    assert '"build": "patch80-trade-signals"' in open(os.path.join(ROOT, "server.py")).read()
 
 
 # ---------------------------------------------------------------- client

@@ -2912,24 +2912,27 @@ def _forecast_series(sym_kind, sym):
         return ({}, "history fetch failed: " + str(e)[:120])
 
 
+def _resolve_market(text):
+    """patch80 shared resolution -> (kind, sym, disp, low) or (None, None, None, low)."""
+    low = text.lower()
+    cg = _crypto_coin(low)
+    if cg:
+        return ("crypto", cg, cg.replace("-", " ").title(), low)
+    fx = _fx_symbol(low)
+    if fx:
+        return ("fx", fx, FORECAST_FX[fx], low)
+    st = _stock_symbol(text)
+    if st:
+        return ("stock", st.upper(), TRADING_SYMBOLS.get(st.upper(), {}).get("name", st.upper()), low)
+    return (None, None, None, low)
+
+
 def market_forecast(text):
     """patch79: analyze ANY market from chat — crypto, forex, metals, stocks,
     indices — and produce a 7-day educational forecast WITH the reasons.
     Deterministic (indicator-scored): works even when no LLM is reachable."""
     low = text.lower()
-    kind = sym = disp = None
-    cg = _crypto_coin(low)
-    if cg:
-        kind, sym = "crypto", cg
-        disp = cg.replace("-", " ").title()
-    else:
-        fx = _fx_symbol(low)
-        if fx:
-            kind, sym, disp = "fx", fx, FORECAST_FX[fx]
-        else:
-            st = _stock_symbol(text)
-            if st:
-                kind, sym, disp = "stock", st.upper(), TRADING_SYMBOLS.get(st.upper(), {}).get("name", st.upper())
+    kind, sym, disp, low = _resolve_market(text)
     if not sym:
         return {"error": "Name a market to analyze — e.g. 'analyze BTC market', 'predict EUR/USD', "
                          "'gold outlook', or '$NVDA forecast'. Crypto, forex, gold/silver and stocks are covered."}
@@ -3037,6 +3040,126 @@ def market_forecast(text):
            "disclaimer": "Educational, indicator-based projection from a paper system — never a guarantee. "
                          "Markets can move against any forecast; do your own research and never risk money you cannot afford to lose."}
     return out
+
+
+SIGNAL_TRIGGER = re.compile(
+    r"\b(signal|buy or sell|sell or buy|long or short|"
+    r"should i (?:buy|sell|enter|go long|go short)|"
+    r"entry (?:point|price|for)|take profit|stop loss|scalp|day trade|trade idea|"
+    r"(?:in|for|within|over|the|next)\s+(?:the\s+)?(?:next\s+)?\d+\s*"
+    r"(?:seconds?|secs?|s|minutes?|mins?|min|m|hours?|hrs?|hr|h|days?|d|weeks?|w|months?|mo)\b|"
+    r"(?:next|coming)\s+(?:few\s+|couple\s+of\s+|several\s+)?"
+    r"(?:seconds?|secs?|minutes?|mins?|hour|hours|hrs?|day|days|week|weeks|months?)\b)", re.I)
+
+_TF_NUM = re.compile(r"\b(\d+)\s*(seconds?|secs?|s|minutes?|mins?|min|m|hours?|hrs?|hr|h|days?|d|weeks?|w|months?|mo)\b", re.I)
+_TF_UNIT_MIN = {"m": 1, "min": 1, "mins": 1, "minute": 1, "minutes": 1,
+                "s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1,
+                "h": 60, "hr": 60, "hrs": 60, "hour": 60, "hours": 60,
+                "d": 1440, "day": 1440, "days": 1440,
+                "w": 10080, "week": 10080, "weeks": 10080,
+                "mo": 43200, "month": 43200, "months": 43200}
+
+
+def _signal_horizon(text):
+    """-> (minutes, human label) for the horizon the trader asked about."""
+    lt = text.lower()
+    for kw, mins, lab in (("scalp", 5, "the next 5 minutes (scalp)"),
+                          ("this week", 10080, "this week"),
+                          ("today", 480, "the rest of today"),
+                          ("tonight", 480, "tonight"),
+                          ("day trad", 240, "the next 4 hours (day trade)"),
+                          ("intraday", 240, "the next 4 hours (intraday)"),
+                          ("swing", 4320, "the next 3 days (swing)")):
+        if kw in lt:
+            return (mins, lab)
+    if "tomorrow" in lt:
+        return (1440, "until tomorrow")
+    m = _TF_NUM.search(lt)
+    if m:
+        n = max(1, min(int(m.group(1)), 60 * 24 * 30))
+        unit = m.group(2).lower()
+        mins = n * _TF_UNIT_MIN.get(unit, 1)
+        return (mins, "the next " + str(n) + " " + unit)
+    m2 = re.search(r"\b(?:next|coming)\s+(few|couple\s+of|several)\s+(minutes?|mins?|hours?|hrs?|days?)\b", lt)
+    if m2:
+        mult = {"few": 3, "couple of": 2, "several": 6}[m2.group(1).lower()]
+        unit = m2.group(2).lower()
+        mins = mult * _TF_UNIT_MIN.get(unit.rstrip("s") if unit.rstrip("s") in _TF_UNIT_MIN else unit, 1)
+        return (mins, "the next " + m2.group(1) + " " + unit)
+    m3 = re.search(r"\b(?:the\s+)?(?:next|coming)\s+(second|minute|min|hour|hr|day|week|month)\b", lt)
+    if m3:
+        unit = m3.group(1).lower()
+        mins = _TF_UNIT_MIN.get(unit, 1)
+        return (mins, "the next " + unit)
+    return (240, "the next 4 hours (short-term)")
+
+
+def market_signal(text):
+    """patch80 — trade signal for ANY market, built from live data through the
+    forecast engine. Answers BUY / SELL / WAIT with a confidence %, entry/stop/
+    target for the requested horizon (e.g. 'in the next 4 mins'), and the
+    reasons why. WAIT is a first-class, honest answer when the edge is weak —
+    the system never invents numbers or forces a call."""
+    kind, sym, disp, low = _resolve_market(text)
+    if not sym:
+        return {"ok": False, "saw_symbol": False,
+                "error": "Tell me which market the trade is on (for example: gold, EUR/USD, BTC, or AAPL) and I will build the signal from its live data."}
+    mins, hlab = _signal_horizon(text)
+    fc = market_forecast(text)
+    if not fc.get("ok"):
+        return {"ok": False, "saw_symbol": True, "market": disp, "horizon": hlab,
+                "error": fc.get("error", "Market data unavailable."),
+                "disclaimer": "A signal without live data would be a guess — I will not guess."}
+    score = {"Bullish": 1.5 if fc.get("strength") == "Strong" else 0.75,
+             "Bearish": -1.5 if fc.get("strength") == "Strong" else -0.75}.get(fc.get("direction"), 0.0)
+    strength = abs(score)
+    threshold = 0.9 if mins <= 30 else (0.7 if mins <= 240 else (0.6 if mins <= 1440 else 0.55))
+    if strength >= threshold:
+        sig = "BUY" if score > 0 else "SELL"
+    else:
+        sig = "WAIT"
+    fconf = int(fc.get("confidence_pct") or 52)
+    if sig == "WAIT":
+        conf = min(72, 54 + int(round(8 * (threshold + 0.4 - min(strength, threshold)))))
+    else:
+        conf = min(92, 52 + int(round(14 * strength)) + max(0, fconf - 58) // 2)
+    vol_w = float(fc.get("volatility_weekly_pct") or 5.0) / 100.0
+    day_vol = vol_w / (5 ** 0.5)
+    h_vol = day_vol * ((mins / 1440.0) ** 0.5)
+    entry = fc.get("last_price")
+    stop = target = None
+    if sig == "BUY":
+        stop = round(entry * (1 - 1.3 * h_vol), 6 if entry < 10 else 2)
+        target = round(entry * (1 + 1.6 * h_vol), 6 if entry < 10 else 2)
+    elif sig == "SELL":
+        stop = round(entry * (1 + 1.3 * h_vol), 6 if entry < 10 else 2)
+        target = round(entry * (1 - 1.6 * h_vol), 6 if entry < 10 else 2)
+    exp_move = round(h_vol * 1.15 * 100.0, 2)
+    if mins <= 60:
+        hnote = (f"Horizon {hlab}: horizons this short are dominated by noise — the factors below "
+                 f"are daily-scale, so treat this as a lean with strict risk, never a promise.")
+    elif mins <= 1440:
+        hnote = f"Horizon {hlab}: use the entry/stop/target as decision levels, not certainties."
+    else:
+        hnote = f"Horizon {hlab}: expected move about {exp_move}% either way at current volatility."
+    reasons = list(fc.get("reasons") or [])
+    reasons.insert(0, {"factor": "Horizon", "value": hlab, "reading": hnote})
+    why = ("WHY THIS SIGNAL: " + sig + f" with {conf}% confidence at the {hlab} horizon. "
+           + fc.get("why", "") + "  " + hnote)
+    return {"ok": True, "market": disp, "kind": kind, "symbol": sym,
+            "signal": sig, "confidence_pct": conf,
+            "horizon": hlab, "horizon_minutes": mins,
+            "entry": entry, "stop": stop, "target": target,
+            "expected_move_pct": exp_move,
+            "last_price": entry, "direction": fc.get("direction"), "strength": fc.get("strength"),
+            "rsi14": fc.get("rsi14"), "support_14d": fc.get("support_14d"),
+            "resistance_14d": fc.get("resistance_14d"),
+            "reasons": reasons, "why": why, "source": fc.get("source"),
+            "trader_info_note": "Weigh the trader's own information (patterns they see, their entry price, risk limits) with these factors; if it conflicts with the live data, say so plainly.",
+            "disclaimer": ("This signal is computed from live market data (source above) — it is a "
+                           "probability, not a promise, and a WAIT is an honest, complete answer when "
+                           "the edge is weak. No system avoids losses. Not financial advice; size every "
+                           "trade to your own risk.")}
 
 
 def trade_signal(symbol):
@@ -9011,7 +9134,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch79-forecast-composer",
+        "build": "patch80-trade-signals",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -10159,8 +10282,18 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     if wc:
         out.append({"tool": "weather", "label": "weather · " + wc,
                     "result": _shrink(weather(wc))})
+    # trade signals (patch80) — BUY/SELL/WAIT + confidence for any market/horizon
+    sigm = SIGNAL_TRIGGER.search(t)
+    if sigm:
+        r = market_signal(t)
+        if r.get("ok"):
+            out.append({"tool": "signal",
+                         "label": "signal · " + str(r.get("market", "")) + " · " + str(r.get("signal", "")),
+                         "result": _shrink(r, 2600)})
+        elif r.get("saw_symbol"):
+            out.append({"tool": "signal", "label": "signal", "result": _shrink(r, 800)})
     # patch79: full market analysis + 7-day forecast (crypto, forex, metals, stocks)
-    if FORECAST_TRIGGER.search(t):
+    if not sigm and FORECAST_TRIGGER.search(t):
         fr = market_forecast(t)
         if fr.get("ok"):
             out.append({"tool": "forecast", "label": "forecast · " + str(fr.get("market")),
@@ -10181,11 +10314,6 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     fs = _fred_series(low)
     if fs:
         out.append({"tool": "fred", "label": fs, "result": _shrink(market_fred(fs))})
-    # trading signal
-    if any(k in low for k in ("trading signal", "signal for", "trade idea", "should i buy",
-                              "should i sell", "buy or sell")):
-        s2 = sym or (cid and cid.upper()) or "BTC"
-        out.append({"tool": "signal", "label": s2 + " signal", "result": _shrink(trade_signal(s2))})
     # IP
     ipm = re.search(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", t)
     # patch38: every OSINT lookup (IP · domain · email · phone · username · dark-web) is Starter+
@@ -12600,7 +12728,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch79-forecast-composer", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch80-trade-signals", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
