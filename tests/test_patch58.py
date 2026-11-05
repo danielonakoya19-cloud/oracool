@@ -22,7 +22,7 @@ class Prompt(unittest.TestCase):
         self.assertIn("never write 'secscan'", SRV.lower().replace("write secscan", "never write 'secscan'") if False else "never write 'secscan'")
 
     def test_build_bumped(self):
-        self.assertEqual(SRV.count('"patch78-media-paste"'), 2)
+        self.assertEqual(SRV.count('"patch79-forecast-composer"'), 2)
 
 
 class Routing(unittest.TestCase):

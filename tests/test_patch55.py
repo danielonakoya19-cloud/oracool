@@ -11,7 +11,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch78-media-paste"'), 2)
+        self.assertEqual(SRV.count('"patch79-forecast-composer"'), 2)
         self.assertIn("/api/security/console", SRV)
 
 

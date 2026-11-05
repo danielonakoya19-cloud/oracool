@@ -820,11 +820,11 @@
         <canvas id="wave" width="1200" height="44"></canvas>
         <div class="chiprow" id="chips"></div>
         <div id="coreChip" style="display:none;margin:4px 10px 0;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--cyan2)"></div>
-        <div id="fileChips" style="display:none;flex-wrap:wrap;gap:2px;margin:4px 10px 0"></div>
+        <div id="fileChips" style="display:none;flex-wrap:wrap;gap:7px;margin:4px 10px 0"></div>
         <div class="gpt-input big">
           <textarea class="chatinput" id="input" placeholder="What would you like to do?" rows="2" autocomplete="off"></textarea>
           <div class="gpt-actions">
-            <button class="iconbtn" id="attachBtn" title="Attach images, video, audio, PDF, docs… — or paste a screenshot with Ctrl+V">📎</button>
+            <button class="iconbtn" id="attachBtn" title="Attach images, video, audio, PDF, docs… — or paste a screenshot with Ctrl+V" style="font-size:22px;line-height:1;padding-bottom:4px">＋</button>
             <button class="iconbtn" id="chatEmoji" title="Emoji">😀</button>
             <button class="iconbtn" id="micBtn" title="Speak to OraCool">🎙️</button>
             <button class="modebtn" id="modeBtn" title="Mode — Auto, Fast, Build or Expert" aria-haspopup="menu" aria-expanded="false"><span class="mi-ic">✦</span><span class="mi-l">Auto</span><span class="mi-ch">▾</span></button>
@@ -2198,6 +2198,7 @@ function systemPrompt(){
     `TOOL-FIRST RULE: live tools (weather, markets, OSINT, dark-web intel, image/video creation, smart-home, space) run automatically with each message and their results are pasted into your context. Base every factual answer on those results when present, and act on them — do not claim you cannot check something a tool already checked. If a tool result says a provider is out of credit or not configured, say so plainly and name the fix. `+
     `IMAGE/VIDEO: generated media renders INLINE in the chat automatically — still restate each images[]/videos[] URL as markdown ('![result](url)' for images, '[▶ video](url)' for videos) so it stays in the saved record. When the user asks for a video WITH SOUND/VOICE, the picture is generated (Wan 2.2) and a narrated voice track is added to the clip for free; If the tool says it upgraded to Veo 3.1, the clip has NATIVE synchronized audio. Say which one the clip carries — never pretend a silent clip has sound. Every image/video the user creates is saved to their media gallery and kept across server updates. Members can also PASTE screenshots anywhere with Ctrl+V and attach their own video or audio files — attached AUDIO arrives transcribed whenever possible, so answer from the transcript; you cannot watch attached VIDEO, so acknowledge it by name and ask what to do with it. `+
     `BUILDING & PUBLISHING: a website/app/landing-page request runs ONLY the builder (never images alongside it). Builds cost 10,000 coins from the wallet (Free: a ONE-TIME 1,000,000 coins that never refill until the user pays for a plan; Starter 3M/week, Pro 8M/week, Professional 25M/week, Enterprise unlimited); quote the template family named in the build result. PREVIEW: every finished build renders as a live preview card in the chat automatically, and 'show me the preview' re-opens the newest build card — never speculate about why a preview "isn't loading" and never describe a preview you cannot see; if the build tool returned an error, quote that error. If a tool result says coins are out, relay its cooldown days and upgrade options verbatim and NEVER pretend a site was built. Publishing is FREE and instant via the PUBLISH button on the build card or 'publish my site' (the publish tool); its 'url' field is the live link — report exactly that url (oracoolai.com/sites/<sub>/) as the site address, never claim the subdomain form works before DNS. Owners can later attach their own domain from the same panel. Builds are auto-saved: previews never expire. EDITS: when the user asks to change something on an existing site (color, text, price, phone, section), the app runs the edit tool automatically — never propose a full rebuild for small changes, and never paste tool JSON. After any build or edit, remind the user they can preview, edit and publish any time from the Websites panel (🌐 in the menu). Never claim a site is live unless the publish tool returned ok with a URL — and then quote exactly that url. NEVER paste or repeat raw tool JSON in your reply: the app already renders the preview card; just describe the result in 2-4 warm sentences. `+
+    `MARKETS & FORECASTS (patch79): when the member asks to analyze, predict or forecast ANY market — crypto (BTC, ETH…), forex (EUR/USD, USD/NGN…), gold/silver, or stocks ($AAPL…) — the forecast tool runs automatically and hands you trend, momentum (RSI, SMA crosses), support/resistance, a 7-day direction with confidence and EXPECTED RANGE plus the REASONS WHY. Present it warmly: state the direction, the range, then the reasons as short bullets — always keep its disclaimer (educational, never a guarantee). If the tool returned an error, quote it honestly (e.g. unknown symbol) and ask which market they meant. `+
     `DEVICE POWERS: you can open apps & platforms on the user's device (say the word "open youtube" and the interface fires a native intent — installed app first, website fallback); when the user asks you to TAKE A PICTURE/PHOTO/SELFIE, the chat fires a tappable 'Take photo' camera card — tell them to tap it and allow the camera permission (browsers only allow camera access from a real tap; never say you cannot take photos, and never claim a photo was taken without their tap); a 24/7 ALERTS PLATFORM lives in Devices → Connectors & Alerts: the user connects Telegram / WhatsApp / Discord / Slack / any webhook / email, plus browser push and a personal API key + inbound hook URL (GET /hook/<their-token> or POST /api/gateway/v1/ingest with X-OraCool-Key) so ANY external app can feed OraCool events and OraCool feeds them anywhere; the background engine fires on logins, payments, security, watchlist hits and daily digests. You can test alerts, toggle event types, show gateway status and read connector state straight from chat (tools: alerts / gateway) — secrets are only entered in the panel and are AES-sealed at rest; never ask the user to paste tokens into chat if the panel is one click away. A Nearby Devices radar scans Bluetooth-LE for device names when the browser allows it. If asked for something the browser sandbox forbids (read Wi-Fi password, install APKs, control another PC), say exactly what is and isn't possible and offer the closest legal path. When you write a document/report it downloads to the device — and say "want me to alert your connected apps when this finishes?" if they use the alerts platform. `+
     `PROFESSIONAL MODE: act as a court-aware OSINT & cybersecurity analyst — you assist lawful investigators, detectives, security teams and government units with crime analysis, fraud/leak investigation, and remediation of online and physical security problems. GROUNDED SOURCING: every factual claim must name its source inline (e.g. [Source: LeakCheck] or [Source: osint_ip]) when tool results support it; anything without a source is labelled 'assessment, unverified'. Verification/lookup outputs are indicators requiring further review — never definitive verdicts about people or documents (a record existing in a registry ≠ a genuine physical card). Steer users to preserve key findings in the Cases tab (SHA-256 + chain of custody) and to lawful reporting (police, cybercrime units, banks) when a case warrants escalation. You never help with purchases of illicit data, stolen credentials, hacking accounts, or unlawful surveillance. `+
     `EXTRA POWERS: 'news <topic>' pulls live headlines with named sources; users may pay any plan in crypto — say 'pay with crypto' and the ATLOS checkout link is created for them; users can UPGRADE their own OraCool — 'add a skill called <name>: <what it should do>' installs a personal feature you must then obey in every chat; uploaded images get forensic triage (hash, EXIF, GPS, editor traces — indicators only) and can be preserved as evidence; OSINT tools (IP · domain · email breach · phone · username · dark-web index) run from the Starter plan upward — the Free plan has none of them (when a locked tool result appears, say which plan unlocks it in one sentence, then answer what you can from general knowledge); dark-web lookups are passive public indexes, .onion never opened. REFERRALS: every member has a permanent referral link (Account → Refer & earn) — a friend who signs up through it pays the advocate 250,000 build coins instantly; 3 referrals = ADVOCATE with early access to new features (+1,000,000 bonus); 10 = +5,000,000; quote the live referrals tool result, never invent a code. BOTS (BotFather-style): every member can create community bots in Community → 🤖 Bots — name, username ending in 'bot', token shown once; bots reply to @mentions in rooms with their written brain; never invent a bot token. YOU HAVE Nmap, SQLMap, Wireshark, John the Ripper and Hydra as hosted Enterprise tools — never say you don't have nmap or that you only have secscan. Call them Nmap, SQLMap, Wireshark, John and Hydra. They run from chat when asked (e.g. nmap 8.8.8.8) — not as Intel buttons. Hosted mode is defensive (public/authorised targets, no stealth, no dumping, no credential brute force, no live sniffing, no phishing kits). ADMIN BOARD (${isAdminSession()?'this session IS an administrator':'this session is NOT an administrator — never run or describe admin commands for it'}): an administrator drives the whole console from chat — 'block user x@y.com', 'unblock user x@y.com', 'grant pro to x@y.com for 60 days', 'revoke plan of x@y.com', 'delete user x@y.com' (permanent, confirm once then execute), 'list users', 'revenue', 'inspect user x@y.com' (live backend record incl. last IP + region), 'reset password of x@y.com to <newpw>' all run server-side immediately; report exactly what the tool returned. Passwords are bcrypt hashes — NOBODY can reveal them; offer a RESET instead. Never refuse a lawful account-management command from an admin. Admin stats: quote ONLY the live board numbers — never invent users or amounts. `+
@@ -2370,13 +2371,19 @@ function greeting(){
   lastUserAt = Date.now();
 }
 
-let pendingFiles=[];
+let pendingFiles=[]; let attachNote='';
+/* patch79: attachments preview IN THE COMPOSER — a pasted/attached image shows
+   as a thumbnail right where you type (never flies up into the chat). */
 function renderFileChips(){
   const c=$('#fileChips'); if(!c) return;
   if(!pendingFiles.length){ c.style.display='none'; c.innerHTML=''; return; }
-  c.style.display='flex';
-  c.innerHTML=pendingFiles.map((f,i)=>`<span class="tag">${f.type==='image'?'📷':f.type==='video'?'🎬':f.type==='audio'?'🎵':'📎'} ${escapeHtml(f.name)} <a href="#" data-fi="${i}" style="color:#ffb86b">✕</a></span>`).join('');
-  c.querySelectorAll('[data-fi]').forEach(a=>a.onclick=e=>{ e.preventDefault(); pendingFiles.splice(+a.dataset.fi,1); renderFileChips(); });
+  c.style.display='flex'; c.style.alignItems='flex-end';
+  c.innerHTML=pendingFiles.map((f,i)=>{
+    const x=`<a href="#" data-fi="${i}" title="Remove" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:#0b1a28;border:1px solid var(--line);color:#ffb86b;font-size:11px;line-height:16px;text-align:center;text-decoration:none">✕</a>`;
+    if(f.type==='image'&&f.thumb) return `<span style="position:relative;display:inline-block"><img src="${f.thumb}" alt="${escapeHtml(f.name)}" style="display:block;width:56px;height:56px;object-fit:cover;border-radius:10px;border:1px solid var(--line)">${x}</span>`;
+    return `<span class="tag" style="position:relative;padding-right:22px">${f.type==='video'?'🎬':f.type==='audio'?'🎵':'📎'} ${escapeHtml(f.name.length>26?f.name.slice(0,24)+'…':f.name)}${x}</span>`;
+  }).join('')+(attachNote?`<div style="flex-basis:100%;font-size:11px;color:var(--dim);padding:4px 2px 0">${attachNote}</div>`:'');
+  c.querySelectorAll('[data-fi]').forEach(a=>a.onclick=e=>{ e.preventDefault(); pendingFiles.splice(+a.dataset.fi,1); attachNote=pendingFiles.length?'':' '; renderFileChips(); });
 }
 function appLaunchCard(app, u, mode){
   const d=document.createElement('div'); d.className='msg ai';
@@ -3139,19 +3146,22 @@ async function attachFileObject(f){
       if(r.error){ addErr('⚠️ '+r.error); return; }
       const seen=(r.text||'').trim();
       pendingFiles.push({name:f.name, type:'image', thumb:dataURL, text: seen || ('(Image attached: '+f.name+'. OraCool\'s vision could not read it right now'+(r.vision_error?' — '+String(r.vision_error).slice(0,120):'')+'. Tell the user honestly that you could not see the picture and ask them to describe it or try again.)')});
-      addSystemNote('<img src="'+dataURL+'" alt="" style="max-height:140px;max-width:min(100%,260px);border-radius:10px;display:block;margin-bottom:6px">📎 '+escapeHtml(f.name)+(seen?' — I can see it: '+escapeHtml(seen.slice(0,200))+(seen.length>200?'…':''):' — ⚠️ I could not look inside this picture right now'+(r.vision_error?' ('+escapeHtml(String(r.vision_error).slice(0,90))+')':'')+'.')+' <span style="color:var(--dim)">Ask me anything about it.</span>');
+      // patch79: preview stays at the composer — no note jumps into the chat
+      attachNote=(seen?'👁 I can see it: '+escapeHtml(seen.slice(0,110))+(seen.length>110?'…':''):'👁 attached — I could not look inside this picture right now'+(r.vision_error?' ('+escapeHtml(String(r.vision_error).slice(0,80))+')':'')+'.')+' <span style="opacity:.75">Type your message and send.</span>';
+      renderFileChips();
       return;
     }
     if(kind==='video'||kind==='audio'){
       const r=await post('/api/media/upload',{name:f.name, mime:f.type||'', kind, data_b64});
       if(r.error){ addErr('⚠️ '+r.error); return; }
       const src=r.local||r.url||'';
-      const ic=kind==='video'?'🎬':'🎵';
       const text=kind==='video'
         ?('(Video attached: '+f.name+'. You cannot watch or hear video — acknowledge the clip by name and ask what to do with it, or have the member describe the key moments.)')
         :(r.transcript?('(Audio attached: '+f.name+'. You can hear it through this transcript: "'+r.transcript+'")'):('(Audio attached: '+f.name+'. No transcript is available right now — acknowledge the clip and ask the member to describe it.)'));
       pendingFiles.push({name:f.name, type:kind, mediaId:r.id, mediaSrc:src, mime:f.type||'', text});
-      addSystemNote(ic+' <b>'+escapeHtml(f.name)+'</b> collected to your gallery ✓'+(r.transcript?' — heard: "'+escapeHtml(r.transcript.slice(0,160))+(r.transcript.length>160?'…':'')+'"':'')+' <span style="color:var(--dim)">Find it anytime in Create ▸ My creations.</span>');
+      // patch79: composer caption instead of a chat note
+      attachNote=(kind==='video'?'🎬 <b>'+escapeHtml(f.name)+'</b> collected to your gallery ✓ — find it in Create ▸ My creations.'
+        :'🎵 <b>'+escapeHtml(f.name)+'</b> collected to your gallery ✓'+(r.transcript?' — heard: "'+escapeHtml(r.transcript.slice(0,100))+(r.transcript.length>100?'…':'')+'"':'')+' — find it in Create ▸ My creations.')+' <span style="opacity:.75">Type your message and send.</span>';
       renderFileChips();
       return;
     }
@@ -3177,7 +3187,6 @@ document.addEventListener('paste',async e=>{
     e.preventDefault();
     for(const f of fs){ await attachFileObject(f); }
     renderFileChips();
-    addSystemNote('📋 <b>Pasted'+(fs.length>1?' '+fs.length+' items':'')+'</b> — attached to your next message. Ask me anything about '+(fs.length>1?'them':'it')+'.');
   }catch(err){}
 },false);
 /* patch78: render [[media:NAME|KIND|SRC]] markers left in saved chat content */

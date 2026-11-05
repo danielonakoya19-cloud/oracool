@@ -12,7 +12,7 @@ APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch78-media-paste"'), 2)
+        self.assertEqual(SRV.count('"patch79-forecast-composer"'), 2)
         self.assertNotIn("KALI_PS1", SRV)
         self.assertNotIn("kali㉿oracool", SRV)
         self.assertNotIn("drawSecConsole", APP)

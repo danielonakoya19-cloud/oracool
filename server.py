@@ -2801,6 +2801,244 @@ AUTO_SYS = ("You are OraCool AI's disciplined algorithmic trading module operati
             "overbought or trend breaking); otherwise HOLD. Be conservative. Never guarantee profit.")
 
 
+# ---------------------------------------------------------------- market forecast (patch79)
+FORECAST_FX = {
+    "eurusd": "EUR/USD", "gbpusd": "GBP/USD", "usdjpy": "USD/JPY", "usdchf": "USD/CHF",
+    "audusd": "AUD/USD", "usdcad": "USD/CAD", "nzdusd": "NZD/USD", "eurgbp": "EUR/GBP",
+    "usdngn": "USD/NGN", "eurngn": "EUR/NGN", "gbpngn": "GBP/NGN",
+    "xauusd": "Gold (XAU/USD)", "xagusd": "Silver (XAG/USD)",
+    "btceur": "BTC/EUR", "btcusd": "BTC/USD", "ethusd": "ETH/USD",
+}
+FORECAST_TRIGGER = re.compile(
+    r"\b(?:analy[sz]e|analys[ei]s|forecast|predict(?:ion)?|outlook|prognosis|"
+    r"where\s+(?:is|are)?\s*[\w\s]{0,20}?(?:going|headed|heading|go|head)|"
+    r"bullish|bearish|trade\s+idea|should\s+i\s+(?:buy|sell|enter)|"
+    r"market\s+(?:view|report|brief|prediction))\b", re.I)
+
+
+def _fx_symbol(text):
+    """eur/usd, eurusd, EUR-USD, gold, silver -> stooq symbol."""
+    tl = text.lower()
+    if re.search(r"\bgold\b", tl):
+        return "xauusd"
+    if re.search(r"\bsilver\b", tl):
+        return "xagusd"
+    for pat in (r"\b([a-z]{3})[/\- ]?([a-z]{3})\b", r"([a-z]{3})([a-z]{3})"):
+        for m in re.finditer(pat, re.sub(r"[\s_\-]+", "", tl) if pat.startswith("([a-z])") else tl):
+            cand = m.group(1) + m.group(2)
+            if cand in FORECAST_FX:
+                return cand
+    return None
+
+
+_YAHOO_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+
+def _yahoo_chart(sym_kind, sym):
+    """90d daily (closes, volumes) from the Yahoo chart API."""
+    symq = _yahoo_symbol(sym_kind, sym)
+    url = ("https://query1.finance.yahoo.com/v8/finance/chart/" + urllib.parse.quote(symq)
+           + "?range=3mo&interval=1d")
+    _, raw, _ = http_fetch(url, headers={"User-Agent": _YAHOO_UA}, timeout=25)
+    r0 = ((json.loads(raw).get("chart") or {}).get("result") or [None])[0]
+    q = (((r0 or {}).get("indicators") or {}).get("quote") or [{}])[0]
+    closes = [float(c) for c in (q.get("close") or []) if c is not None]
+    vol_raw = q.get("volume") or []
+    vols = [float(v) for v in vol_raw if v is not None] if len(vol_raw) == len(closes) else []
+    return (closes, vols)
+
+
+CG_YAHOO = {"bitcoin": "BTC-USD", "ethereum": "ETH-USD", "solana": "SOL-USD",
+            "binancecoin": "BNB-USD", "ripple": "XRP-USD", "cardano": "ADA-USD",
+            "dogecoin": "DOGE-USD", "litecoin": "LTC-USD", "polkadot": "DOT-USD",
+            "avalanche-2": "AVAX-USD", "tron": "TRX-USD", "shiba-inu": "SHIB-USD",
+            "chainlink": "LINK-USD", "uniswap": "UNI-USD", "cosmos": "ATOM-USD",
+            "near": "NEAR-USD", "matic-network": "MATIC-USD", "tether": "USDT-USD"}
+
+
+def _yahoo_symbol(kind, sym):
+    if kind == "fx":
+        return {"xauusd": "GC=F", "xagusd": "SI=F"}.get(sym, sym.upper() + "=X")
+    if kind == "crypto":
+        return CG_YAHOO.get(sym, sym.upper().split("-")[-1] + "-USD")
+    return sym.upper()  # US stocks/ETFs/indices carry plain tickers on Yahoo
+
+
+def _forecast_series(sym_kind, sym):
+    """-> (closes, volumes, source_label) or ({}, error).
+    patch79: Yahoo Finance chart API first (works from datacenter IPs);
+    Stooq CSV kept as a fallback. Crypto: CoinGecko first, Yahoo crypto
+    tickers (BTC-USD…) when CoinGecko is rate-limited."""
+    try:
+        if sym_kind == "crypto":
+            try:
+                k = key("COINGECKO_API_KEY")
+                hdrs = {"x-cg-demo-api-key": k} if k else {}
+                url = ("https://api.coingecko.com/api/v3/coins/" + urllib.parse.quote(sym)
+                       + "/market_chart?vs_currency=usd&days=90&interval=daily")
+                _, raw, _ = http_fetch(url, headers=hdrs, timeout=25)
+                d = json.loads(raw)
+                prices = [float(x[1]) for x in (d.get("prices") or []) if len(x) > 1]
+                vols = [float(x[1]) for x in (d.get("total_volumes") or []) if len(x) > 1]
+                if len(prices) >= 40:
+                    return (prices, vols, "CoinGecko (90d daily)")
+            except Exception:
+                pass  # rate-limited or blocked — Yahoo crypto tickers are the fallback
+            got = _yahoo_chart("crypto", sym)
+            if got and len(got[0]) >= 40:
+                return (got[0], got[1], "Yahoo Finance (90d daily)")
+        try:
+            got = _yahoo_chart(sym_kind, sym)
+            if got and len(got[0]) >= 40:
+                return (got[0], got[1], "Yahoo Finance (90d daily)")
+        except Exception:
+            pass
+        # ---- Stooq fallback ----
+        symq = sym if sym_kind == "fx" else (sym.lower() + ".us")
+        url = "https://stooq.com/q/d/l/?s=" + urllib.parse.quote(symq) + "&i=d"
+        _, raw, _ = http_fetch(url, timeout=25)
+        lines = [ln.split(",") for ln in raw.decode("utf-8", "replace").strip().splitlines() if ln]
+        if len(lines) < 40 or lines[0][0].lower() != "date":
+            return ({}, "No history returned for that symbol.")
+        closes = [float(r[4]) for r in lines[1:] if len(r) > 4 and r[4] not in ("", "null", "N/A")]
+        vols = []
+        for r in lines[1:]:
+            try:
+                vols.append(float(r[5]) if len(r) > 5 and r[5] not in ("", "null") else 0.0)
+            except ValueError:
+                vols.append(0.0)
+        return (closes, vols, "Stooq (daily)")
+    except Exception as e:
+        return ({}, "history fetch failed: " + str(e)[:120])
+
+
+def market_forecast(text):
+    """patch79: analyze ANY market from chat — crypto, forex, metals, stocks,
+    indices — and produce a 7-day educational forecast WITH the reasons.
+    Deterministic (indicator-scored): works even when no LLM is reachable."""
+    low = text.lower()
+    kind = sym = disp = None
+    cg = _crypto_coin(low)
+    if cg:
+        kind, sym = "crypto", cg
+        disp = cg.replace("-", " ").title()
+    else:
+        fx = _fx_symbol(low)
+        if fx:
+            kind, sym, disp = "fx", fx, FORECAST_FX[fx]
+        else:
+            st = _stock_symbol(text)
+            if st:
+                kind, sym, disp = "stock", st.upper(), TRADING_SYMBOLS.get(st.upper(), {}).get("name", st.upper())
+    if not sym:
+        return {"error": "Name a market to analyze — e.g. 'analyze BTC market', 'predict EUR/USD', "
+                         "'gold outlook', or '$NVDA forecast'. Crypto, forex, gold/silver and stocks are covered."}
+    got = _forecast_series(kind, sym)
+    if len(got) == 2 and isinstance(got[0], dict):
+        return {"error": got[1]}
+    closes, vols, source = got
+    if len(closes) < 30:
+        return {"error": "Not enough history for a responsible analysis (" + str(len(closes)) + " days). Try again later."}
+    last = closes[-1]
+    chg1 = (last / closes[-2] - 1) * 100
+    chg7 = (last / closes[-8] - 1) * 100
+    chg30 = (last / closes[-31] - 1) * 100 if len(closes) >= 31 else (last / closes[0] - 1) * 100
+    sma7 = sum(closes[-7:]) / 7.0
+    sma25 = sum(closes[-25:]) / 25.0
+    gains = [max(closes[i] - closes[i - 1], 0.0) for i in range(1, len(closes))]
+    losses = [max(closes[i - 1] - closes[i], 0.0) for i in range(1, len(closes))]
+    ag, al = sum(gains[-14:]) / 14.0, sum(losses[-14:]) / 14.0
+    rsi = 100.0 if al == 0 else (50.0 if (ag + al) == 0 else 100 - 100 / (1 + ag / al))
+    rets = [(closes[i] / closes[i - 1] - 1) for i in range(1, len(closes))]
+    mean_r = sum(rets) / len(rets)
+    vol_d = (sum((r - mean_r) ** 2 for r in rets) / len(rets)) ** 0.5
+    vol_w = vol_d * (7 ** 0.5)
+    hi14, lo14 = max(closes[-14:]), min(closes[-14:])
+    pos_range = (last - lo14) / max(hi14 - lo14, 1e-12)
+    vt = ""
+    if vols and sum(vols[-30:]) > 0:
+        va, vb = sum(vols[-7:]) / 7.0, sum(vols[-30:]) / 30.0
+        vt = (round(va / vb, 2) if vb else 1.0)
+
+    # --- scored forecast ---
+    score, reasons = 0.0, []
+    if chg7 > 1.5:
+        score += 1; reasons.append(("7-day momentum", f"+{chg7:.1f}% in 7 days", "buyers are in control", +1))
+    elif chg7 < -1.5:
+        score -= 1; reasons.append(("7-day momentum", f"{chg7:.1f}% in 7 days", "sellers are pressing", -1))
+    else:
+        reasons.append(("7-day momentum", f"{chg7:+.1f}% in 7 days", "flat — no strong push", 0))
+    if sma7 > sma25 * 1.005:
+        score += 1; reasons.append(("Moving-average cross", f"7-day SMA {sma7:.4g} above 25-day {sma25:.4g}", "short-term trend turned up (a golden cross)", +1))
+    elif sma7 < sma25 * 0.995:
+        score -= 1; reasons.append(("Moving-average cross", f"7-day SMA {sma7:.4g} below 25-day {sma25:.4g}", "short-term trend turned down (a death cross)", -1))
+    else:
+        reasons.append(("Moving-average cross", "7-day and 25-day SMAs are intertwined", "no clear trend agreement", 0))
+    if rsi >= 70:
+        score -= 1; reasons.append(("RSI (14-day)", f"{rsi:.0f} — overbought", "price ran far fast; pullbacks become more likely", -1))
+    elif rsi <= 30:
+        score += 1; reasons.append(("RSI (14-day)", f"{rsi:.0f} — oversold", "selling is stretched; bounces become more likely", +1))
+    elif rsi > 55:
+        score += 0.5; reasons.append(("RSI (14-day)", f"{rsi:.0f} — mild bullish zone", "momentum leans positive without being extreme", +0.5))
+    elif rsi < 45:
+        score -= 0.5; reasons.append(("RSI (14-day)", f"{rsi:.0f} — mild bearish zone", "momentum leans negative without being extreme", -0.5))
+    else:
+        reasons.append(("RSI (14-day)", f"{rsi:.0f} — neutral", "neither side dominates", 0))
+    if chg30 > 8:
+        score += 0.5; reasons.append(("30-day trend", f"+{chg30:.1f}% over 30 days", "the bigger trend supports buyers", +0.5))
+    elif chg30 < -8:
+        score -= 0.5; reasons.append(("30-day trend", f"{chg30:.1f}% over 30 days", "the bigger trend supports sellers", -0.5))
+    else:
+        reasons.append(("30-day trend", f"{chg30:+.1f}% over 30 days", "range-bound on the monthly view", 0))
+    reasons.append(("14-day range", f"{pos_range * 100:.0f}% of the {lo14:.4g}–{hi14:.4g} range",
+                    "near the top — resistance close by" if pos_range > 0.8 else
+                    ("near the bottom — support close by" if pos_range < 0.2 else "mid-range — room in both directions"), 0))
+    if isinstance(vt, float) and vt:
+        reasons.append(("Volume trend", f"last week {'%+.0f' % ((vt - 1) * 100)}% vs the month",
+                        "participation is rising — moves get confirmed" if vt > 1.25 else
+                        ("participation is fading — moves get doubted" if vt < 0.75 else "participation is normal"), 0))
+    if vol_w > 0.12:
+        score = max(-2.2, min(2.2, score)); reasons.append(("Volatility", f"{vol_w * 100:.0f}% expected weekly swing", "wild market — size positions smaller", 0))
+
+    score = max(-2.5, min(2.5, score))
+    if score >= 1.2:
+        direction, strength = "Bullish", "Strong"
+    elif score >= 0.5:
+        direction, strength = "Bullish", "Mild"
+    elif score <= -1.2:
+        direction, strength = "Bearish", "Strong"
+    elif score <= -0.5:
+        direction, strength = "Bearish", "Mild"
+    else:
+        direction, strength = "Neutral", "Flat"
+    conf = int(round(52 + min(16, abs(score) * 6.5) - min(10, max(0.0, (vol_w - 0.05)) * 55)))
+    conf = max(50, min(68, conf))
+    band = max(0.02, min(0.5, vol_w * 1.15))
+    tgt_lo, tgt_hi = last * (1 - band), last * (1 + band)
+    if direction == "Bullish":
+        lean = f"The model leans {strength.lower()} bullish: odds favour upside, and dips toward {lo14:.4g} would be the level to watch."
+    elif direction == "Bearish":
+        lean = f"The model leans {strength.lower()} bearish: odds favour downside, and rallies toward {hi14:.4g} would be the level to watch."
+    else:
+        lean = "The model is neutral: the indicators disagree — a range between %.4g and %.4g is the base case." % (lo14, hi14)
+    why = "WHY: " + " ".join(
+        (("%s: %s — %s." % (f, v, r)) for f, v, r, _w in reasons if r not in (None, "")))
+    out = {"ok": True, "market": disp, "symbol": sym, "kind": kind,
+           "last_price": round(last, 6 if last < 10 else 2),
+           "change_1d_pct": round(chg1, 2), "change_7d_pct": round(chg7, 2), "change_30d_pct": round(chg30, 2),
+           "sma7": round(sma7, 6 if last < 10 else 2), "sma25": round(sma25, 6 if last < 10 else 2),
+           "rsi14": round(rsi, 1), "volatility_weekly_pct": round(vol_w * 100, 1),
+           "support_14d": round(lo14, 6 if last < 10 else 2), "resistance_14d": round(hi14, 6 if last < 10 else 2),
+           "direction": direction, "strength": strength, "confidence_pct": conf,
+           "forecast_horizon": "7 days",
+           "expected_range": [round(tgt_lo, 6 if last < 10 else 2), round(tgt_hi, 6 if last < 10 else 2)],
+           "reasons": [{"factor": f, "value": v, "reading": r} for f, v, r, _w in reasons],
+           "summary": lean, "why": why, "source": source,
+           "disclaimer": "Educational, indicator-based projection from a paper system — never a guarantee. "
+                         "Markets can move against any forecast; do your own research and never risk money you cannot afford to lose."}
+    return out
+
+
 def trade_signal(symbol):
     sym = (symbol or "").upper()
     if sym not in TRADING_SYMBOLS:
@@ -8773,7 +9011,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch78-media-paste",
+        "build": "patch79-forecast-composer",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -9624,7 +9862,7 @@ CRYPTO_KEYWORDS = {
     "tron": "tron", "trx": "tron", "shiba": "shiba-inu", "shib": "shiba-inu",
     "chainlink": "chainlink", "link": "chainlink", "uniswap": "uniswap", "uni": "uniswap",
     "cosmos": "cosmos", "atom": "cosmos", "near": "near", "polygon": "matic-network",
-    "matic": "matic-network",
+    "matic": "matic-network", "tether": "tether", "usdt": "tether",
 }
 STOCK_KEYWORDS = {
     "apple": "AAPL", "tesla": "TSLA", "nvidia": "NVDA", "microsoft": "MSFT",
@@ -9656,7 +9894,9 @@ def _crypto_coin(text):
         if re.search(r"\b" + re.escape(kw) + r"\b", low):
             if any(k in low for k in ("price", "worth", "cost", "how much", "value", "trade",
                                       "buy", "sell", "signal", "analysis", "analyze", "rate",
-                                      "now", "today", "what is", "what's", "how is")):
+                                      "now", "today", "what is", "what's", "how is",
+                                      "predict", "forecast", "prediction", "outlook", "bullish",
+                                      "bearish", "market", "going", "trend", "view", "idea", "direction")):
                 return cid
     return None
 
@@ -9919,6 +10159,14 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     if wc:
         out.append({"tool": "weather", "label": "weather · " + wc,
                     "result": _shrink(weather(wc))})
+    # patch79: full market analysis + 7-day forecast (crypto, forex, metals, stocks)
+    if FORECAST_TRIGGER.search(t):
+        fr = market_forecast(t)
+        if fr.get("ok"):
+            out.append({"tool": "forecast", "label": "forecast · " + str(fr.get("market")),
+                        "result": _shrink(fr, 2600)})
+        elif _crypto_coin(t) or _fx_symbol(low) or _stock_symbol(t):
+            out.append({"tool": "forecast", "label": "forecast", "result": _shrink(fr, 800)})
     # crypto
     cid = _crypto_coin(t)
     if cid:
@@ -12352,7 +12600,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch78-media-paste", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch79-forecast-composer", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
