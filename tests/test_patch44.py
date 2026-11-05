@@ -20,7 +20,7 @@ def _http_err(code, msg):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch77-holo-boot"'), 2)
+        self.assertEqual(SRV.count('"patch78-media-paste"'), 2)
         self.assertNotIn("patch43-modes", SRV)
 
 
@@ -85,11 +85,12 @@ class AnalyzeFile(unittest.TestCase):
 
 class Client(unittest.TestCase):
     def test_attach_flow(self):
-        for needle in ("purpose:isImg?'attachment':''", "pendingFiles.push({name:f.name, type:'image', thumb:dataURL,",
-                       "never say you cannot see images", "=== ${f.type==='image'?'IMAGE':'FILE'}: ${f.name}",
+        # patch78: attach pipeline moved into shared attachFileObject (picked + pasted media)
+        for needle in ("purpose:'attachment'", "pendingFiles.push({name:f.name, type:'image', thumb:dataURL,",
+                       "never say you cannot see images", "f.type==='image'?'IMAGE':f.type==='video'?'VIDEO':f.type==='audio'?'AUDIO':'FILE'",
                        "files.some(f=>f.thumb)", "I could not look inside this picture right now"):
             self.assertIn(needle, APP, needle)
-        self.assertEqual(APP.count("purpose:'attachment'"), 2)  # both camera "attach to your message" paths
+        self.assertEqual(APP.count("purpose:'attachment'"), 3)  # camera x2 + patch78 shared paste/pick path
 
     def test_composer_clears_before_early_returns(self):
         i_clear = APP.index("// patch44: clear the box before any early-return path")

@@ -8773,7 +8773,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch77-holo-boot",
+        "build": "patch78-media-paste",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -12342,7 +12342,9 @@ class Handler(BaseHTTPRequestHandler):
                 _ext = _parts[1].rsplit(".", 1)[-1].lower()
                 _ct = {"mp4": "video/mp4", "webm": "video/webm", "mov": "video/quicktime",
                        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-                       "webp": "image/webp", "gif": "image/gif"}.get(_ext, "application/octet-stream")
+                       "webp": "image/webp", "gif": "image/gif", "m4a": "audio/mp4",
+                       "mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg",
+                       "aac": "audio/aac", "flac": "audio/flac"}.get(_ext, "application/octet-stream")
                 if os.path.exists(_full):
                     self._send_file(_full, _ct)
                 else:
@@ -12350,7 +12352,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch77-holo-boot", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch78-media-paste", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -13266,6 +13268,9 @@ class Handler(BaseHTTPRequestHandler):
                                             body.get("title") or "New chat"))
             elif path == "/api/chat/session/delete":
                 self._send_json(conv_delete(_body_email(self, body), str(body.get("id") or "")))
+            elif path == "/api/media/upload":
+                self._send_json(media_upload(_body_email(self, body), body.get("name"),
+                                             body.get("mime"), body.get("kind"), body.get("data_b64")))
             elif path == "/api/media/list":
                 _mi = media_list(_body_email(self, body), body.get("kind") or "")
                 self._send_json({"items": _mi, "count": len(_mi)})
@@ -14592,6 +14597,110 @@ def media_list(email, kind=""):
     out = list(reversed(_media_all().get(email) or []))
     if kind:
         out = [x for x in out if x.get("kind") == kind]
+    return out
+
+
+def _whisper_bytes(raw, mime, name="audio"):
+    """Transcribe an uploaded audio file via Groq/OpenAI Whisper. Best effort:
+    returns the text or "" (never raises)."""
+    k = key("GROQ_API_KEY") or key("OPENAI_API_KEY")
+    if not k or not raw:
+        return ""
+    groq = bool(key("GROQ_API_KEY"))
+    url = "https://api.groq.com/openai/v1/audio/transcriptions" if groq else "https://api.openai.com/v1/audio/transcriptions"
+    model = "whisper-large-v3-turbo" if groq else "whisper-1"
+    ext = {"audio/webm": "webm", "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/ogg": "ogg",
+           "audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3", "audio/mp3": "mp3",
+           "audio/aac": "aac", "audio/flac": "flac", "audio/x-flac": "flac"}.get((mime or "").split(";")[0].strip().lower())
+    if not ext:
+        return ""
+    with _ASR_LOCK:
+        now = time.time()
+        times = [t for t in _ASR_LIMITS.get("media:"+ (name or ""), []) if t > now-60]
+        if len(times) >= 8:
+            return ""
+        _ASR_LIMITS["media:" + (name or "")] = times + [now]
+    boundary = "OraMedia" + os.urandom(8).hex()
+    payload = ("--"+boundary+'\r\nContent-Disposition: form-data; name="model"\r\n\r\n'+model+'\r\n--'+boundary+
+               '\r\nContent-Disposition: form-data; name="file"; filename="upload.'+ext+'"\r\nContent-Type: '+
+               ((mime or "audio/mpeg").split(";")[0])+'\r\n\r\n').encode()+raw+("\r\n--"+boundary+"--\r\n").encode()
+    try:
+        _, data, _ = http_fetch(url, method="POST",
+                                headers={"Authorization": "Bearer "+k, "Content-Type": "multipart/form-data; boundary="+boundary},
+                                data=payload, timeout=90)
+        return str(json.loads(data).get("text") or "").strip()[:4000]
+    except Exception:
+        return ""
+
+
+_MEDIA_UPLOAD_CAPS = {"image": 6000000, "video": 12000000, "audio": 9000000}
+
+
+def media_upload(email, name, mime, kind, data_b64):
+    """patch78: store a MEMBER file (pasted screenshot, video or audio) into the
+    same durable gallery as generated media. Images also land here from the chat
+    paste action (Ctrl+V). Audio gets a best-effort Whisper transcript."""
+    email = (email or "").strip().lower()
+    if not email:
+        return {"error": "Sign in to collect media."}
+    kind = kind if kind in _MEDIA_UPLOAD_CAPS else "image"
+    try:
+        raw = base64.b64decode(str(data_b64 or "").split(",")[-1], validate=True)
+    except Exception:
+        return {"error": "Could not read the file data."}
+    if not raw:
+        return {"error": "Empty file."}
+    cap = _MEDIA_UPLOAD_CAPS[kind]
+    if len(raw) > cap:
+        return {"error": "Too large — the limit is " + str(cap // 1000000) + " MB for " + kind + " files. Try a smaller version."}
+    mime = str(mime or "").split(";")[0].strip().lower()
+    name = str(name or "file")[:90]
+    if not mime:
+        import mimetypes as _mt
+        mime = _mt.guess_type(name)[0] or {"image": "image/jpeg", "video": "video/mp4", "audio": "audio/mpeg"}[kind]
+    d = _media_all()
+    lst = d.setdefault(email, [])
+    folder = os.path.join(MEDIA_DIR, _media_slug(email))
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except Exception:
+        folder = ""
+    extmap = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
+              "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
+              "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a",
+              "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/ogg": ".ogg", "audio/webm": ".webm",
+              "audio/aac": ".aac", "audio/flac": ".flac"}
+    ext = extmap.get(mime) or {"image": ".jpg", "video": ".mp4", "audio": ".m4a"}[kind]
+    it = {"id": os.urandom(5).hex(), "kind": kind, "name": name,
+          "prompt": "(uploaded by member)", "url": "", "provider": "upload", "model": "",
+          "t": _now(), "local": "", "mime": mime, "size": len(raw)}
+    if folder:
+        fn = it["id"] + ext
+        try:
+            with open(os.path.join(folder, fn), "wb") as f:
+                f.write(raw)
+            it["local"] = "/media/" + _media_slug(email) + "/" + fn
+        except Exception:
+            it["local"] = ""
+    if it["local"] and key("SUPABASE_URL") and key("SUPABASE_SERVICE_KEY"):
+        try:
+            _pu, _pe = storage_put("media", "up/" + _media_slug(email) + "/" + it["id"] + ext, raw, mime or "application/octet-stream")
+            if _pu:
+                it["url"] = _pu
+                it["durable"] = True
+        except Exception:
+            pass
+    if kind == "audio":
+        tr = _whisper_bytes(raw, mime, name=name)
+        if tr:
+            it["transcript"] = tr
+    lst.append(it)
+    d[email] = lst[-200:]
+    _media_write(d)
+    out = {k: it[k] for k in ("id", "kind", "name", "url", "local", "t", "mime", "size", "prompt")}
+    if it.get("transcript"):
+        out["transcript"] = it["transcript"]
+    out.update({"ok": True, "durable": bool(it.get("durable")), "persist": bool(it["local"])})
     return out
 
 

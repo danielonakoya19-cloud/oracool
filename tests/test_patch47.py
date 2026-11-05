@@ -21,7 +21,7 @@ def _keys(**have):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch77-holo-boot"'), 2)
+        self.assertEqual(SRV.count('"patch78-media-paste"'), 2)
         self.assertNotIn("patch46-durable", SRV)
 
 

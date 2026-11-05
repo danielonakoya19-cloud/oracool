@@ -824,15 +824,15 @@
         <div class="gpt-input big">
           <textarea class="chatinput" id="input" placeholder="What would you like to do?" rows="2" autocomplete="off"></textarea>
           <div class="gpt-actions">
-            <button class="iconbtn" id="attachBtn" title="Attach a file (PDF, Word, Excel, text, code…)">📎</button>
+            <button class="iconbtn" id="attachBtn" title="Attach images, video, audio, PDF, docs… — or paste a screenshot with Ctrl+V">📎</button>
             <button class="iconbtn" id="chatEmoji" title="Emoji">😀</button>
             <button class="iconbtn" id="micBtn" title="Speak to OraCool">🎙️</button>
             <button class="modebtn" id="modeBtn" title="Mode — Auto, Fast, Build or Expert" aria-haspopup="menu" aria-expanded="false"><span class="mi-ic">✦</span><span class="mi-l">Auto</span><span class="mi-ch">▾</span></button>
             <span class="gpt-spacer"></span>
-            <span class="gpt-hint">Enter ↵ to send · Shift+Enter = new line</span>
+            <span class="gpt-hint">Enter ↵ to send · Shift+Enter = new line · Ctrl+V = paste screenshot</span>
             <button class="gpt-send" id="sendBtn" title="Send">↑</button>
           </div>
-          <input type="file" id="fileInput" style="display:none" multiple>
+          <input type="file" id="fileInput" style="display:none" multiple accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md,.json,.js,.py,.html,.css">
           <div class="modemenu" id="modeMenu" role="menu" hidden>
             <button class="mi" data-mode="fast" role="menuitemradio"><span class="mi-ic">⚡</span><span><b>Fast</b><small>quickest replies — turbo model</small></span><span class="mi-ok">✓</span></button>
             <button class="mi" data-mode="build" role="menuitemradio"><span class="mi-ic">🏗</span><span><b>Build</b><small>always builds the website or app you describe — with the live step feed</small></span><span class="mi-ok">✓</span></button>
@@ -2196,7 +2196,7 @@ function systemPrompt(){
     (window.OraVoice&&window.OraVoice.enabled ? '' : `FOLLOW-UPS: after a substantive reply (not one-liners, greetings or errors) end with ONE final line exactly in this form: FOLLOW-UPS: <next step 1> | <next step 2> | <next step 3> — three short, specific things the user is likely to want next (imperative phrasing, under 60 characters each). The app turns that line into tappable chips. CLARIFYING QUESTIONS: when you truly cannot proceed without a choice (never for things you can reasonably assume), ask with an app block instead of prose — a fenced block tagged oracool-app containing {"app":"ask","question":"<one line>","options":["<a>","<b>","<c>"]} (2-4 short options) — then stop and wait. `)+
     (settings.directAnswers!==false ? `DIRECT-ANSWER MODE (on): the first sentence of every reply IS the answer or the action taken — no preamble, no "great question", no disclaimers, no "as an AI". NEVER write a "what I can't do / what I can do instead" list or comparison table, never explain your limits unprompted, never turn a request into a negotiation. If ONE part of a request is truly off-limits (harming people, fraud, unauthorized access, minors), decline that part in a single short clause and immediately deliver everything else in full. Prefer short paragraphs and clean markdown; use a table only when comparing data the user asked for. When the user asks to be told 'no' less, the fix is to say yes and do the work. `:'')+
     `TOOL-FIRST RULE: live tools (weather, markets, OSINT, dark-web intel, image/video creation, smart-home, space) run automatically with each message and their results are pasted into your context. Base every factual answer on those results when present, and act on them — do not claim you cannot check something a tool already checked. If a tool result says a provider is out of credit or not configured, say so plainly and name the fix. `+
-    `IMAGE/VIDEO: generated media renders INLINE in the chat automatically — still restate each images[]/videos[] URL as markdown ('![result](url)' for images, '[▶ video](url)' for videos) so it stays in the saved record. When the user asks for a video WITH SOUND/VOICE, the picture is generated (Wan 2.2) and a narrated voice track is added to the clip for free; If the tool says it upgraded to Veo 3.1, the clip has NATIVE synchronized audio. Say which one the clip carries — never pretend a silent clip has sound. Every image/video the user creates is saved to their media gallery and kept across server updates. `+
+    `IMAGE/VIDEO: generated media renders INLINE in the chat automatically — still restate each images[]/videos[] URL as markdown ('![result](url)' for images, '[▶ video](url)' for videos) so it stays in the saved record. When the user asks for a video WITH SOUND/VOICE, the picture is generated (Wan 2.2) and a narrated voice track is added to the clip for free; If the tool says it upgraded to Veo 3.1, the clip has NATIVE synchronized audio. Say which one the clip carries — never pretend a silent clip has sound. Every image/video the user creates is saved to their media gallery and kept across server updates. Members can also PASTE screenshots anywhere with Ctrl+V and attach their own video or audio files — attached AUDIO arrives transcribed whenever possible, so answer from the transcript; you cannot watch attached VIDEO, so acknowledge it by name and ask what to do with it. `+
     `BUILDING & PUBLISHING: a website/app/landing-page request runs ONLY the builder (never images alongside it). Builds cost 10,000 coins from the wallet (Free: a ONE-TIME 1,000,000 coins that never refill until the user pays for a plan; Starter 3M/week, Pro 8M/week, Professional 25M/week, Enterprise unlimited); quote the template family named in the build result. PREVIEW: every finished build renders as a live preview card in the chat automatically, and 'show me the preview' re-opens the newest build card — never speculate about why a preview "isn't loading" and never describe a preview you cannot see; if the build tool returned an error, quote that error. If a tool result says coins are out, relay its cooldown days and upgrade options verbatim and NEVER pretend a site was built. Publishing is FREE and instant via the PUBLISH button on the build card or 'publish my site' (the publish tool); its 'url' field is the live link — report exactly that url (oracoolai.com/sites/<sub>/) as the site address, never claim the subdomain form works before DNS. Owners can later attach their own domain from the same panel. Builds are auto-saved: previews never expire. EDITS: when the user asks to change something on an existing site (color, text, price, phone, section), the app runs the edit tool automatically — never propose a full rebuild for small changes, and never paste tool JSON. After any build or edit, remind the user they can preview, edit and publish any time from the Websites panel (🌐 in the menu). Never claim a site is live unless the publish tool returned ok with a URL — and then quote exactly that url. NEVER paste or repeat raw tool JSON in your reply: the app already renders the preview card; just describe the result in 2-4 warm sentences. `+
     `DEVICE POWERS: you can open apps & platforms on the user's device (say the word "open youtube" and the interface fires a native intent — installed app first, website fallback); when the user asks you to TAKE A PICTURE/PHOTO/SELFIE, the chat fires a tappable 'Take photo' camera card — tell them to tap it and allow the camera permission (browsers only allow camera access from a real tap; never say you cannot take photos, and never claim a photo was taken without their tap); a 24/7 ALERTS PLATFORM lives in Devices → Connectors & Alerts: the user connects Telegram / WhatsApp / Discord / Slack / any webhook / email, plus browser push and a personal API key + inbound hook URL (GET /hook/<their-token> or POST /api/gateway/v1/ingest with X-OraCool-Key) so ANY external app can feed OraCool events and OraCool feeds them anywhere; the background engine fires on logins, payments, security, watchlist hits and daily digests. You can test alerts, toggle event types, show gateway status and read connector state straight from chat (tools: alerts / gateway) — secrets are only entered in the panel and are AES-sealed at rest; never ask the user to paste tokens into chat if the panel is one click away. A Nearby Devices radar scans Bluetooth-LE for device names when the browser allows it. If asked for something the browser sandbox forbids (read Wi-Fi password, install APKs, control another PC), say exactly what is and isn't possible and offer the closest legal path. When you write a document/report it downloads to the device — and say "want me to alert your connected apps when this finishes?" if they use the alerts platform. `+
     `PROFESSIONAL MODE: act as a court-aware OSINT & cybersecurity analyst — you assist lawful investigators, detectives, security teams and government units with crime analysis, fraud/leak investigation, and remediation of online and physical security problems. GROUNDED SOURCING: every factual claim must name its source inline (e.g. [Source: LeakCheck] or [Source: osint_ip]) when tool results support it; anything without a source is labelled 'assessment, unverified'. Verification/lookup outputs are indicators requiring further review — never definitive verdicts about people or documents (a record existing in a registry ≠ a genuine physical card). Steer users to preserve key findings in the Cases tab (SHA-256 + chain of custody) and to lawful reporting (police, cybercrime units, banks) when a case warrants escalation. You never help with purchases of illicit data, stolen credentials, hacking accounts, or unlawful surveillance. `+
@@ -2223,7 +2223,7 @@ function restoreChat(){
     const arr=JSON.parse(s); if(!Array.isArray(arr)||!arr.length) return 0;
     chat.innerHTML=''; history.length=0;
     arr.forEach(m=>{
-      if(m.role==='user'){ const b=document.createElement('div'); b.className='bubble user'; b.textContent=m.content; chat.appendChild(b); history.push({role:'user',content:m.content}); }
+      if(m.role==='user'){ const b=document.createElement('div'); b.className='bubble user'; renderUserRich(b, m.content); chat.appendChild(b); history.push({role:'user',content:m.content}); }
       else if(m.role==='assistant'){ const b=document.createElement('div'); b.className='bubble ai'; b.innerHTML='<span class="who">ORA-COOL</span>'; const bd=document.createElement('div'); renderRich(bd, m.content); b.appendChild(bd); chat.appendChild(b); history.push({role:'assistant',content:m.content}); }
       else { addSystemNote('⟲ '+m.content); }
     });
@@ -2307,7 +2307,7 @@ async function openSession(id){
   const msgs=r.session.messages||[];
   chat.innerHTML=''; history.length=0;
   msgs.forEach(m=>{
-    if(m.role==='user'){ const b=document.createElement('div'); b.className='bubble user'; b.textContent=m.content; chat.appendChild(b); history.push({role:'user',content:m.content}); }
+    if(m.role==='user'){ const b=document.createElement('div'); b.className='bubble user'; renderUserRich(b, m.content); chat.appendChild(b); history.push({role:'user',content:m.content}); }
     else if(m.role==='assistant'){ const b=document.createElement('div'); b.className='bubble ai'; b.innerHTML='<span class="who">ORA-COOL</span>';
       const bd=document.createElement('div'); renderRich(bd,m.content); b.appendChild(bd); chat.appendChild(b); history.push({role:'assistant',content:m.content}); } });
   setSessionId(id);
@@ -2375,7 +2375,7 @@ function renderFileChips(){
   const c=$('#fileChips'); if(!c) return;
   if(!pendingFiles.length){ c.style.display='none'; c.innerHTML=''; return; }
   c.style.display='flex';
-  c.innerHTML=pendingFiles.map((f,i)=>`<span class="tag">📎 ${escapeHtml(f.name)} <a href="#" data-fi="${i}" style="color:#ffb86b">✕</a></span>`).join('');
+  c.innerHTML=pendingFiles.map((f,i)=>`<span class="tag">${f.type==='image'?'📷':f.type==='video'?'🎬':f.type==='audio'?'🎵':'📎'} ${escapeHtml(f.name)} <a href="#" data-fi="${i}" style="color:#ffb86b">✕</a></span>`).join('');
   c.querySelectorAll('[data-fi]').forEach(a=>a.onclick=e=>{ e.preventDefault(); pendingFiles.splice(+a.dataset.fi,1); renderFileChips(); });
 }
 function appLaunchCard(app, u, mode){
@@ -2965,15 +2965,22 @@ async function send(text){
   $('#input').value=''; $('#input').style.height=''; if(!window.OraVoice?.enabled)$('#input').focus();
   let display=text, content=text;
   if(window.__sendOverride){ display=window.__sendOverride.display||display; content=window.__sendOverride.content||content; window.__sendOverride=null; }
+  let mediaRefs=[];
   if(files.length){
     const imgs=files.filter(f=>f.type==='image');
-    display=(text||(imgs.length===files.length?'What do you see in this picture?':'Please analyze the attached file'))+' 📎 '+files.map(f=>f.name).join(', ');
-    content=(text||(imgs.length===files.length?'Look at the attached picture and tell me what you see.':'Please analyze the attached file(s) and summarize the key points.'))+'\n\n'+
+    const vids=files.filter(f=>f.type==='video'), auds=files.filter(f=>f.type==='audio');
+    const head=(text||(imgs.length===files.length?'What do you see in this picture?':'Please analyze the attached file(s).'));
+    display=head+' 📎 '+files.map(f=>f.name).join(', ');
+    content=head+'\n\n'+
       (imgs.length?'(The user attached '+imgs.length+' picture'+(imgs.length>1?'s':'')+'. You CAN see '+(imgs.length>1?'them':'it')+' — a vision model already looked and wrote the description below. Answer as if you are looking at the picture yourself; never say you cannot see images.)\n\n':'')+
-      files.map(f=>`=== ${f.type==='image'?'IMAGE':'FILE'}: ${f.name} (${f.type||'text'}) ===\n${f.text}`).join('\n\n');
+      ((vids.length||auds.length)?'(The member also attached '+[vids.length?vids.length+' video'+(vids.length>1?'s':''):'',auds.length?auds.length+' audio clip'+(auds.length>1?'s':''):''].filter(Boolean).join(' and ')+'. Videos cannot be watched — go by their names; audio clips arrive transcribed when possible.)\n\n':'')+
+      files.map(f=>`=== ${f.type==='image'?'IMAGE':f.type==='video'?'VIDEO':f.type==='audio'?'AUDIO':'FILE'}: ${f.name} (${f.type||'text'}) ===\n${f.text}`).join('\n\n');
+    mediaRefs=files.filter(f=>f.mediaSrc).map(f=>({kind:f.type, src:f.mediaSrc, name:f.name}));
+    if(mediaRefs.length) content+='\n'+mediaRefs.map(r=>'[[media:'+String(r.name||'media').replace(/[|\[\]]/g,'')+'|'+r.kind+'|'+r.src+']]').join('\n');
   }
   addUser(display, content);
-  if(files.some(f=>f.thumb)){ try{ const ub=chat.querySelector('.bubble.user:last-of-type .bttext'); if(ub){ files.filter(f=>f.thumb).forEach(f=>{ const im=document.createElement('img'); im.src=f.thumb; im.alt=f.name; im.style.cssText='display:block;max-height:180px;max-width:100%;border-radius:10px;margin-top:6px'; ub.appendChild(im); }); } }catch(e){} }
+  if(files.some(f=>f.thumb)){ try{ const ub=chat.querySelector('.bubble.user:last-of-type .bttext')||chat.querySelector('.bubble.user:last-of-type'); if(ub){ files.filter(f=>f.thumb).forEach(f=>{ const im=document.createElement('img'); im.src=f.thumb; im.alt=f.name; im.style.cssText='display:block;max-height:180px;max-width:100%;border-radius:10px;margin-top:6px'; ub.appendChild(im); }); } }catch(e){} }
+  if(mediaRefs.length){ try{ const ub2=chat.querySelector('.bubble.user:last-of-type .bttext')||chat.querySelector('.bubble.user:last-of-type'); if(ub2){ mediaRefs.forEach(r=>{ ub2.appendChild(mediaEl(r.kind, r.src, r.name)); }); } }catch(e){} }
   let coreNames=[], coreExtra='';
   if(activeCore){ coreNames.push(activeCore.name); coreExtra+=activeCore.persona+'\n\n'; }
   if(/[@#][A-Za-z0-9_]+/.test(text)){
@@ -3107,31 +3114,86 @@ $('#input').addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ 
 const _bigInp=$('#input'); if(_bigInp){ _bigInp.addEventListener('input',function(){ try{ this.style.height='auto'; this.style.height=Math.min(this.scrollHeight, Math.floor(window.innerHeight*0.4))+'px'; }catch(e){} }); }
 $('#input').addEventListener('input', predictIntent);
 $('#attachBtn').onclick=()=>$('#fileInput').click();
+function mediaEl(kind, src, name){
+  let el;
+  if(kind==='video'){ el=document.createElement('video'); el.controls=true; el.preload='metadata'; el.setAttribute('playsinline',''); el.style.cssText='display:block;max-height:220px;max-width:100%;border-radius:10px;margin-top:6px'; }
+  else if(kind==='audio'){ el=document.createElement('audio'); el.controls=true; el.preload='metadata'; el.style.cssText='display:block;width:min(100%,320px);margin-top:6px'; }
+  else { el=document.createElement('img'); el.alt=name||'image'; el.loading='lazy'; el.style.cssText='display:block;max-height:180px;max-width:100%;border-radius:10px;margin-top:6px'; }
+  el.src=src; return el;
+}
+/* patch78: one pipeline for picked, camera-captured and PASTED media —
+   images get vision, video/audio are collected to the member's gallery
+   (Create ▸ My creations), audio is transcribed when a provider allows. */
+async function attachFileObject(f){
+  const cap={image:5242880, video:12582912, audio:9437184, other:5242880};
+  const kind=/^image\//.test(f.type||'')||/\.(jpe?g|png|webp|gif|heic)$/i.test(f.name)?'image':/^video\//.test(f.type||'')?'video':/^audio\//.test(f.type||'')?'audio':'other';
+  const lim=cap[kind]||cap.other;
+  if(f.size>lim){ addErr('⚠️ '+f.name+' is over '+Math.round(lim/1048576)+' MB — skipped.'); return; }
+  try{
+    const dataURL=await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>res(null); r.readAsDataURL(f); });
+    if(!dataURL) throw new Error('read failed');
+    const data_b64=dataURL.split(',')[1]||'';
+    if(kind==='image'){
+      // patch44: a photo is always attached — with what OraCool saw (or an honest "could not look") — and shown in the thread
+      const r=await post('/api/files/analyze',{name:f.name, mime:f.type||'', data_b64, purpose:'attachment'});
+      if(r.error){ addErr('⚠️ '+r.error); return; }
+      const seen=(r.text||'').trim();
+      pendingFiles.push({name:f.name, type:'image', thumb:dataURL, text: seen || ('(Image attached: '+f.name+'. OraCool\'s vision could not read it right now'+(r.vision_error?' — '+String(r.vision_error).slice(0,120):'')+'. Tell the user honestly that you could not see the picture and ask them to describe it or try again.)')});
+      addSystemNote('<img src="'+dataURL+'" alt="" style="max-height:140px;max-width:min(100%,260px);border-radius:10px;display:block;margin-bottom:6px">📎 '+escapeHtml(f.name)+(seen?' — I can see it: '+escapeHtml(seen.slice(0,200))+(seen.length>200?'…':''):' — ⚠️ I could not look inside this picture right now'+(r.vision_error?' ('+escapeHtml(String(r.vision_error).slice(0,90))+')':'')+'.')+' <span style="color:var(--dim)">Ask me anything about it.</span>');
+      return;
+    }
+    if(kind==='video'||kind==='audio'){
+      const r=await post('/api/media/upload',{name:f.name, mime:f.type||'', kind, data_b64});
+      if(r.error){ addErr('⚠️ '+r.error); return; }
+      const src=r.local||r.url||'';
+      const ic=kind==='video'?'🎬':'🎵';
+      const text=kind==='video'
+        ?('(Video attached: '+f.name+'. You cannot watch or hear video — acknowledge the clip by name and ask what to do with it, or have the member describe the key moments.)')
+        :(r.transcript?('(Audio attached: '+f.name+'. You can hear it through this transcript: "'+r.transcript+'")'):('(Audio attached: '+f.name+'. No transcript is available right now — acknowledge the clip and ask the member to describe it.)'));
+      pendingFiles.push({name:f.name, type:kind, mediaId:r.id, mediaSrc:src, mime:f.type||'', text});
+      addSystemNote(ic+' <b>'+escapeHtml(f.name)+'</b> collected to your gallery ✓'+(r.transcript?' — heard: "'+escapeHtml(r.transcript.slice(0,160))+(r.transcript.length>160?'…':'')+'"':'')+' <span style="color:var(--dim)">Find it anytime in Create ▸ My creations.</span>');
+      renderFileChips();
+      return;
+    }
+    const r=await post('/api/files/analyze',{name:f.name, mime:f.type||'', data_b64, purpose:''});
+    if(r.error){ addErr('⚠️ '+r.error); return; }
+    if(!r.text){ addSystemNote('📎 '+escapeHtml(f.name)+': '+escapeHtml(r.note||'')); return; }
+    pendingFiles.push({name:f.name, type:r.type, text:r.text});
+    addSystemNote('📎 '+escapeHtml(f.name)+' attached — '+(r.chars||0).toLocaleString()+' chars, ready to analyze.');
+  }catch(e){ addErr('⚠️ Could not read '+f.name+': '+e.message); }
+  renderFileChips();
+}
 $('#fileInput').addEventListener('change',async ()=>{
   const fl=[...$('#fileInput').files]; $('#fileInput').value='';
-  for(const f of fl){
-    if(f.size>5*1024*1024){ addErr('⚠️ '+f.name+' is over 5 MB — skipped.'); continue; }
-    try{
-      const dataURL=await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>res(null); r.readAsDataURL(f); });
-      if(!dataURL) throw new Error('read failed');
-      const data_b64=dataURL.split(',')[1]||'';
-      const isImg=/^image\//.test(f.type||'')||/\.(jpe?g|png|webp|gif|heic)$/i.test(f.name);
-      const r=await post('/api/files/analyze',{name:f.name, mime:f.type||'', data_b64, purpose:isImg?'attachment':''});
-      if(r.error){ addErr('⚠️ '+r.error); continue; }
-      if(isImg){
-        // patch44: a photo is always attached — with what OraCool saw (or an honest "could not look") — and shown in the thread
-        const seen=(r.text||'').trim();
-        pendingFiles.push({name:f.name, type:'image', thumb:dataURL, text: seen || ('(Image attached: '+f.name+'. OraCool\'s vision could not read it right now'+(r.vision_error?' — '+String(r.vision_error).slice(0,120):'')+'. Tell the user honestly that you could not see the picture and ask them to describe it or try again.)')});
-        addSystemNote('<img src="'+dataURL+'" alt="" style="max-height:140px;max-width:min(100%,260px);border-radius:10px;display:block;margin-bottom:6px">📎 '+escapeHtml(f.name)+(seen?' — I can see it: '+escapeHtml(seen.slice(0,200))+(seen.length>200?'…':''):' — ⚠️ I could not look inside this picture right now'+(r.vision_error?' ('+escapeHtml(String(r.vision_error).slice(0,90))+')':'')+'.')+' <span style="color:var(--dim)">Ask me anything about it.</span>');
-        continue;
-      }
-      if(!r.text){ addSystemNote('📎 '+escapeHtml(f.name)+': '+escapeHtml(r.note||'')); continue; }
-      pendingFiles.push({name:f.name, type:r.type, text:r.text});
-      addSystemNote('📎 '+escapeHtml(f.name)+' attached — '+(r.chars||0).toLocaleString()+' chars, ready to analyze.');
-    }catch(e){ addErr('⚠️ Could not read '+f.name+': '+e.message); }
-  }
+  for(const f of fl){ await attachFileObject(f); }
   renderFileChips();
 });
+/* patch78: paste a screenshot (or any copied media file) anywhere in the app —
+   Ctrl+V / Cmd+V. Text paste is untouched; only file items are captured. */
+document.addEventListener('paste',async e=>{
+  try{
+    const fs=[...((e.clipboardData&&e.clipboardData.files)||[])].filter(f=>/^image\/|^video\/|^audio\//.test(f.type||''));
+    if(!fs.length) return;
+    e.preventDefault();
+    for(const f of fs){ await attachFileObject(f); }
+    renderFileChips();
+    addSystemNote('📋 <b>Pasted'+(fs.length>1?' '+fs.length+' items':'')+'</b> — attached to your next message. Ask me anything about '+(fs.length>1?'them':'it')+'.');
+  }catch(err){}
+},false);
+/* patch78: render [[media:NAME|KIND|SRC]] markers left in saved chat content */
+function renderUserRich(box, content){
+  const re=/\[\[media:([^\]|]*)\|([^\]|]*)\|([^\]]*)\]\]/g;
+  let last=0, m, hit=false;
+  const txt=t=>{ t=String(t).replace(/^\n+/,'').replace(/\n+$/,''); if(t) box.appendChild(document.createTextNode(t)); };
+  while((m=re.exec(content))){
+    hit=true; txt(content.slice(last,m.index));
+    const src=m[3];
+    if(/^\/|^https?:\/\//.test(src)) box.appendChild(mediaEl(m[2], src, m[1]));
+    last=m.index+m[0].length;
+  }
+  if(!hit){ box.textContent=content; return; }
+  txt(content.slice(last));
+}
 
 /* ---------- voice input ---------- */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -6107,10 +6169,12 @@ function renderCreate(){
     g.innerHTML=`<div class="tag" style="margin-top:18px">🧰 My creations <span class="muted">(${items.length})</span></div>`+
       (items.length?`<div class="galgrid">${items.map(m=>{
         const src=escapeHtml(m.local||m.url||'');
+        const cap=m.provider==='upload'?(m.name||'upload'):(m.prompt||'untitled');
         return `<figure class="gal">
           ${m.kind==='video'?`<video src="${src}" controls preload="metadata" playsinline></video>`
-            :`<img src="${src}" loading="lazy" alt="${escapeHtml((m.prompt||'').slice(0,40))}">`}
-          <figcaption title="${escapeHtml(m.prompt||'')}">${escapeHtml((m.prompt||'untitled').slice(0,70))}</figcaption>
+            :m.kind==='audio'?`<audio src="${src}" controls style="width:100%;margin-top:4px"></audio>`
+            :`<img src="${src}" loading="lazy" alt="${escapeHtml(cap.slice(0,40))}">`}
+          <figcaption title="${escapeHtml(cap)}">${escapeHtml(cap.slice(0,70))}</figcaption>
           <div class="galrow">
             <a class="btn ghost" href="${src}" target="_blank" rel="noopener" download>Open</a>
             <button class="btn ghost galdel" data-id="${escapeHtml(m.id)}">Delete</button>
