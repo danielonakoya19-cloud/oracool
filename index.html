@@ -456,9 +456,13 @@
   .benefits li::before{content:"◈ "; color:var(--cyan);}
   .close{float:right; cursor:pointer; color:var(--dim); font-size:20px; line-height:1;}
 
-  #boot{position:fixed; inset:0; z-index:50; background:var(--bg); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:26px; transition:opacity .7s ease;}
+  #boot{position:fixed; inset:0; z-index:50; background:var(--bg); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; transition:opacity .7s ease;}
   #boot.gone{opacity:0; pointer-events:none;}
-  .bootlines{min-height:120px; text-align:center; font-family:"Consolas","Courier New",monospace; font-size:12.5px; letter-spacing:1px; color:var(--cyan2); line-height:2;}
+  #bootReactor{display:none;}
+  #bootMap{display:block; filter:drop-shadow(0 0 26px rgba(0,229,255,.28));}
+  .bootcap{font-family:"Consolas","Courier New",monospace; font-size:9.5px; letter-spacing:4px; color:rgba(126,166,184,.9); text-transform:uppercase;}
+  .bootcap b{color:var(--gold); font-weight:400;}
+  .bootlines{min-height:118px; text-align:center; font-family:"Consolas","Courier New",monospace; font-size:12.5px; letter-spacing:1px; color:var(--cyan2); line-height:2;}
   .bootlines .ok{color:var(--ok);}
   #app{flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden;}
   #app.hidden{display:none;}
@@ -712,6 +716,8 @@
 
 <div id="boot">
   <div id="bootReactor"></div>
+  <canvas id="bootMap" aria-hidden="true"></canvas>
+  <div class="bootcap">◈ <b>OraCool global uplink</b> — live ground stations &amp; relay links ◈</div>
   <div class="bootlines" id="bootlines"></div>
 </div>
 
@@ -1280,22 +1286,146 @@ function tick(){ const n=new Date(); $('#clock').textContent=n.toLocaleTimeStrin
   $('#date').textContent=n.toLocaleDateString('en-US',{weekday:'short',year:'numeric',month:'short',day:'numeric'}); }
 setInterval(tick,1000); tick();
 
+/* ---------- boot: holographic world map (patch77) ----------
+   A real 2°x2° land grid of Earth (encoded 180x72 bitmap, 2.2 KB), drawn as a
+   holographic tactical display: breathing dot continents, lat/long graticule,
+   radar sweep, 10 named ground stations with radar pulses, and animated
+   gold relay arcs lifting off from Lagos & Abuja across the network. */
+var HOLO=(function(){
+  var B64='AAAAAAAB/+Af/gAAAAAAAAAAAAAAAAAAAAAAAD//////kAAMACAAAGAAAAAAAAAAAAAhf/////+AAGwAAAAAbgAAAAAAAAAABXD34////4AAZAAAEAAPwAAAAAAAAAAF+b/AB///AAAAAAaAB//gAMgAAAAAAB/d//AD//8AAAAADg0////gwAAAQH/gf////4P//wAAD8AeH///////wRB///////////////+Pw15f///////FQD///////////////4ADwAIAAAAAAAAAX///////////////9/////////////AJ//////nTwPgAgAf3////////////8AH/////4B4AeAAAB+f///////////+AAPoP///gH+AAAAEH5//////////+cAAAOAH///wf4AAAAYPP/////////wDwAABAAP///7/4AAADw//////////+AOAAAAABf///v/wAAAPv///////////AwAAAAAA//////AAAAf///////////8CAAAAAAB/////vAAAA////////////wAAAAAAAD/////MAAAD///////////9AAAAAAAAP////8AAAAH//v8///////kAAAAAAAA////4AAAAH/78Dz//////8wAAAAAAAD////gAAAAfi///n/////+CAAAAAAAAP///4AAAAB8Jt/+f////9wIAAAAAAAAf///AAAAAH/0T/9/////xjgAAAAAAAB///8AAAAAH/Aj///////G8AAAAAAAAB///gAAAAB/+MH//////+HAAAAAAAAAD//8AAAAAH//////////4QAAAAAAAAAP/owAAAAA///////////gAAAAAAAAAAf8DQAAAAH///7+/////8AAAAAAAAAAAvwEAAAAA/////9/////4AAAAAAAAAAAeAYAAAAD////f/D///8gAAAAAAEAAAB8Y4AAAAP/////8H/P/AAAAAAAAIAAAH/hiAAAA////7/gP4fsIAAAAAAAAAAAH8AAAAAH////38A/B/AgAAAAAAAAAAAB+AAAAAf////fAB4B+CAAAAAAAAAAAAB4AAAAB/////wAHAH4OAAAAAAAAAAAABj/AAAD/////wAMAXBYAAAAAAAAAAAAHf8AAAH/////AA4BIBgAAAAAAAAAAAAF/4AAAP////4AAgGAmAAAAAAAAAAAAAH/8AAAfP///gAAAsGAAAAAAAAAAAAAAf/4AAAAP//8AAADw4AAAAAAAAAAAAAD//gAAAA///AAAAHHsgAAAAAAAAAAAAf//gAAAD//4AAAAMfwgAAAAAAAAAAAB///4AAAH//AAAAA5+L8QAAAAAAAAAAH///wAAAP/8AAAABgYH5AAAAAAAAAAAf///gAAA//wAAAAAIAHwgAAAAAAAAAA///+AAAD//AAAAAAAQNAgAAAAAAAAAB///wAAAP/8AAAAAAAIQAAAAAAAAAAAH//+AAAA//4gAAAAABxAAAAAAAAAAAAP//4AAAD//mAAAAAA/OAEAAAAAAAAAA///gAAAP/+4AAAAAP/8AQQAAAAAAAAAf/8AAAA//DgAAAAA//wAAAAAAAAAAAB//wAAAD/8cAAAAAf//gIAAAAAAAAAAH/+AAAAH/xwAAAAB///AAAAAAAAAAAA//gAAAAf+DAAAAAH//+AAAAAAAAAAAD/8AAAAB/4AAAAAAf//4AAAAAAAAAAAP/wAAAAD/AAAAAAB///gAAAAAAAAAAA/+AAAAAH4AAAAAAH//+AAAAAAAAAAAD/wAAAAAfAAAAAAAfh/wAAAAAAAAAAAP+AAAAABgAAAAAAAwD/ACAAAAAAAAAB/wAAAAAAAAAAAAAAAD4AEAAAAAAAAAH+AAAAAAAAAAAAAAAAHAAYAAAAAAAAAfgAAAAAAAAAAAAAAAAMADgAAAAAAAAB8AAAAAAAAAAAAAAAAAwAYAAAAAAAAAPwAAAAAAAAAAAAAAAAAADAAAAAAAAAA+AAAAAAAAAAAAAAAAAAAIAAAAAAAAAD4AAAAAAAAAACAAAAAAAAAAAAAAAAAAPCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  var ROWS=72, COLS=180, ROWB=23, CELLS=ROWS*COLS;
+  var LAND=new Float32Array(CELLS), MASK=[];
+  (function(){
+    var bin=atob(B64), p=0;
+    for(var y=0;y<ROWS;y++){
+      for(var x=0;x<COLS;x++){
+        var byte=bin.charCodeAt(y*ROWB+(x>>3));
+        var on=(byte>>(7-(x&7)))&1;
+        MASK.push(on);
+        if(on) LAND[y*COLS+x]=0.34+(((x*7+y*13)%10)*0.02);
+      }
+    }
+  })();
+  /* [label, lat, lon, hq] — Lagos & Abuja are home uplinks */
+  var NODES=[['LAGOS',6.5,3.4,1,10,11],['ABUJA',9.1,7.4,1,9,-9],['LONDON',51.5,-0.1,0],['NEW YORK',40.7,-74,0],['SAO PAULO',-23.6,-46.6,0],['JOHANNESBURG',-26.2,28,0],['MUMBAI',19.1,72.9,0],['SYDNEY',-33.9,151.2,0],['TOKYO',35.7,139.7,0],['SAN FRANCISCO',37.5,-121.9,0]];
+  var ARCS=[[0,2],[0,3],[0,4],[0,6],[0,7],[0,5],[1,9],[1,8],[2,8],[3,9]];
+  var cv=null, cx=null, W=0, H=0, raf=0, running=false, t0=0;
+  function PJ(lat,lon){ return [(lon+180)/360, (84-lat)/144]; }
+  function arcPath(i,j){
+    var a=PJ(NODES[i][1],NODES[i][2]), b=PJ(NODES[j][1],NODES[j][2]);
+    var pts=[], n=36, k, t, lo, la, arc;
+    for(k=0;k<=n;k++){
+      t=k/n;
+      lo=a[0]+(b[0]-a[0])*t; la=a[1]+(b[1]-a[1])*t;
+      arc=Math.sin(Math.PI*t)*(0.05+0.17*Math.abs(a[0]-b[0]));
+      pts.push([lo*W,(la-arc)*H]);
+    }
+    return pts;
+  }
+  function resize(){
+    var dpr=Math.min(window.devicePixelRatio||1,2);
+    var box=document.getElementById('boot');
+    var availW=(box&&box.clientWidth||window.innerWidth)-28;
+    var availH=Math.max(Math.round(window.innerHeight*0.44),230);
+    W=Math.min(Math.round(availW),1120);
+    H=Math.round(W*(ROWS/COLS)*1.06);
+    if(H>availH){ H=availH; W=Math.round(H*(COLS/ROWS)); }
+    cv.width=W*dpr; cv.height=H*dpr;
+    cv.style.width=W+'px'; cv.style.height=H+'px';
+    cx=cv.getContext('2d');
+    cx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  function station(i,t){
+    var n=NODES[i], p=PJ(n[1],n[2]), x=p[0]*W, y=p[1]*H, pul, c=7;
+    cx.strokeStyle='rgba(0,229,255,.6)'; cx.lineWidth=1;
+    cx.beginPath();
+    cx.moveTo(x-c,y); cx.lineTo(x-3,y); cx.moveTo(x+3,y); cx.lineTo(x+c,y);
+    cx.moveTo(x,y-c); cx.lineTo(x,y-3); cx.moveTo(x,y+3); cx.lineTo(x,y+c);
+    cx.stroke();
+    pul=(t*0.65+i*0.37)%1;
+    cx.strokeStyle='rgba(0,229,255,'+(0.55*(1-pul)).toFixed(3)+')';
+    cx.beginPath(); cx.arc(x,y,3+pul*11,0,6.2832); cx.stroke();
+    cx.fillStyle=n[3]?'#ffc24b':'#a5f2ff';
+    cx.beginPath(); cx.arc(x,y,2,0,6.2832); cx.fill();
+    if(!(W<600&&!n[3])){
+      cx.font='9px Consolas,"Courier New",monospace';
+      cx.fillStyle=n[3]?'rgba(255,214,130,.95)':'rgba(190,238,255,.8)';
+      cx.fillText(n[0],x+(n[4]||10),y+(n[5]||3));
+    }
+  }
+  function frame(ts){
+    if(!running) return;
+    if(!t0) t0=ts;
+    var t=(ts-t0)/1000, x, y, i, k;
+    cx.clearRect(0,0,W,H);
+    var s=Math.max(W/COLS,0.8), r=s*0.34+Math.max(W/1400,0.5)*0.24;
+    var hol=(t*0.045)%1;
+    for(y=0;y<ROWS;y++){
+      for(x=0;x<COLS;x++){
+        if(!MASK[y*COLS+x]) continue;
+        var tw=0.82+0.18*Math.sin(t*1.6+x*0.33+y*0.51);
+        var scan=Math.max(0,1-Math.abs(x/COLS-hol)*13);
+        var a=Math.min(1,LAND[y*COLS+x]*tw+scan*0.9);
+        cx.fillStyle='rgba(56,206,255,'+a.toFixed(3)+')';
+        cx.beginPath();
+        cx.arc(x*s+s/2,y*s+s/2,r+scan*r*0.6,0,6.2832);
+        cx.fill();
+      }
+    }
+    cx.strokeStyle='rgba(0,229,255,.09)'; cx.lineWidth=1; cx.beginPath();
+    for(i=0;i<=6;i++){ var yy=Math.round(i/6*H)+.5; cx.moveTo(0,yy); cx.lineTo(W,yy); }
+    for(i=0;i<=12;i++){ var xx=Math.round(i/12*W)+.5; cx.moveTo(xx,0); cx.lineTo(xx,H); }
+    cx.stroke();
+    cx.strokeStyle='rgba(0,229,255,.20)'; cx.beginPath();
+    cx.moveTo(0,Math.round(H/2)+.5); cx.lineTo(W,Math.round(H/2)+.5); cx.stroke();
+    var sx=((t*0.13)%1.18-0.09)*W;
+    var grd=cx.createLinearGradient(sx-46,0,sx+46,0);
+    grd.addColorStop(0,'rgba(0,229,255,0)'); grd.addColorStop(.5,'rgba(0,229,255,.08)'); grd.addColorStop(1,'rgba(0,229,255,0)');
+    cx.fillStyle=grd; cx.fillRect(sx-46,0,92,H);
+    for(i=0;i<ARCS.length;i++){
+      var pr=((t*0.34)+i/ARCS.length)%1;
+      var pts=arcPath(ARCS[i][0],ARCS[i][1]);
+      cx.strokeStyle='rgba(255,194,75,'+(0.62*(1-Math.abs(pr-.5))*1.15).toFixed(3)+')';
+      cx.lineWidth=1.25;
+      cx.beginPath();
+      var head=Math.max(3,Math.round(pr*pts.length));
+      for(k=0;k<head;k++){ var q=pts[k]; if(k)cx.lineTo(q[0],q[1]); else cx.moveTo(q[0],q[1]); }
+      cx.stroke();
+      var hd=pts[head-1];
+      cx.fillStyle='rgba(255,220,130,.95)';
+      cx.beginPath(); cx.arc(hd[0],hd[1],2,0,6.2832); cx.fill();
+    }
+    for(i=0;i<NODES.length;i++) station(i,t);
+    raf=requestAnimationFrame(frame);
+  }
+  function start(){
+    cv=document.getElementById('bootMap'); if(!cv||!window.requestAnimationFrame) return;
+    resize(); running=true; t0=0;
+    raf=requestAnimationFrame(frame);
+  }
+  function stop(){ running=false; if(raf&&window.cancelAnimationFrame) cancelAnimationFrame(raf); }
+  window.addEventListener('resize',function(){ if(running) resize(); });
+  return {start:start,stop:stop};
+})();
+
 /* ---------- boot ---------- */
 const BOOT = [
   'ORA-COOL AI — boot sequence initiated…',
-  'Loading neural core … <span class="ok">OK</span>',
-  'Calibrating holographic interface … <span class="ok">OK</span>',
-  'Linking voice module … <span class="ok">OK</span>',
-  'Mounting intelligence & OSINT suite … <span class="ok">OK</span>',
-  'Connecting payment & device bridges … <span class="ok">OK</span>',
+  'Neural core online — models armed … <span class="ok">OK</span>',
+  'Holographic earth projection … <span class="ok">OK</span>',
+  'Ground stations linked: 10/10 … <span class="ok">OK</span>',
+  'Voice & wake-word module … <span class="ok">OK</span>',
+  'Intelligence & OSINT suite mounted … <span class="ok">OK</span>',
+  'Global uplink: Lagos · London · New York · Singapore … <span class="ok">OK</span>',
   'ALL SYSTEMS ONLINE.'
 ];
 function boot(){
   const el=$('#bootlines'); let i=0;
+  HOLO.start();
   const iv=setInterval(()=>{
     if(i<BOOT.length){ el.innerHTML+=(i?'<br>':'')+BOOT[i]; i++; }
-    else{ clearInterval(iv); setTimeout(()=>{ $('#boot').classList.add('gone'); $('#app').classList.remove('hidden'); if(window.__oraBooted) window.__oraBooted(); init(); },600); }
-  },400);
+    else{ clearInterval(iv); setTimeout(()=>{ HOLO.stop(); $('#boot').classList.add('gone'); $('#app').classList.remove('hidden'); if(window.__oraBooted) window.__oraBooted(); init(); },700); }
+  },340);
 }
 boot();
 
