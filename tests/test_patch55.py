@@ -11,7 +11,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch75-writing-domains"'), 2)
+        self.assertEqual(SRV.count('"patch76-free-landing"'), 2)
         self.assertIn("/api/security/console", SRV)
 
 

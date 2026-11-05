@@ -20,14 +20,14 @@ NAME = "Daniel " + "Onakoya"  # split so this test file itself never carries the
 
 class CreatorPrivacy(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch75-writing-domains"'), 2)
+        self.assertEqual(SRV.count('"patch76-free-landing"'), 2)
 
     def test_client_source_keeps_private_details_out(self):
         # patch48: the creator's NAME is public (creator card); the birthday and secondary email never ship to clients
         for src in (APP, LAND, APPS):
             self.assertNotIn("19 June 2009", src); self.assertNotIn("born 19", src); self.assertNotIn("2009", src)
             self.assertNotIn("thinkglobal1000", src)
-        self.assertIn("CREATOR (public)", APP)
+        self.assertIn("CREATOR:", APP)  # patch76: no longer marked public
 
     def test_pii_scrub_keeps_birthday_private_only(self):
         with mock.patch.object(s, "admin_emails", lambda: ["creator@x.com", "other@x.com"]), mock.patch.object(s, "_creator_email", lambda: "creator@x.com"):

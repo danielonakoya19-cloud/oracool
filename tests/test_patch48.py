@@ -15,7 +15,7 @@ LAND = open(os.path.join(ROOT, "landing.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch75-writing-domains"'), 2)
+        self.assertEqual(SRV.count('"patch76-free-landing"'), 2)
         self.assertNotIn("patch48-people", SRV)
 
 
@@ -29,7 +29,13 @@ class Creator(unittest.TestCase):
 
     def test_ai_knows_creator_and_features_on_demand(self):
         head = s.identity_prompt_head("someone@example.invalid", "who created you?")
-        self.assertIn("Daniel Onakoya Adebayo", head); self.assertIn("Starter $29", head)
+        self.assertIn("Daniel Onakoya Adebayo", head)
+        with mock.patch.object(s, "free_mode", lambda: False):
+            paid = s.identity_prompt_head("someone@example.invalid", "what plans exist?")
+            self.assertIn("Starter $29", paid)
+        with mock.patch.object(s, "free_mode", lambda: True):
+            free = s.identity_prompt_head("someone@example.invalid", "what plans exist?")
+            self.assertIn("FREE LAUNCH", free); self.assertNotIn("$29", free)  # patch76
         plain = s.identity_prompt_head("someone@example.invalid", "what's the weather?")
         self.assertIn("Daniel Onakoya Adebayo", plain); self.assertNotIn("Starter $29", plain)
         self.assertIn("created by Daniel Onakoya Adebayo", s._IDENTITY_LOCK)
@@ -37,10 +43,15 @@ class Creator(unittest.TestCase):
         self.assertEqual(s._pii_scrub("Daniel Onakoya Adebayo built it", "x@y.z"), "Daniel Onakoya Adebayo built it")
         self.assertIn("[private]", s._pii_scrub("mail thinkglobal1000@gmail.com", "x@y.z"))
 
-    def test_landing_renders_matrix_and_card(self):
-        self.assertIn("<!--FEATURE_MATRIX-->", LAND); self.assertIn("<!--CREATOR_CARD-->", LAND)
-        html_ = s.feature_matrix_html(); self.assertIn("Live step-by-step build feed", html_); self.assertIn('class="fmatrix"', html_)
-        self.assertIn('_lh.replace("<!--FEATURE_MATRIX-->", feature_matrix_html()).replace("<!--CREATOR_CARD-->", _card)', SRV)
+    def test_landing_free_launch_no_prices_no_creator(self):
+        # patch76: free launch — no prices, no personal info on the public landing page
+        self.assertIn("<!--CREATOR_CARD-->", LAND)  # placeholder stays (server blanks it)
+        self.assertNotIn("<!--FEATURE_MATRIX-->", LAND)  # patch76: matrix removed from the landing
+        self.assertIn('_lh.replace("<!--FEATURE_MATRIX-->", "").replace("<!--CREATOR_CARD-->", "")', SRV)
+        for gone in ("$29", "$49", "$149", "$500", "Choose Pro", "Daniel Onakoya Adebayo",
+                     "danielonakoya19@gmail.com", "Lagos, Nigeria"):
+            self.assertNotIn(gone, LAND)
+        self.assertIn('id="reviews"', LAND)
         self.assertIn("type=recovery", LAND)
 
     def test_matrix_shape(self):

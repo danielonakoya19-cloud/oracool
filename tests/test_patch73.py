@@ -10,7 +10,7 @@ os.chdir(ROOT)
 import server as s  # noqa: E402
 
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
-MARK = "patch75-writing-domains"
+MARK = "patch76-free-landing"
 
 
 class Marker(unittest.TestCase):

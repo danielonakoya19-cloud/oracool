@@ -8,7 +8,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 
 class AlumniBandTests(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch75-writing-domains"'), 2)
+        self.assertEqual(SRV.count('"patch76-free-landing"'), 2)
 
     def test_section_once_with_nav_anchor(self):
         self.assertEqual(LAND.count('id="partners"'), 1)
@@ -20,7 +20,7 @@ class AlumniBandTests(unittest.TestCase):
         self.assertIn("Think Advancement Initiative Empowerment Foundation", LAND)
 
     def test_logos_are_self_contained(self):
-        seg = LAND[LAND.index('id="partners"'):LAND.index('id="pricing"')]
+        seg = LAND[LAND.index('id="partners"'):LAND.index('id="reviews"')]  # patch76: pricing section removed
         # three drawn marks + the official TAIEF seal embedded as a data-URI image
         self.assertEqual(seg.count("<svg"), 3)
         imgs = re.findall(r'<img[^>]*src="([^"]*)"', seg)
@@ -40,7 +40,7 @@ class AlumniBandTests(unittest.TestCase):
 
     def test_no_fake_official_claim(self):
         # honest framing: alumni/partners band, not an endorsement scam
-        seg = LAND[LAND.index('id="partners"'):LAND.index('id="pricing"')]
+        seg = LAND[LAND.index('id="partners"'):LAND.index('id="reviews"')]  # patch76: pricing section removed
         for banned in ("official partner of", "endorsed by", "certified by Cisco", "sponsored by"):
             self.assertNotIn(banned, seg.lower())
 

@@ -18,7 +18,7 @@ LAND = open(ROOT / 'landing.html', encoding='utf-8').read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch75-writing-domains"'), 2)
+        self.assertEqual(SRV.count('"patch76-free-landing"'), 2)
         self.assertNotIn('patch38-direct', SRV)
 
 
@@ -222,9 +222,9 @@ console.log(ok?'OK':'FAIL '+h);
         self.assertIn("free forever · one-time coin grant", APP)
         self.assertNotIn("dark-web index lookups are open on EVERY plan", APP)
         self.assertIn("ONE-TIME 1,000,000 coins that never refill", APP)
-        self.assertIn("1,000,000 one-time build coins", LAND)
-        self.assertIn("OSINT tools (IP · domain · email · username · phone · dark-web)", LAND)
-        self.assertNotIn("Basic public intel", LAND)
+        self.assertNotIn("1,000,000 one-time build coins", LAND)  # patch76: no plan copy on the free landing
+        self.assertNotIn("OSINT tools (IP · domain · email · username · phone · dark-web)", LAND)
+        self.assertIn('id="reviews"', LAND)
 
 
 if __name__ == "__main__":
