@@ -6,6 +6,7 @@ from unittest import mock
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
+import os as _os74; _os74.environ["GROWTH_FREE_MODE"] = "0"  # patch74: legacy payment tests run with free-launch OFF
 import server as s  # noqa: E402
 
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
@@ -21,7 +22,7 @@ def _handler():
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch73-cinematic-games"'), 2)
+        self.assertEqual(SRV.count('"patch74-free-launch"'), 2)
         self.assertNotIn("patch48b-creator", SRV)
 
 
@@ -31,6 +32,7 @@ class TierGate(unittest.TestCase):
         s.tier_cache_clear()
         with mock.patch.object(s, "request_identity", lambda handler, body, require_supabase=False: "danielonakoya19@gmail.com"), \
              mock.patch.object(s, "is_blocked", lambda e: False), mock.patch.object(s, "key", lambda n, d="": ""), \
+             mock.patch.object(s, "free_mode", lambda: False), \
              mock.patch.object(s, "admin_emails", lambda: ["danielonakoya19@gmail.com"]):
             tier = h._require_tier({"access_token": "supabase-jwt", "phone": "07052405515"}, "starter")
         self.assertEqual(tier, "enterprise"); self.assertEqual(h.sent, [])

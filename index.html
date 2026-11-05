@@ -1456,7 +1456,7 @@ function renderModeBtn(){
   btn.querySelector('.mi-ic').textContent=MODES[m].ic; btn.querySelector('.mi-l').textContent=MODES[m].l; btn.className='modebtn '+m;
   document.querySelectorAll('#modeMenu .mi').forEach(x=>x.classList.toggle('on', x.dataset.mode===m));
   const inp=document.getElementById('input'); if(inp) inp.placeholder=MODES[m].ph;
-  const up=document.getElementById('modeUpgrade'); if(up){ const t=(typeof myTier==='function'?myTier():'')||''; up.classList.toggle('hide', /pro|ultra|enterprise|admin/.test(String(t).toLowerCase())); }
+  const up=document.getElementById('modeUpgrade'); if(up){ const t=(typeof myTier==='function'?myTier():'')||''; up.classList.toggle('hide', /pro|ultra|enterprise|admin/.test(String(t).toLowerCase()) || !!(srv&&srv.free_mode)); }
 }
 function setMode(m){ if(!MODES[m]) m='auto'; settings.chatMode=m; saveSettings(); renderModeBtn(); const menu=document.getElementById('modeMenu'); if(menu){ menu.hidden=true; const b=document.getElementById('modeBtn'); if(b) b.setAttribute('aria-expanded','false'); } }
 (function wireModes(){
@@ -1539,7 +1539,7 @@ function renderCoinPill(){
   cp.innerHTML = COINS.unlimited ? '∞ coins' : '◈ '+fmtCoins(COINS.balance);
   cp.title = COINS.unlimited ? 'Unlimited build coins — Enterprise. Tap for plans.'
     : COINS.one_time ? 'Build coins: '+Number(COINS.balance).toLocaleString()+' of your one-time Free grant of '+Number(COINS.grant).toLocaleString()+
-      ' · each site costs '+Number(COINS.cost_build).toLocaleString()+' · no refill on Free — upgrade to keep building. Tap for plans.'
+      ' · free launch: nothing is charged while the 🎉 banner shows. Tap for plans.'
     : 'Build coins: '+Number(COINS.balance).toLocaleString()+' of '+Number(COINS.grant).toLocaleString()+
       ' this week · each site costs '+Number(COINS.cost_build).toLocaleString()+
       ' · weekly reset in '+COINS.reset_in_days+' day(s). Tap for plans.';
@@ -5852,7 +5852,8 @@ function openUpgrade(plan){
   $('#benefitList').innerHTML=(PLAN_BENEFITS[pendingPlan]||[]).map(b=>`<li>${escapeHtml(b)}</li>`).join('');
   const e=$('#upEmail'); if(e && !e.value) e.value = myEmail();
   try{ const uc=document.getElementById('upCoins');
-    if(uc){ if(COINS){ uc.style.display=''; uc.innerHTML = COINS.unlimited ? '∞ <b>Unlimited</b> build coins — your Enterprise plan never waits'
+    if(uc){ if(srv&&srv.free_mode){ uc.style.display=''; uc.innerHTML='🎉 <b>Free launch:</b> builds and edits cost you nothing right now. Invite friends — 250,000 coins per friend when payments return.'; }
+      else if(COINS){ uc.style.display=''; uc.innerHTML = COINS.unlimited ? '∞ <b>Unlimited</b> build coins — your Enterprise plan never waits'
       : COINS.one_time ? 'Your wallet: <b>◈ '+Number(COINS.balance).toLocaleString()+'</b> of your one-time Free grant of '+Number(COINS.grant).toLocaleString()+' · no refill on Free · each site = '+Number(COINS.cost_build).toLocaleString()+' coins'
       : 'Your wallet: <b>◈ '+Number(COINS.balance).toLocaleString()+'</b> of '+Number(COINS.grant).toLocaleString()+' this week · resets in '+COINS.reset_in_days+' day(s) · each site = '+Number(COINS.cost_build).toLocaleString()+' coins'; }
       else { uc.style.display='none'; } } }catch(e){}
@@ -6298,6 +6299,15 @@ async function coreSearch(){
 
 /* ---------- plans ---------- */
 async function renderPlans(){
+  try{ /* patch74: free launch — no prices, no paywall, just love */
+    if(srv && srv.free_mode){
+      $('#p-plans').innerHTML=`<h3 class="ptitle">🎉 Everything is FREE right now</h3>`+
+        `<div class="okbox" style="font-size:15px;line-height:1.6">OraCool is in <b>free launch mode</b> — every plan, every tool, unlimited builds: <b>$0</b>. No payment, no subscription.<br>`+
+        `We grow now; we charge later. The best thing you can do: <b>invite your friends</b> (Account → Refer &amp; earn — 250,000 coins per friend) and <b>build things</b>.</div>`+
+        `<div class="hint" style="margin-top:10px">The full feature list is below — it is all unlocked while the banner says free.</div>`;
+      return;
+    }
+  }catch(e){}
   $('#p-plans').innerHTML=`<h3 class="ptitle">💳 Pricing Plans</h3>${SPIN}`;
   const r=await post('/api/plan',{email:myEmail()});
   const plans=(srv&&srv.plans)||[];

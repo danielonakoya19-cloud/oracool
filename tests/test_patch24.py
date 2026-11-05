@@ -31,7 +31,7 @@ def read(name):
 # ---------------------------------------------------------------- markers
 
 def test_build_marker_patch24():
-    assert read("server.py").count('"build": "patch73-cinematic-games"') == 2
+    assert read("server.py").count('"build": "patch74-free-launch"') == 2
 
 
 def test_key_configured_locally_and_not_committed():

@@ -1439,9 +1439,19 @@ def tier_cache_clear(email=None):
             _TIER_CACHE.clear()
 
 
+def free_mode():
+    """patch74: LAUNCH GROWTH MODE — the whole AI is free while OraCool grows its
+    user base. Payment/subscription gates are switched off (plan reads as ultra,
+    coins never block or deduct). Flip back by setting GROWTH_FREE_MODE=0 —
+    every paywall returns with no code changes."""
+    return str(key("GROWTH_FREE_MODE") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 def check_tier(email):
     """Return the user's plan tier: free|starter|pro|ultra|enterprise (patch47: cached 60s per email — the
     subscribers table was fetched on every chat message)."""
+    if free_mode():
+        return "ultra"  # patch74: growth mode — every feature open, no payment
     if not email:
         return "free"
     email = email.lower().strip()
@@ -1570,6 +1580,8 @@ def coins_state(email):
 
 def coins_gate(email, cost=COIN_COST_BUILD):
     """None => build allowed. Otherwise an honest error payload (cooldown + upgrade path)."""
+    if free_mode():
+        return None  # patch74: free launch — coins are Points only, nothing blocks
     st = coins_state(email)
     if st["unlimited"] or st["balance"] >= cost:
         return None
@@ -1594,6 +1606,8 @@ def coins_gate(email, cost=COIN_COST_BUILD):
 
 def coins_charge(email, cost=COIN_COST_BUILD):
     """Deduct a successful build's cost. Returns the post-charge state (or None)."""
+    if free_mode():
+        return {"balance": None, "unlimited": True, "free_mode": True}  # patch74: nothing is deducted
     if not email:
         return None
     with _COINS_LOCK:
@@ -4003,6 +4017,9 @@ def _llm_text(system, user, max_tokens=16000, extra_msgs=None, effort="low"):
     caller can detect truncated output (patch27: JSON-escaped HTML blew the
     token budget, raw HTML fits)."""
     attempts = []
+    k = key("ANTHROPIC_API_KEY")
+    if k:
+        attempts.append((k, ANTHROPIC_BASE, _anthropic_model(), "anthropic", {}))  # patch74: strongest brain first
     k = key("GROQ_API_KEY")
     if k:
         # gpt-oss on Groq first: fast, follows size budgets, and its rate-limit
@@ -4026,6 +4043,20 @@ def _llm_text(system, user, max_tokens=16000, extra_msgs=None, effort="low"):
                         "messages": ([{"role": "system", "content": system},
                                        {"role": "user", "content": user}] + (extra_msgs or []))}
             req_body.update(req_body_extra)
+            if prov == "anthropic":  # patch74: Messages API (non-streaming)
+                _sys, _msgs = _anthropic_messages(req_body.get("messages"))
+                _ab = {"model": model, "messages": _msgs, "max_tokens": int(max(16, min(int(req_body.get("max_tokens") or 1024), 8192)))}
+                if _sys:
+                    _ab["system"] = _sys
+                _, raw, _ = http_fetch(base.rstrip("/") + "/messages", method="POST", timeout=240,
+                                       headers={"x-api-key": k, "anthropic-version": "2023-06-01",
+                                                "Content-Type": "application/json"}, json_body=_ab)
+                d = json.loads(raw)
+                _blocks = d.get("content") or []
+                c = " ".join(str(b.get("text") or "") for b in _blocks if isinstance(b, dict)).strip()
+                if c:
+                    return c, prov, str(d.get("stop_reason") or "")
+                continue
             _, raw, _ = http_fetch(base.rstrip("/") + "/chat/completions", method="POST", timeout=240,
                                    headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
                                    json_body=req_body)
@@ -4045,6 +4076,9 @@ def _llm_text_stream(system, user, max_tokens=16000, extra_msgs=None, effort="lo
     page is written so the build feed can show progress section by section. Falls back to the
     non-streaming call if every provider refuses to stream."""
     attempts = []
+    k = key("ANTHROPIC_API_KEY")
+    if k:
+        attempts.append((k, ANTHROPIC_BASE, _anthropic_model(), "anthropic", {}))  # patch74: strongest builder brain first
     k = key("GROQ_API_KEY")
     if k:
         attempts.append((k, "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "groq-oss", {"reasoning_effort": effort}))
@@ -4063,10 +4097,15 @@ def _llm_text_stream(system, user, max_tokens=16000, extra_msgs=None, effort="lo
             req_body = {"model": model, "max_tokens": max_tokens, "temperature": 0.4, "stream": True,
                         "messages": ([{"role": "system", "content": system}, {"role": "user", "content": user}] + (extra_msgs or []))}
             req_body.update(extra)
-            req = urllib.request.Request(base.rstrip("/") + "/chat/completions", data=json.dumps(req_body).encode("utf-8"),
-                                         headers={"Authorization": "Bearer " + k, "Content-Type": "application/json",
-                                                  "Accept": "text/event-stream", "User-Agent": UA}, method="POST")
+            if prov == "anthropic":  # Claude speaks the Messages API (patch74)
+                req = _anthropic_request(k, req_body, stream=True)
+            else:
+                req = urllib.request.Request(base.rstrip("/") + "/chat/completions", data=json.dumps(req_body).encode("utf-8"),
+                                             headers={"Authorization": "Bearer " + k, "Content-Type": "application/json",
+                                                      "Accept": "text/event-stream", "User-Agent": UA}, method="POST")
             with urllib.request.urlopen(req, timeout=240, context=ssl.create_default_context()) as resp:
+                if prov == "anthropic":
+                    resp = _AnthropicSSE(resp)  # speaks OpenAI SSE format
                 for raw_line in resp:
                     line = raw_line.decode("utf-8", "ignore").strip()
                     if not line.startswith("data:"):
@@ -4780,7 +4819,7 @@ def build_site(email, name, prompt):
                 + _bpt + ". Write like a top Awwwards studio: specific headlines, real-sounding "
                 "details (prices, hours, names, locations from the brief or plausible for it), polished micro-interactions."
                 + _img_block)
-    c_raw, prov, finish = _llm_text_stream(system, user, max_tokens=16000, effort="medium", on_delta=_writer_progress(email))
+    c_raw, prov, finish = _llm_text_stream(system, user, max_tokens=16000, effort=("high" if _is_app else "medium"), on_delta=_writer_progress(email))
     # the model can write past its single-reply token cap — continue the SAME
     # file where it stopped (how real AI builders stream long artifacts)
     for _turn in range(2):
@@ -8670,7 +8709,8 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch73-cinematic-games",
+        "build": "patch74-free-launch",
+        "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
         "admin_count": len(admin_emails()),
@@ -12254,7 +12294,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch73-cinematic-games",
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch74-free-launch", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})

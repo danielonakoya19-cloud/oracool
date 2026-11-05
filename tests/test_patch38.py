@@ -7,6 +7,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+import os as _os74; _os74.environ["GROWTH_FREE_MODE"] = "0"  # patch74: legacy payment tests run with free-launch OFF
 spec = importlib.util.spec_from_file_location('oracool_test_server_p38', ROOT / 'server.py')
 s = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(s)
@@ -17,7 +18,7 @@ LAND = open(ROOT / 'landing.html', encoding='utf-8').read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch73-cinematic-games"'), 2)
+        self.assertEqual(SRV.count('"patch74-free-launch"'), 2)
         self.assertNotIn('patch38-direct', SRV)
 
 
@@ -164,7 +165,7 @@ class BuilderQuality(unittest.TestCase):
             st.enter_context(mock.patch.object(s, "http_fetch", fake_fetch))
             c, prov, fin = s._llm_text("sys", "usr", effort="medium")
         self.assertEqual(seen[0]["reasoning_effort"], "medium")
-        self.assertIn('effort="medium"', SRV[SRV.index("def build_site("):SRV.index("def build_site(") + 9000])
+        self.assertIn('effort=("high" if _is_app else "medium")', SRV[SRV.index("def build_site("):SRV.index("def build_site(") + 9000])  # patch74
         self.assertIn("DESIGN BLUEPRINT", SRV); self.assertIn("between 18KB and 34KB", SRV)
         self.assertIn("DESIGN REVIEW", SRV); self.assertIn("_inject_design_kit(_idx", SRV)
 

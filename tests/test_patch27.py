@@ -5,6 +5,7 @@ import shutil
 
 import pytest
 
+import os as _os74; _os74.environ["GROWTH_FREE_MODE"] = "0"  # patch74: legacy payment tests run with free-launch OFF
 import server
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -233,7 +234,7 @@ def test_publish_requires_existing_build(monkeypatch):
 # --------------------------------------------------------------------- markers
 def test_marker_and_endpoints_present():
     src = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
-    assert src.count('"build": "patch73-cinematic-games"') == 2
+    assert src.count('"build": "patch74-free-launch"') == 2
     assert '"/api/sites"' in src and '"/api/coins"' in src
     html = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
     assert "publishModal" in html and "refreshCoins" in html and "coinPill" in html

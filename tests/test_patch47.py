@@ -6,6 +6,7 @@ from unittest import mock
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
+import os as _os74; _os74.environ["GROWTH_FREE_MODE"] = "0"  # patch74: legacy payment tests run with free-launch OFF
 import server as s  # noqa: E402
 
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
@@ -20,7 +21,7 @@ def _keys(**have):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch73-cinematic-games"'), 2)
+        self.assertEqual(SRV.count('"patch74-free-launch"'), 2)
         self.assertNotIn("patch46-durable", SRV)
 
 

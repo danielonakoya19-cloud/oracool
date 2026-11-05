@@ -22,6 +22,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+import os as _os74; _os74.environ["GROWTH_FREE_MODE"] = "0"  # patch74: legacy payment tests run with free-launch OFF
 spec = importlib.util.spec_from_file_location('oracool_test_server_p12', ROOT / 'server.py')
 s = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(s)
