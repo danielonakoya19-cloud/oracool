@@ -22,7 +22,7 @@ def fake_series(kind, sym):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count("patch86-theme-toggle"), 2)
+        self.assertEqual(SRV.count("patch87-glass-private-accounts"), 2)
 
 
 class ForecastEngine(unittest.TestCase):

@@ -14,7 +14,7 @@ APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch86-theme-toggle"'), 2)
+        self.assertEqual(SRV.count('"patch87-glass-private-accounts"'), 2)
         self.assertNotIn("patch49-clock", SRV)
 
 

@@ -320,18 +320,7 @@
   .mm-picks select{font-size:11px;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:var(--panel2,rgba(255,255,255,.06));color:var(--text)}
   .mm-picks span{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:var(--dim)}
   @media(max-width:720px){ .mm-row{grid-template-columns:1fr} }
-  .mm-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%}
-  .mm-col{background:var(--panel2,rgba(255,255,255,.05));border:1px solid var(--line);border-radius:14px;padding:10px 12px;min-width:0}
-  .mm-lab{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);margin-bottom:6px;font-weight:700}
-  .mm-body{font-size:13.5px;line-height:1.55;word-wrap:break-word;white-space:pre-wrap}
-  .mm-vote{display:flex;gap:8px;margin-top:8px}
-  .mm-vote button{font-size:11px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--text);cursor:pointer}
-  .mm-vote button.win{background:var(--accent,#22c55e);color:#fff;border-color:transparent}
-  .mm-picks{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--line);flex-wrap:wrap;align-items:center}
-  .mm-picks select{font-size:11px;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:var(--panel2,rgba(255,255,255,.06));color:var(--text)}
-  .mm-picks span{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:var(--dim)}
-  @media(max-width:720px){ .mm-row{grid-template-columns:1fr} }
-  .inputbar{display:flex; gap:10px; padding:12px 16px calc(14px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); align-items:center;}
+    .inputbar{display:flex; gap:10px; padding:12px 16px calc(14px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); align-items:center;}
   .iconbtn{flex:0 0 auto; width:48px; height:48px; border-radius:12px; cursor:pointer; background:rgba(0,229,255,.06); border:1px solid var(--line); color:var(--cyan2); touch-action:manipulation;
     display:flex; align-items:center; justify-content:center; transition:.2s; font-size:18px;}
   .iconbtn:hover{background:rgba(0,229,255,.16); box-shadow:0 0 14px rgba(0,229,255,.35);}
@@ -1397,6 +1386,147 @@ html[data-theme="light"] .grad, html[data-theme="light"] .gradient{
 html[data-theme="light"] .side-user:hover{background:rgba(255,255,255,.6);}
 html[data-theme="light"] .menulbl:hover, html[data-theme="light"] .side-label:hover{color:#0b4a6b !important;}
 
+
+/* ================= patch87: community glass + liquid type + private pill + accounts ===== */
+/* community — full liquid glass (kills the inline #182229 borders) */
+.commmsgs, #commMsgs, #dmMsgs{
+  background-color:rgba(255,255,255,.055) !important;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,.02) 42%,rgba(255,255,255,0)) !important;
+  border:1px solid rgba(255,255,255,.13) !important;
+  border-radius:20px !important;
+  box-shadow:0 22px 55px rgba(2,4,14,.42), inset 0 1px 0 rgba(255,255,255,.14), 0 0 60px rgba(34,211,238,.06) !important;
+  -webkit-backdrop-filter:blur(24px) saturate(180%) !important;
+  backdrop-filter:blur(24px) saturate(180%) !important;
+}
+.commhead{border:1px solid rgba(255,255,255,.12); border-radius:18px; padding:10px 12px;
+  background-color:rgba(255,255,255,.05); background-image:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,.02));
+  -webkit-backdrop-filter:blur(18px) saturate(170%); backdrop-filter:blur(18px) saturate(170%);
+  box-shadow:0 14px 36px rgba(2,4,14,.3), inset 0 1px 0 rgba(255,255,255,.13);}
+.commnav{display:flex; gap:6px; flex-wrap:wrap;}
+.wa-trow{border-radius:13px; border:1px solid transparent;}
+.wa-trow:hover{background:rgba(255,255,255,.07); border-color:rgba(255,255,255,.12);}
+.wa-trow .tname{color:#eef3ff !important;}
+.wa-trow .tsub{color:#8fa2d6 !important;}
+.wa-row .wa-bub{
+  background-color:rgba(255,255,255,.06) !important;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.11),rgba(255,255,255,.02)) !important;
+  border:1px solid rgba(255,255,255,.13) !important;
+  border-radius:17px !important;
+  box-shadow:0 12px 30px rgba(2,4,14,.3), inset 0 1px 0 rgba(255,255,255,.13) !important;
+  -webkit-backdrop-filter:blur(18px) saturate(170%) !important;
+  backdrop-filter:blur(18px) saturate(170%) !important;
+}
+.wa-row.mine .wa-bub{
+  background:linear-gradient(135deg,rgba(34,211,238,.16),rgba(139,92,246,.16)) !important;
+  border-color:rgba(125,211,252,.32) !important;
+}
+.wa-sender{color:#bfeaff !important;}
+.wa-time{color:#7f8db8 !important;}
+.wa-compose, .commcompose{
+  background-color:rgba(255,255,255,.06) !important;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.11),rgba(255,255,255,.02)) !important;
+  border:1px solid rgba(255,255,255,.13) !important;
+  border-radius:18px !important;
+  box-shadow:0 14px 36px rgba(2,4,14,.32), inset 0 1px 0 rgba(255,255,255,.14) !important;
+  -webkit-backdrop-filter:blur(20px) saturate(175%) !important;
+  backdrop-filter:blur(20px) saturate(175%) !important;
+}
+.wa-pop.open, .wa-emojis, .wa-attach{
+  background-color:rgba(15,18,36,.92) !important;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,.02)) !important;
+  border:1px solid rgba(255,255,255,.13) !important;
+  border-radius:16px !important;
+  box-shadow:0 22px 55px rgba(2,4,14,.5), inset 0 1px 0 rgba(255,255,255,.14) !important;
+  -webkit-backdrop-filter:blur(22px) saturate(180%) !important;
+  backdrop-filter:blur(22px) saturate(180%) !important;
+}
+.wa-unread{background:linear-gradient(115deg,#22d3ee,#6366f1) !important;}
+.wa-tick{color:#7dd3fc !important;}
+.cthread{border-radius:13px; border:1px solid transparent;}
+.cthread:hover{background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.12);}
+.cmeta b{color:#bfeaff !important;}
+.cmeta a{color:#8fdcff !important;}
+.cbody{color:#c3cdef !important;}
+.cperson{border-radius:13px;}
+.wa-av img, .avatar img{border:1px solid rgba(255,255,255,.2);}
+.commcompose .btn, .wa-send{border-radius:999px;}
+
+/* liquid type — holographic headings & glowing labels */
+.ptitle, .viewtitle, .sb-title, .reactorhead .rtitle, .sheet-head h2, .chatgreet h2, .cws-title{
+  background:linear-gradient(115deg,#7dd3fc,#a78bfa,#f0abfc,#fcd34d,#7dd3fc) !important;
+  background-size:220% 220% !important;
+  -webkit-background-clip:text !important; background-clip:text !important;
+  color:transparent !important;
+  animation:holoSweep 12s ease infinite !important;
+}
+.side-label, .menulbl, .sessgrp, .sheet-eyebrow, .cws-eyebrow{
+  letter-spacing:2px;
+  text-shadow:0 0 14px rgba(103,232,249,.35);
+}
+.sysline .k{color:#dfe8ff !important;}
+.sysline .v{color:#8fa2d6 !important;}
+.note, .gpt-hint, .sb-footnote{color:#7f8db8 !important;}
+#commHandle{color:#bfeaff !important; text-shadow:0 0 14px rgba(34,211,238,.5);}
+.bubble .md-h{color:#eef3ff;}
+
+/* private pill */
+.privbtn.on{
+  background:linear-gradient(115deg,rgba(34,211,238,.20),rgba(168,85,247,.20)) !important;
+  border-color:rgba(125,211,252,.6) !important;
+  box-shadow:0 0 24px rgba(34,211,238,.35), inset 0 1px 0 rgba(255,255,255,.22) !important;
+  color:#dff6ff !important;
+}
+/* account rows */
+#acctList .sysline{border:1px solid rgba(255,255,255,.10); border-radius:12px; padding:5px 9px;}
+#acctList .sysline .k{font-size:11.5px;}
+#acctAdd{border-radius:12px;}
+
+/* light counterparts */
+html[data-theme="light"] .commmsgs, html[data-theme="light"] #commMsgs, html[data-theme="light"] #dmMsgs,
+html[data-theme="light"] .commhead, html[data-theme="light"] .wa-compose, html[data-theme="light"] .commcompose{
+  background-color:rgba(255,255,255,.58) !important;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.95),rgba(255,255,255,.3)) !important;
+  border:1px solid rgba(255,255,255,.85) !important;
+  box-shadow:0 22px 55px rgba(48,72,148,.13), inset 0 1px 0 rgba(255,255,255,.9) !important;
+}
+html[data-theme="light"] .wa-row .wa-bub{
+  background-color:rgba(255,255,255,.62) !important;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.92),rgba(255,255,255,.35)) !important;
+  border:1px solid rgba(255,255,255,.85) !important;
+}
+html[data-theme="light"] .wa-row.mine .wa-bub{
+  background:linear-gradient(135deg,rgba(8,145,178,.12),rgba(124,58,237,.12)) !important;
+  border-color:rgba(8,145,178,.3) !important;
+}
+html[data-theme="light"] .wa-pop.open, html[data-theme="light"] .wa-emojis, html[data-theme="light"] .wa-attach{
+  background-color:rgba(248,250,255,.96) !important;
+  border:1px solid rgba(255,255,255,.9) !important;
+}
+html[data-theme="light"] .wa-trow .tname, html[data-theme="light"] .cmeta b,
+html[data-theme="light"] .cbody, html[data-theme="light"] .wa-sender{color:#16213c !important;}
+html[data-theme="light"] .wa-trow .tsub, html[data-theme="light"] .wa-time,
+html[data-theme="light"] .sysline .v, html[data-theme="light"] .note,
+html[data-theme="light"] .gpt-hint, html[data-theme="light"] .sb-footnote{color:#5b6a8e !important;}
+html[data-theme="light"] .sysline .k{color:#16213c !important;}
+html[data-theme="light"] .ptitle, html[data-theme="light"] .viewtitle,
+html[data-theme="light"] .sb-title, html[data-theme="light"] .reactorhead .rtitle,
+html[data-theme="light"] .sheet-head h2, html[data-theme="light"] .chatgreet h2, html[data-theme="light"] .cws-title{
+  background:linear-gradient(115deg,#0369a1,#4f46e5,#7c3aed,#be185d,#b45309,#0369a1) !important;
+  background-size:220% 220% !important;
+  -webkit-background-clip:text !important; background-clip:text !important;
+  color:transparent !important;
+}
+html[data-theme="light"] .side-label, html[data-theme="light"] .menulbl,
+html[data-theme="light"] .sessgrp, html[data-theme="light"] .sheet-eyebrow{text-shadow:none !important;}
+html[data-theme="light"] #commHandle{color:#0b4a6b !important; text-shadow:none !important;}
+html[data-theme="light"] .privbtn.on{
+  background:linear-gradient(115deg,rgba(8,145,178,.16),rgba(124,58,237,.16)) !important;
+  border-color:rgba(8,145,178,.5) !important;
+  box-shadow:0 0 24px rgba(8,145,178,.2), inset 0 1px 0 rgba(255,255,255,.8) !important;
+  color:#0b4a6b !important;
+}
+html[data-theme="light"] #acctList .sysline{border:1px solid rgba(28,48,96,.14) !important;}
+
 </style>
 <script>
 (function(){var t=null;try{t=localStorage.getItem('oc_theme')}catch(e){};if(t!=='light'&&t!=='dark')t='dark';document.documentElement.setAttribute('data-theme',t);
@@ -1527,7 +1657,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
             <button class="iconbtn" id="micBtn" title="Speak to OraCool">🎙️</button>
             <button class="modebtn" id="modeBtn" title="Mode — Auto, Fast, Build or Expert" aria-haspopup="menu" aria-expanded="false"><span class="mi-ic">✦</span><span class="mi-l">Auto</span><span class="mi-ch">▾</span></button>
             <button class="modebtn" id="mmBtn" title="Models — Agent, Direct, Side by Side or Battle" aria-haspopup="menu" aria-expanded="false"><span class="mi-ic">⇄</span><span class="mi-l" id="mmLab">Agent</span><span class="mi-ch">▾</span></button>
-            <button class="modebtn" id="mmBtn" title="Models — Agent, Direct, Side by Side or Battle" aria-haspopup="menu" aria-expanded="false"><span class="mi-ic">⇄</span><span class="mi-l" id="mmLab">Agent</span><span class="mi-ch">▾</span></button>
+            <button class="modebtn privbtn" id="privBtn" title="Private chat — this conversation is never saved to your history" aria-pressed="false"><span class="mi-ic">🔒</span><span class="mi-l">Private</span></button>
             <span class="gpt-spacer"></span>
             <span class="gpt-hint">Enter ↵ to send · Shift+Enter = new line · Ctrl+V = paste screenshot</span>
             <button class="gpt-send" id="sendBtn" title="Send">↑</button>
@@ -1551,18 +1681,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
               <select id="mmB"><option value="groq">Groq (Fast)</option><option value="gemini">Gemini</option><option value="anthropic">Claude</option><option value="openai">GPT</option><option value="auto">OraCool Auto</option></select>
             </div>
           </div>
-          <div class="modemenu" id="mmMenu" role="menu" hidden>
-            <button class="mi" data-mm="agent" role="menuitemradio"><span class="mi-ic">🤖</span><span><b>Agent</b><small>the full OraCool agent — tools, builds, media</small></span><span class="mi-ok">✓</span></button>
-            <button class="mi" data-mm="direct" role="menuitemradio"><span class="mi-ic">💬</span><span><b>Direct</b><small>chat with 1 model at a time</small></span><span class="mi-ok">✓</span></button>
-            <button class="mi" data-mm="side" role="menuitemradio"><span class="mi-ic">⇄</span><span><b>Side by Side</b><small>compare 2 models of your choice</small></span><span class="mi-ok">✓</span></button>
-            <button class="mi" data-mm="battle" role="menuitemradio"><span class="mi-ic">⚔️</span><span><b>Battle</b><small>battle 2 anonymous models — then vote</small></span><span class="mi-ok">✓</span></button>
-            <div class="mm-picks" id="mmPicks" hidden>
-              <span id="mmPickLbl">Models</span>
-              <select id="mmA"><option value="auto">OraCool Auto</option><option value="groq">Groq (Fast)</option><option value="gemini">Gemini</option><option value="anthropic">Claude</option><option value="openai">GPT</option></select>
-              <select id="mmB"><option value="groq">Groq (Fast)</option><option value="gemini">Gemini</option><option value="anthropic">Claude</option><option value="openai">GPT</option><option value="auto">OraCool Auto</option></select>
-            </div>
-          </div>
-        </div>
+                  </div>
       </div>
     </div>
       <div class="panels-stage" id="panelStage">
@@ -1818,7 +1937,12 @@ loadSettings();
 let srv = null;            // server config (/api/config)
 let session = null;        // Supabase session {user, access_token, refresh_token}
 try{ if(storageOK) session = JSON.parse(localStorage.getItem('oracool_session')||'null'); }catch(e){}
-function saveSession(){ try{ if(storageOK) localStorage.setItem('oracool_session', JSON.stringify(session)); }catch(e){} }
+const ACCOUNTS_KEY='oracool_accounts';
+function accountsMap(){ try{ return JSON.parse(localStorage.getItem(ACCOUNTS_KEY)||'{}'); }catch(e){ return {}; } }
+function registerAccount(){ if(!session||!session.user||!session.user.email) return; try{ const m=accountsMap(); m[String(session.user.email).toLowerCase()]=session; localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(m)); }catch(e){} }
+function switchAccount(em){ const m=accountsMap(); if(!m[em]) return; session=m[em]; try{ if(storageOK) localStorage.setItem('oracool_session', JSON.stringify(session)); }catch(e){} location.reload(); }
+function dropAccount(em){ const m=accountsMap(); delete m[em]; try{ localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(m)); }catch(e){} return Object.keys(m); }
+function saveSession(){ try{ if(storageOK) localStorage.setItem('oracool_session', JSON.stringify(session)); }catch(e){} registerAccount(); }
 function setSession(s){ session = s; saveSession(); renderAcctChip(); updateAdminUI(); if(s && s.pro_token) setProToken(s.pro_token); if(s && s.blocked===true){ showBlockedScreen(); checkBlockedStatus(false); } else if(s && s.blocked===false) hideBlockedScreen(); }
 function updateAdminUI(){
   const t=$('#adminTab'); if(!t) return;
@@ -3666,6 +3790,7 @@ let busy=false;
 let CHAT_TURN=0;
 /* patch84: model modes — Agent / Direct / Side by Side / Battle */
 let modelMode='agent'; let mmA='auto'; let mmB='groq';
+let privMode=false;  /* patch87: Private chat — never saved */
 const MM_LABELS={auto:'OraCool Auto',groq:'Groq (Fast)',gemini:'Gemini',anthropic:'Claude',openai:'GPT'};
 function mmLabel(k){ return MM_LABELS[k]||k; }
 function parseCmp(t){ const m=String(t||'').match(/^\[\[cmp:([\s\S]*)\]\]$/); if(!m) return null; try{ return JSON.parse(decodeURIComponent(m[1])); }catch(e){ return null; } }
@@ -3693,10 +3818,10 @@ async function sendCompare(display, content){
   const b=addAI(''); const body=b.lastChild;
   body.innerHTML='<div class="mm-row">'+labels.map((l,i)=>'<div class="mm-col"><div class="mm-lab">'+escapeHtml(l)+'</div><div class="mm-body" id="mmb'+i+'"><span class="dots"></span></div></div>').join('')+'</div>';
   scrollChat();
-  const texts=['','']; const _sid=await ensureSession();
+  const texts=['','']; const _sid = privMode ? '' : await ensureSession();
   const run=async(i)=>{
     const prov=i?mmB:mmA;
-    const payload={messages:[{role:'system',content:systemPrompt()},...history],stream:true,provider:prov,max_tokens:900,session_id:_sid||'',mode:'auto'};
+    const payload={messages:[{role:'system',content:systemPrompt()},...history],stream:true,provider:prov,max_tokens:900,session_id:_sid||'',private:!!privMode,mode:'auto'};
     try{ if(session&&session.access_token) payload.access_token=session.access_token; const _em=myEmail(); if(_em) payload.email=_em; if(proToken) payload.token=proToken;
       const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(!resp.ok) throw new Error('provider error '+resp.status);
@@ -3736,6 +3861,14 @@ async function sendCompare(display, content){
   });
   if(mmA_) mmA_.addEventListener('change',()=>{ mmA=mmA_.value; });
   if(mmB_) mmB_.addEventListener('change',()=>{ mmB=mmB_.value; });
+})();
+(function(){
+  const pb=document.getElementById('privBtn'); if(!pb) return;
+  pb.addEventListener('click',()=>{
+    privMode=!privMode;
+    pb.classList.toggle('on',privMode);
+    pb.setAttribute('aria-pressed',String(privMode));
+  });
 })();
 async function send(text){
   unlockAudio();
@@ -3802,10 +3935,10 @@ async function send(text){
   const msgs=[{role:'system',content:systemPrompt()+(coreExtra?('\n\n'+coreExtra):'')},...history];
   try{
     let acc='';
-    const _sid=await ensureSession();
+    const _sid = privMode ? '' : await ensureSession();  /* patch87 */
     let _tz=''; try{ _tz=Intl.DateTimeFormat().resolvedOptions().timeZone||''; }catch(e){}
     const _lt=(()=>{ try{ const d=new Date(); const o=-d.getTimezoneOffset(); const sg=o>=0?'+':'-'; const pad=n=>String(Math.abs(n)).padStart(2,'0'); return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,19)+sg+pad(Math.floor(Math.abs(o)/60))+':'+pad(Math.abs(o)%60); }catch(e){ return ''; } })();
-    const payload={messages:msgs, stream:true, provider:(modelMode==='direct'&&mmA?mmA:(settings.provider||'auto')), max_tokens:(window.OraVoice?.enabled?450:(_mode==='expert'?2200:900)), voice_mode:!!window.OraVoice?.enabled, session_id:_sid||'', mode:_mode, tz:_tz, local_time:_lt};
+    const payload={messages:msgs, stream:true, provider:(modelMode==='direct'&&mmA?mmA:(settings.provider||'auto')), max_tokens:(window.OraVoice?.enabled?450:(_mode==='expert'?2200:900)), voice_mode:!!window.OraVoice?.enabled, session_id:_sid||'', private:!!privMode, mode:_mode, tz:_tz, local_time:_lt};
     await ensureFreshLogin();
     if(session&&session.access_token) payload.access_token=session.access_token;
     const _em=myEmail(); if(_em) payload.email=_em; if(proToken) payload.token=proToken;
@@ -6050,6 +6183,10 @@ function renderAccount(){
       <div class="muted" style="margin-top:6px">User ID: ${escapeHtml((u.id||'').slice(0,18))}…</div>
       ${tierGte('starter')?`<div class="okbox" style="margin-top:10px">◈ The <b>${planLabel()}</b> plan is active on this account — everything up to ${planLabel()} is unlocked.</div>`:`<div class="warnbox" style="margin-top:10px">This account is on the FREE tier — it still includes the 🏗 AI website builder with <b>1,000,000 build coins/week</b> (≈100 sites) + free website hosting on oracoolai.com (live preview + edits, always). <a href="#" id="acctUp">Upgrade</a> for more coins and to unlock the ladder: Starter → PRO → Ultra → Enterprise.</div>`}
       <div class="row"><button class="btn ghost" id="acctSignout">Sign out</button><button class="btn ghost" id="acctSync">Sync PRO status</button></div>
+      <h3 class="ptitle" style="margin-top:16px">👤 Accounts</h3>
+      <div class="muted" style="margin:2px 0 6px">Add as many accounts as you like and switch instantly.</div>
+      <div id="acctList"></div>
+      <button class="btn ghost" id="acctAdd" style="margin-top:8px">＋ Add account</button>
       <div class="note">Your PRO subscription follows your email — sign in on any device and it restores automatically.</div>
       <div id="refBox"></div>
       <h3 class="ptitle" style="margin-top:16px">🛡️ Security</h3>
@@ -6061,10 +6198,33 @@ function renderAccount(){
       <div class="result" id="aSecOut" style="margin-top:8px"></div>`;
     if($('#acctUp')) $('#acctUp').onclick=e=>{e.preventDefault(); openUpgrade();};
     $('#acctSignout').onclick=()=>{
+      const _em=(session&&session.user&&String(session.user.email).toLowerCase())||'';
       clearSession(); setProToken('');
+      if(_em){ const rest=dropAccount(_em); if(rest.length){ switchAccount(rest[0]); return; } }
       renderAccount(); renderStatus(); updateTier();
       addAI('Signed out. All systems standing by, sir.');
     };
+    (function(){ /* patch87: account list + add account */
+      const m=accountsMap(); const cur=(session&&session.user&&String(session.user.email).toLowerCase())||'';
+      const box=document.getElementById('acctList');
+      if(box){
+        box.innerHTML=Object.keys(m).map(em=>'<div class="sysline" style="margin-top:4px"><span class="dot '+(em===cur?'ok':'')+'"></span><span class="k">'+escapeHtml(em)+'</span><span class="v">'+(em===cur?'active':'')+'</span>'+
+          (em===cur?'':'<button class="btn small ghost" data-switch="'+em+'">Switch</button>')+
+          '<button class="btn small ghost" data-remove="'+em+'">Remove</button></div>').join('');
+        box.querySelectorAll('[data-switch]').forEach(b=>{ b.onclick=()=>switchAccount(b.getAttribute('data-switch')); });
+        box.querySelectorAll('[data-remove]').forEach(b=>{ b.onclick=()=>{
+          const rest=dropAccount(b.getAttribute('data-remove'));
+          if(cur&&b.getAttribute('data-remove')===cur&&rest.length){ switchAccount(rest[0]); return; }
+          renderAccount();
+        }; });
+      }
+      const add=document.getElementById('acctAdd');
+      if(add) add.onclick=()=>{
+        registerAccount(); clearSession(); setProToken('');
+        renderAccount(); renderStatus(); updateTier();
+        try{ showGate(); }catch(e){}
+      };
+    })();
     $('#acctSync').onclick=async()=>{
       const r=await post('/api/auth/me',{access_token:session.access_token});
       if(r.status===200 && r.pro_token){ setProToken(r.pro_token); addAI('PRO status synced from your account. Welcome back, sir.'); renderStatus(); renderAccount(); }

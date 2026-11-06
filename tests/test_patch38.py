@@ -18,7 +18,7 @@ LAND = open(ROOT / 'landing.html', encoding='utf-8').read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch86-theme-toggle"'), 2)
+        self.assertEqual(SRV.count('"patch87-glass-private-accounts"'), 2)
         self.assertNotIn('patch38-direct', SRV)
 
 
@@ -165,7 +165,7 @@ class BuilderQuality(unittest.TestCase):
             st.enter_context(mock.patch.object(s, "http_fetch", fake_fetch))
             c, prov, fin = s._llm_text("sys", "usr", effort="medium")
         self.assertEqual(seen[0]["reasoning_effort"], "medium")
-        self.assertIn('effort=("high" if _is_app else "medium")', SRV[SRV.index("def build_site("):SRV.index("def build_site(") + 14000])  # patch74
+        self.assertIn('effort=("high" if _is_app else "medium")', SRV[SRV.index("def build_site("):SRV.index("def build_site(") + 18000])  # patch74
         self.assertIn("DESIGN BLUEPRINT", SRV); self.assertIn("between 18KB and 34KB", SRV)
         self.assertIn("DESIGN REVIEW", SRV); self.assertIn("_inject_design_kit(_idx", SRV)
 

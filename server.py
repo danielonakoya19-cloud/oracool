@@ -5288,6 +5288,7 @@ _APP_SYSTEM = (
     "FOR TOOLS/DASHBOARDS: complete working logic — real state, validation, persistence (localStorage), empty/error "
     "states, and at least one data visual or summary computed from the user's input.\n"
     "GRAPHICS BAR (cinematic — this is how the game earns a 'wow'): flat colored rectangles are BANNED. "
+    "UI chrome is holographic liquid glass: frosted-glass HUD panels, iridescent glow, gradient buttons over the cinematic scene. "
     "Render with the techniques modern engines use: a multi-layer PARALLAX background (gradient sky or nebula, "
     "2-4 silhouette layers scrolling at different speeds); ADDITIVE GLOW — shadowBlur and "
     "globalCompositeOperation='lighter' for neon bloom on the player, coins, projectiles and HUD; full PARTICLE "
@@ -5403,6 +5404,17 @@ def build_site(email, name, prompt):
         "First pick the template family, palette and typography that genuinely fit the industry and mood "
         "(a restaurant is NOT a fintech is NOT a personal portfolio). ONE self-contained index.html with inline "
         "<style> and <script>; no external JS/CSS frameworks; a Google Fonts <link> is allowed but must fall "
+        "LIQUID GLASS DESIGN BAR (the OraCool house look — apply it faithfully unless the brief "
+        "explicitly demands another style): holographic liquid-glass aesthetic — deep aurora background "
+        "(large softly blurred colour blobs in cyan, violet and pink over a dark midnight base), frosted "
+        "glass panels (translucent white fill ~.06 + backdrop-filter blur(22px) saturate(170%) + 1px "
+        "translucent border + top gloss highlight + soft glow shadow), iridescent cyan-to-violet-to-pink-to-gold "
+        "gradient accents on primary buttons, badges, section eyebrows and display headings, glossy hover "
+        "sheen and lift, generous radii (18-26px), letter-spaced small-cap labels, smooth scroll-reveal motion. "
+        "HIGH-QUALITY GRAPHICS BAR: crisp inline SVG icons, layered gradient orbs and illustration shapes, "
+        "IMAGE LIBRARY photos framed inside glass cards, a refined type scale with gradient display headings, "
+        "micro-interactions on every interactive element — the page must look like a premium funded product, "
+        "never flat, generic or template-like. "
         "back to system fonts. PROFESSIONAL BAR (non-negotiable): cohesive CSS custom-property palette "
         "(background, surface, text, accent, muted) with real contrast; display font for headings + readable "
         "body font; generous spacing and a strong typographic scale; a hero with a clear value-prop H1, "
@@ -5841,7 +5853,7 @@ def build_delete(email, slug):
         return {"error": str(e)[:160]}
 
 
-_EDIT_SYS = ("You are OraCool's website editor. You are given the user's current website as ONE "
+_EDIT_SYS = ("When the user asks to restyle or improve visuals, use the holographic liquid-glass design language (frosted glass panels, aurora gradients, iridescent accents, glossy buttons). You are OraCool's website editor. You are given the user's current website as ONE "
              "self-contained HTML file and one change request. Apply EXACTLY that change (and only "
              "what it clearly implies) and keep everything else intact: layout, copy, prices, JS "
              "behavior. The page must stay fully self-contained (inline CSS/JS/SVG art only, no "
@@ -9474,7 +9486,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch86-theme-toggle",
+        "build": "patch87-glass-private-accounts",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -13068,7 +13080,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch86-theme-toggle", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch87-glass-private-accounts", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -14221,6 +14233,9 @@ class Handler(BaseHTTPRequestHandler):
             messages = [{"role":"system", "content":"Voice conversation: answer directly in one or two short sentences unless detail is requested. Telephone calls, SMS and phone alarms are not available on OraCool — if asked for one, say so plainly instead of pretending."}] + messages
         # ---- chat sessions: every turn is persisted server-side (history sidebar)
         _conv_id = str(body.get("session_id") or "").strip()[:40]
+        _private = bool(body.get("private"))  # patch87: Private chat — nothing is ever stored
+        if _private:
+            _conv_id = ""   # every conv_append guards on conv_id -> user+assistant turns vanish
         _conv_em = str(body.get("email") or "").strip().lower()
         if not _conv_em and str(body.get("token") or "").strip():
             _conv_em = ((verify_jwt(str(body["token"]).strip(), key("JWT_SECRET") or "dev-secret")) or {}).get("sub", "").lower()
