@@ -12,7 +12,7 @@ import server as s  # noqa: E402
 
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
-MARK = "patch82-brain-ui"
+MARK = "patch83-brain-resilience"
 
 
 class Marker(unittest.TestCase):
@@ -69,7 +69,7 @@ class BuilderBrain(unittest.TestCase):
     def test_anthropic_translations_present(self):
         self.assertIn('req = _anthropic_request(k, req_body, stream=True)', SRV)
         self.assertIn("resp = _AnthropicSSE(resp)  # speaks OpenAI SSE format", SRV)
-        self.assertIn('http_fetch(base.rstrip("/") + "/messages", method="POST", timeout=240,', SRV)
+        self.assertIn('http_fetch(base.rstrip("/") + "/messages", method="POST", timeout=_BRAIN_TIMEOUT.get(prov, 240),', SRV)
 
     def test_app_build_effort_high(self):
         self.assertIn('effort=("high" if _is_app else "medium")', SRV)

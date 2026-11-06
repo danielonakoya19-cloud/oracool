@@ -21,7 +21,7 @@ class TestPatch82BrainFailover(unittest.TestCase):
 
     def test_marker_patch82(self):
         src = open("server.py", encoding="utf-8").read()
-        assert src.count("patch82-brain-ui") == 2
+        assert src.count("patch83-brain-resilience") == 2
         assert "def _llm_attempts(" in src and "gemini-3.1-flash-lite" in src
 
     def test_ladder_includes_gemini(self):

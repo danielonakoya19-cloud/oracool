@@ -67,7 +67,7 @@ def _groq_chat_models():
 
 _BRAIN_STATS = {}     # brain name -> {"ewma": seconds-to-first-token, "fail_until": ts, "n": count}
 _BRAIN_LOCK = threading.Lock()
-_BRAIN_PRIOR = {"anthropic": 0.8, "groq": 1.2, "agnes": 2.5, "openai": 2.0}
+_BRAIN_PRIOR = {"anthropic": 0.8, "groq": 1.2, "gemini": 1.4, "agnes": 2.5, "openai": 2.0}
 ANTHROPIC_BASE = "https://api.anthropic.com/v1"
 ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-4-5"
 _BRAIN_SLOW_S = 8.0   # a brain that takes longer than this to its first token is demoted below the others
@@ -76,7 +76,7 @@ _BRAIN_SLOW_S = 8.0   # a brain that takes longer than this to its first token i
 def _brain_name(base_url):
     b = str(base_url or "")
     return ("anthropic" if "anthropic" in b else "agnes" if "agnes-ai" in b else "openai" if "api.openai.com" in b
-            else "groq" if "groq" in b else "custom")
+            else "gemini" if "generativelanguage" in b else "groq" if "groq" in b else "custom")
 
 
 def _brain_note(name, first_token_s=None, failed=False, cooldown=120):
@@ -106,7 +106,7 @@ def _brain_score(name):
 
 def _brain_order():
     """Configured brains, fastest healthy first (ties → the operator's preferred provider)."""
-    have = [n for n, k in (("anthropic", "ANTHROPIC_API_KEY"), ("groq", "GROQ_API_KEY"), ("agnes", "AGNES_API_KEY"), ("openai", "OPENAI_API_KEY")) if key(k)]
+    have = [n for n, k in (("anthropic", "ANTHROPIC_API_KEY"), ("groq", "GROQ_API_KEY"), ("gemini", "GEMINI_API_KEY"), ("agnes", "AGNES_API_KEY"), ("openai", "OPENAI_API_KEY")) if key(k)]
     return sorted(have, key=_brain_score)
 
 
@@ -2506,6 +2506,49 @@ def _default_provider():
     return "", "", ""
 
 
+_BRAIN_STATE = {}   # prov -> {bad_until, good, latency, last_err}  (patch83)
+_BRAIN_TIMEOUT = {"agnes": 45, "openai": 45}  # dead weight must not stall a build
+
+
+def _brain_note_ok(prov, dt):
+    st = _BRAIN_STATE.setdefault(prov, {})
+    st["bad_until"] = 0.0
+    st["good"] = time.time()
+    st["latency"] = round(float(dt or 0.0), 2)
+    st["last_err"] = ""
+
+
+def _brain_note_fail(prov, err_text, code=None):
+    low = (err_text or "").lower()
+    if any(x in low for x in ("insufficient_quota", "no credits", "billing", "credit balance",
+                              "unauthorized", "invalid api key", "401")):
+        until = 1800   # dead account: cool for 30 min
+    elif code == 429 or "rate" in low or "429" in low:
+        until = 90
+    elif "empty" in low:
+        until = 60
+    else:
+        until = 45
+    st = _BRAIN_STATE.setdefault(prov, {})
+    st["bad_until"] = time.time() + until
+    st["last_err"] = (err_text or "")[:120]
+
+
+def _brain_health_report():
+    """patch83: operator-facing provider health (admin route). patch47's
+    brain_status() (latency EWMA) stays untouched under its own name."""
+    now = time.time()
+    out = []
+    for att in _llm_attempts():
+        st = _BRAIN_STATE.get(att[3], {})
+        cooling = st.get("bad_until", 0) > now
+        out.append({"provider": att[3], "model": att[2],
+                    "state": "cooling" if cooling else ("ok" if st.get("good") else "untested"),
+                    "cooldown_s": int(max(0, st.get("bad_until", 0) - now)),
+                    "latency_s": st.get("latency"), "last_err": st.get("last_err", "")})
+    return out
+
+
 def _llm_attempts(effort="low"):
     """patch82: one provider ladder for every brain path — anthropic ->
     groq-oss -> groq -> gemini -> openai -> agnes. Each caller fails over
@@ -2529,17 +2572,31 @@ def _llm_attempts(effort="low"):
     k = key("AGNES_API_KEY")
     if k:
         attempts.append((k, AGNES_BASE, KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), "agnes", {}))
-    return attempts
+    # patch83: healthy providers first (sticky: last success leads), cooling
+    # providers sink to the end as last resort — never removed entirely.
+    now = time.time()
+    healthy = [a for a in attempts if _BRAIN_STATE.get(a[3], {}).get("bad_until", 0) <= now]
+    cooling = [a for a in attempts if _BRAIN_STATE.get(a[3], {}).get("bad_until", 0) > now]
+    last_good, best_t = None, 0.0
+    for a in healthy:
+        g = _BRAIN_STATE.get(a[3], {}).get("good", 0.0)
+        if g > best_t:
+            last_good, best_t = a[3], g
+    if last_good:
+        healthy.sort(key=lambda a: 0 if a[3] == last_good else 1)
+    return healthy + cooling
 
 
 def llm_complete(messages, temperature=0.4, max_tokens=800):
-    """patch82: chat brain fails over across EVERY configured provider — a
-    dead/creditless account no longer takes the whole brain down."""
+    """patch82/83: chat brain fails over across EVERY configured provider —
+    a dead/creditless account never takes the brain down, and providers that
+    just failed cool down so the next call skips them instantly."""
     attempts = _llm_attempts()
     if not attempts:
         return None, "No AI provider configured (keys.json)."
     last_err = "all LLM providers failed"
     for k, base, model, prov, extra in attempts:
+        t0 = time.time()
         try:
             payload = {"model": model, "messages": messages, "temperature": temperature,
                        "max_tokens": max_tokens}
@@ -2553,23 +2610,27 @@ def llm_complete(messages, temperature=0.4, max_tokens=800):
                 _, raw, _ = http_fetch(base.rstrip("/") + "/messages", method="POST",
                                        headers={"x-api-key": k, "anthropic-version": "2023-06-01",
                                                 "Content-Type": "application/json"},
-                                       json_body=ab, timeout=90)
+                                       json_body=ab, timeout=_BRAIN_TIMEOUT.get(prov, 45))
                 d = json.loads(raw)
                 c = " ".join(str(b.get("text") or "") for b in (d.get("content") or [])
                              if isinstance(b, dict)).strip()
                 if c:
+                    _brain_note_ok(prov, time.time() - t0)
                     return c, None
                 last_err = prov + ": empty response"
+                _brain_note_fail(prov, last_err)
                 continue
             _, raw, _ = http_fetch(base.rstrip("/") + "/chat/completions", method="POST",
                                    headers={"Authorization": "Bearer " + k, "Content-Type": "application/json",
                                             "User-Agent": UA},
-                                   json_body=payload, timeout=90)
+                                   json_body=payload, timeout=_BRAIN_TIMEOUT.get(prov, 45))
             data = json.loads(raw)
             c = (((data.get("choices") or [{}])[0].get("message")) or {}).get("content", "")
             if c:
+                _brain_note_ok(prov, time.time() - t0)
                 return c, None
             last_err = prov + ": empty response"
+            _brain_note_fail(prov, last_err)
         except urllib.error.HTTPError as e:
             body = ""
             try:
@@ -2577,8 +2638,10 @@ def llm_complete(messages, temperature=0.4, max_tokens=800):
             except Exception:
                 pass
             last_err = _brain_error_text(e.code, body)
+            _brain_note_fail(prov, (body or last_err), e.code)
         except Exception as e:
             last_err = prov + ": " + str(e)[:110]
+            _brain_note_fail(prov, str(e))
     return None, last_err
 
 
@@ -4600,6 +4663,7 @@ def _llm_text(system, user, max_tokens=16000, extra_msgs=None, effort="low"):
     for att in attempts:
         k, base, model, prov = att[0], att[1], att[2], att[3]
         req_body_extra = att[4] if len(att) > 4 else {}
+        t0 = time.time()
         try:
             req_body = {"model": model, "max_tokens": max_tokens, "temperature": 0.4,
                         "messages": ([{"role": "system", "content": system},
@@ -4610,25 +4674,29 @@ def _llm_text(system, user, max_tokens=16000, extra_msgs=None, effort="low"):
                 _ab = {"model": model, "messages": _msgs, "max_tokens": int(max(16, min(int(req_body.get("max_tokens") or 1024), 8192)))}
                 if _sys:
                     _ab["system"] = _sys
-                _, raw, _ = http_fetch(base.rstrip("/") + "/messages", method="POST", timeout=240,
+                _, raw, _ = http_fetch(base.rstrip("/") + "/messages", method="POST", timeout=_BRAIN_TIMEOUT.get(prov, 240),
                                        headers={"x-api-key": k, "anthropic-version": "2023-06-01",
                                                 "Content-Type": "application/json"}, json_body=_ab)
                 d = json.loads(raw)
                 _blocks = d.get("content") or []
                 c = " ".join(str(b.get("text") or "") for b in _blocks if isinstance(b, dict)).strip()
                 if c:
+                    _brain_note_ok(prov, time.time() - t0)
                     return c, prov, str(d.get("stop_reason") or "")
+                _brain_note_fail(prov, "empty response")
                 continue
-            _, raw, _ = http_fetch(base.rstrip("/") + "/chat/completions", method="POST", timeout=240,
+            _, raw, _ = http_fetch(base.rstrip("/") + "/chat/completions", method="POST", timeout=_BRAIN_TIMEOUT.get(prov, 240),
                                    headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
                                    json_body=req_body)
             d = json.loads(raw)
             ch = (d.get("choices") or [{}])[0]
             c = (ch.get("message", {}).get("content") or "").strip()
             if c:
+                _brain_note_ok(prov, time.time() - t0)
                 return c, prov, str(ch.get("finish_reason") or "")
         except Exception as e:
             last_err = prov + ": " + str(e)[:110]
+            _brain_note_fail(prov, str(e))
             continue
     return None, last_err, "error"
 
@@ -4642,6 +4710,7 @@ def _llm_text_stream(system, user, max_tokens=16000, extra_msgs=None, effort="lo
         return None, "no LLM key configured", "nokey"
     for k, base, model, prov, extra in attempts:
         acc = []; finish = ""; last_cb = 0.0
+        t0 = time.time()
         try:
             req_body = {"model": model, "max_tokens": max_tokens, "temperature": 0.4, "stream": True,
                         "messages": ([{"role": "system", "content": system}, {"role": "user", "content": user}] + (extra_msgs or []))}
@@ -4652,7 +4721,7 @@ def _llm_text_stream(system, user, max_tokens=16000, extra_msgs=None, effort="lo
                 req = urllib.request.Request(base.rstrip("/") + "/chat/completions", data=json.dumps(req_body).encode("utf-8"),
                                              headers={"Authorization": "Bearer " + k, "Content-Type": "application/json",
                                                       "Accept": "text/event-stream", "User-Agent": UA}, method="POST")
-            with urllib.request.urlopen(req, timeout=240, context=ssl.create_default_context()) as resp:
+            with urllib.request.urlopen(req, timeout=_BRAIN_TIMEOUT.get(prov, 240), context=ssl.create_default_context()) as resp:
                 if prov == "anthropic":
                     resp = _AnthropicSSE(resp)  # speaks OpenAI SSE format
                 for raw_line in resp:
@@ -4679,14 +4748,18 @@ def _llm_text_stream(system, user, max_tokens=16000, extra_msgs=None, effort="lo
                         except Exception:
                             pass
             text = "".join(acc).strip()
+            if not text:
+                _brain_note_fail(prov, "empty response")
             if text:
                 if on_delta:
                     try:
                         on_delta(text)
                     except Exception:
                         pass
+                _brain_note_ok(prov, time.time() - t0)
                 return text, prov, finish
-        except Exception:
+        except Exception as _se:
+            _brain_note_fail(prov, str(_se) or "stream error")
             if acc and len("".join(acc)) > 4000:   # the stream broke late: keep what we have (the caller can continue it)
                 return "".join(acc), prov, "length"
             continue
@@ -9319,7 +9392,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch82-brain-ui",
+        "build": "patch83-brain-resilience",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -12913,7 +12986,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch82-brain-ui", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch83-brain-resilience", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -13140,6 +13213,11 @@ class Handler(BaseHTTPRequestHandler):
                         _mn = _NAME_RX.search(_bm)
                         _bname = (_mn.group(1).strip(" .") if _mn else "") or "my-site"
                     self._send_json(build_site(body.get("email"), _bname, _bm or _bname))
+            elif path == "/api/admin/brain/status":
+                _ve = body.get("_verified_email") or request_identity(self, body)
+                if not _ve or not is_admin(_ve):
+                    self._send_json({"error": "Administrator access required."}, 403); return
+                self._send_json({"ok": True, "providers": _brain_health_report()})
             elif path == "/api/admin/vault":
                 _ve = body.get("_verified_email") or request_identity(self, body)
                 if not _ve or not is_admin(_ve):
@@ -13984,7 +14062,7 @@ class Handler(BaseHTTPRequestHandler):
                     tried.add(m)
                     return gk, "https://api.groq.com/openai/v1", m
         # patch47: other brains in measured order (fastest healthy first), never the one we just left
-        for _bn in _brain_order() + [n for n in ("anthropic", "groq", "agnes", "openai") if n not in _brain_order()]:
+        for _bn in _brain_order() + [n for n in ("anthropic", "groq", "gemini", "agnes", "openai") if n not in _brain_order()]:
             if _bn == "anthropic" and key("ANTHROPIC_API_KEY") and provider in ("auto", "anthropic") and "anthropic" not in tried and "anthropic" not in (base_url or ""):
                 tried.add("anthropic")
                 return key("ANTHROPIC_API_KEY"), ANTHROPIC_BASE, _anthropic_model()
@@ -13996,6 +14074,9 @@ class Handler(BaseHTTPRequestHandler):
             if _bn == "agnes" and key("AGNES_API_KEY") and provider in ("auto", "groq") and "agnes" not in tried and "agnes-ai" not in (base_url or ""):
                 tried.add("agnes")
                 return key("AGNES_API_KEY"), AGNES_BASE, KEYS.get("AGNES_MODEL", "agnes-2.5-flash")
+            if _bn == "gemini" and key("GEMINI_API_KEY") and provider in ("auto", "gemini") and "gemini" not in tried and "generativelanguage" not in (base_url or ""):
+                tried.add("gemini")
+                return key("GEMINI_API_KEY"), "https://generativelanguage.googleapis.com/v1beta/openai", KEYS.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
             if _bn == "openai" and key("OPENAI_API_KEY") and provider == "auto" and "openai" not in tried and "api.openai.com" not in (base_url or ""):
                 tried.add("openai")
                 return key("OPENAI_API_KEY"), "https://api.openai.com/v1", "gpt-4o-mini"
