@@ -12,7 +12,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 CSS = open(os.path.join(ROOT, "console-layout.css"), encoding="utf-8").read()
 
-MARK = "patch81-live-feed"
+MARK = "patch82-brain-ui"
 
 
 class Marker(unittest.TestCase):
@@ -54,12 +54,12 @@ class BigHistorySidebar(unittest.TestCase):
         self.assertIn(".side-nav.collapsed{display:none;}", APP)
 
     def test_rows_big(self):
-        self.assertIn("font-size:15.5px", APP)   # .sess .st
-        self.assertIn("padding:12px 42px 12px 14px", APP)  # .sess
+        self.assertIn("font-size:14.5px", APP)   # .sess .st
+        self.assertIn("padding:9px 36px 9px 12px", APP)  # .sess
 
     def test_sidebar_wider(self):
-        self.assertIn(".sidebar{width:320px;", CSS)
-        self.assertIn("width:min(330px,90vw)", CSS)
+        self.assertIn(".sidebar{width:288px;", CSS)
+        self.assertIn("width:min(300px,88vw)", CSS)
 
 
 if __name__ == "__main__":

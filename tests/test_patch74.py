@@ -12,7 +12,7 @@ import server as s  # noqa: E402
 
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
-MARK = "patch81-live-feed"
+MARK = "patch82-brain-ui"
 
 
 class Marker(unittest.TestCase):
@@ -58,13 +58,13 @@ class FreeMode(unittest.TestCase):
 
 class BuilderBrain(unittest.TestCase):
     def test_claude_first_in_both_ladders(self):
-        # both ladders mention anthropic before groq in the attempts list
-        t1 = SRV.index("def _llm_text(")
-        t2 = SRV.index("def _llm_text_stream(")
-        for start in (t1, t2):
-            seg = SRV[start:start + 2200]
-            self.assertIn('key("ANTHROPIC_API_KEY")', seg)
-            self.assertLess(seg.index("ANTHROPIC_API_KEY"), seg.index("GROQ_API_KEY"))
+        # patch82: both ladders share _llm_attempts — anthropic leads there
+        a = SRV.index("def _llm_attempts(")
+        seg = SRV[a:a + 2200]
+        self.assertIn('key("ANTHROPIC_API_KEY")', seg)
+        self.assertLess(seg.index("ANTHROPIC_API_KEY"), seg.index("GROQ_API_KEY"))
+        self.assertLess(seg.index("GEMINI_API_KEY"), seg.index("OPENAI_API_KEY"))
+        self.assertEqual(SRV.count("attempts = _llm_attempts(effort)"), 2)
 
     def test_anthropic_translations_present(self):
         self.assertIn('req = _anthropic_request(k, req_body, stream=True)', SRV)

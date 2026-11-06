@@ -41,7 +41,7 @@ def _cleanup():
 
 class Marker(unittest.TestCase):
     def test_build_bumped(self):
-        self.assertEqual(SRV.count('"patch81-live-feed"'), 2)
+        self.assertEqual(SRV.count('"patch82-brain-ui"'), 2)
 
     def test_frontend_pieces(self):
         self.assertIn("oracool_ref", APP)

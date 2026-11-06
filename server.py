@@ -2506,23 +2506,80 @@ def _default_provider():
     return "", "", ""
 
 
+def _llm_attempts(effort="low"):
+    """patch82: one provider ladder for every brain path — anthropic ->
+    groq-oss -> groq -> gemini -> openai -> agnes. Each caller fails over
+    down the list instead of dying on the first provider's billing error."""
+    attempts = []
+    k = key("ANTHROPIC_API_KEY")
+    if k:
+        attempts.append((k, ANTHROPIC_BASE, _anthropic_model(), "anthropic", {}))  # patch74: strongest brain first
+    k = key("GROQ_API_KEY")
+    if k:
+        attempts.append((k, "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "groq-oss", {"reasoning_effort": effort}))
+        attempts.append((k, "https://api.groq.com/openai/v1", KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), "groq", {}))
+    k = key("GEMINI_API_KEY")
+    if k:
+        # Gemini speaks the OpenAI wire format at /v1beta/openai (patch82)
+        attempts.append((k, "https://generativelanguage.googleapis.com/v1beta/openai",
+                         KEYS.get("GEMINI_MODEL", "gemini-3.1-flash-lite"), "gemini", {}))
+    k = key("OPENAI_API_KEY")
+    if k:
+        attempts.append((k, "https://api.openai.com/v1", "gpt-4o-mini", "openai", {}))
+    k = key("AGNES_API_KEY")
+    if k:
+        attempts.append((k, AGNES_BASE, KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), "agnes", {}))
+    return attempts
+
+
 def llm_complete(messages, temperature=0.4, max_tokens=800):
-    api_key, base_url, model = _default_provider()
-    if not api_key:
+    """patch82: chat brain fails over across EVERY configured provider — a
+    dead/creditless account no longer takes the whole brain down."""
+    attempts = _llm_attempts()
+    if not attempts:
         return None, "No AI provider configured (keys.json)."
-    url = base_url + "/chat/completions"
-    payload = {"model": model, "messages": messages, "temperature": temperature,
-               "max_tokens": max_tokens}
-    headers = {"Authorization": "Bearer " + api_key, "Content-Type": "application/json",
-               "User-Agent": UA}
-    try:
-        _, raw, _ = http_fetch(url, method="POST", headers=headers, json_body=payload, timeout=90)
-        data = json.loads(raw)
-        return (data.get("choices") or [{}])[0].get("message", {}).get("content", ""), None
-    except urllib.error.HTTPError as e:
-        return None, f"AI provider error {e.code}: {e.read().decode('utf-8','replace')[:200]}"
-    except Exception as e:
-        return None, str(e)
+    last_err = "all LLM providers failed"
+    for k, base, model, prov, extra in attempts:
+        try:
+            payload = {"model": model, "messages": messages, "temperature": temperature,
+                       "max_tokens": max_tokens}
+            payload.update(extra)
+            if prov == "anthropic":  # Claude speaks the Messages API (patch74)
+                _sys, _msgs = _anthropic_messages(messages)
+                ab = {"model": model, "messages": _msgs,
+                      "max_tokens": int(max(16, min(int(max_tokens or 1024), 8192)))}
+                if _sys:
+                    ab["system"] = _sys
+                _, raw, _ = http_fetch(base.rstrip("/") + "/messages", method="POST",
+                                       headers={"x-api-key": k, "anthropic-version": "2023-06-01",
+                                                "Content-Type": "application/json"},
+                                       json_body=ab, timeout=90)
+                d = json.loads(raw)
+                c = " ".join(str(b.get("text") or "") for b in (d.get("content") or [])
+                             if isinstance(b, dict)).strip()
+                if c:
+                    return c, None
+                last_err = prov + ": empty response"
+                continue
+            _, raw, _ = http_fetch(base.rstrip("/") + "/chat/completions", method="POST",
+                                   headers={"Authorization": "Bearer " + k, "Content-Type": "application/json",
+                                            "User-Agent": UA},
+                                   json_body=payload, timeout=90)
+            data = json.loads(raw)
+            c = (((data.get("choices") or [{}])[0].get("message")) or {}).get("content", "")
+            if c:
+                return c, None
+            last_err = prov + ": empty response"
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8", "replace")
+            except Exception:
+                pass
+            last_err = _brain_error_text(e.code, body)
+        except Exception as e:
+            last_err = prov + ": " + str(e)[:110]
+    return None, last_err
 
 
 def stock_candles(symbol, days=60):
@@ -4536,22 +4593,7 @@ def _llm_text(system, user, max_tokens=16000, extra_msgs=None, effort="low"):
     groq -> openai -> agnes; reports each provider's finish_reason so the
     caller can detect truncated output (patch27: JSON-escaped HTML blew the
     token budget, raw HTML fits)."""
-    attempts = []
-    k = key("ANTHROPIC_API_KEY")
-    if k:
-        attempts.append((k, ANTHROPIC_BASE, _anthropic_model(), "anthropic", {}))  # patch74: strongest brain first
-    k = key("GROQ_API_KEY")
-    if k:
-        # gpt-oss on Groq first: fast, follows size budgets, and its rate-limit
-        # bucket is separate from the chat model (which 429s while serving the app)
-        attempts.append((k, "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "groq-oss", {"reasoning_effort": effort}))
-        attempts.append((k, "https://api.groq.com/openai/v1", KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), "groq", {}))
-    k = key("OPENAI_API_KEY")
-    if k:
-        attempts.append((k, "https://api.openai.com/v1", "gpt-4o-mini", "openai", {}))
-    k = key("AGNES_API_KEY")
-    if k:
-        attempts.append((k, AGNES_BASE, KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), "agnes", {}))
+    attempts = _llm_attempts(effort)
     if not attempts:
         return None, "no LLM key configured", "nokey"
     last_err = "all LLM providers failed"
@@ -4595,20 +4637,7 @@ def _llm_text_stream(system, user, max_tokens=16000, extra_msgs=None, effort="lo
     """patch42: same provider ladder as _llm_text, but streamed — `on_delta(text_so_far)` fires as the
     page is written so the build feed can show progress section by section. Falls back to the
     non-streaming call if every provider refuses to stream."""
-    attempts = []
-    k = key("ANTHROPIC_API_KEY")
-    if k:
-        attempts.append((k, ANTHROPIC_BASE, _anthropic_model(), "anthropic", {}))  # patch74: strongest builder brain first
-    k = key("GROQ_API_KEY")
-    if k:
-        attempts.append((k, "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "groq-oss", {"reasoning_effort": effort}))
-        attempts.append((k, "https://api.groq.com/openai/v1", KEYS.get("GROQ_MODEL", GROQ_DEFAULT_MODEL), "groq", {}))
-    k = key("OPENAI_API_KEY")
-    if k:
-        attempts.append((k, "https://api.openai.com/v1", "gpt-4o-mini", "openai", {}))
-    k = key("AGNES_API_KEY")
-    if k:
-        attempts.append((k, AGNES_BASE, KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), "agnes", {}))
+    attempts = _llm_attempts(effort)
     if not attempts:
         return None, "no LLM key configured", "nokey"
     for k, base, model, prov, extra in attempts:
@@ -9290,7 +9319,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch81-live-feed",
+        "build": "patch82-brain-ui",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -12884,7 +12913,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch81-live-feed", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch82-brain-ui", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
