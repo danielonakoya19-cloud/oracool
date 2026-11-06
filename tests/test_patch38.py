@@ -18,7 +18,7 @@ LAND = open(ROOT / 'landing.html', encoding='utf-8').read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch89b-call-buttons"'), 2)
+        self.assertEqual(SRV.count('"patch90-call-vision-fit"'), 2)
         self.assertNotIn('patch38-direct', SRV)
 
 

@@ -13,7 +13,7 @@ SQL = open(os.path.join(ROOT, "supabase_patch57_user_base.sql"), encoding="utf-8
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch89b-call-buttons"'), 2)
+        self.assertEqual(SRV.count('"patch90-call-vision-fit"'), 2)
         self.assertNotIn("Nmap / Port Scan", APP)
         self.assertIn("YOU HAVE Nmap", APP)
         self.assertIn("User base —", APP)

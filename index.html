@@ -1628,6 +1628,34 @@ html[data-theme="light"] .call-cap{background:rgba(255,255,255,.7); border-color
 html[data-theme="light"] .callbtn{background:rgba(255,255,255,.72); border-color:rgba(255,255,255,.9); color:#12203c;}
 html[data-theme="light"] .callbtn.end{color:#fff;}
 
+
+/* ---- patch90: small screens (iPhone 7 portrait / iOS 15) — compact, never cramped ---- */
+@media (max-width: 560px){
+  .gpt-hint{display:none !important;}
+  .gpt-actions{flex-wrap:nowrap !important; overflow-x:auto !important; -webkit-overflow-scrolling:touch; gap:6px !important; padding:6px 8px !important;}
+  .gpt-actions::-webkit-scrollbar{display:none;}
+  .modebtn{height:32px !important; padding:0 9px 0 8px !important; font-size:11.5px !important; margin-left:2px !important;}
+  .modebtn .mi-ic{font-size:13px;}
+  .gpt-send{width:40px !important; height:40px !important; font-size:18px !important;}
+  .gpt-input.big{padding:8px 10px !important;}
+  .chatinput{font-size:16px !important;}
+  .callbtn{min-width:52px !important; min-height:52px !important; font-size:18px !important;}
+  .callbtn.end{padding:0 16px !important;}
+  .call-ctrls{gap:10px !important; padding:12px 10px calc(16px + env(safe-area-inset-bottom)) !important;}
+  .call-top{padding:12px 14px !important;}
+  .call-title{letter-spacing:1.6px !important; font-size:11.5px !important;}
+  .call-cap{font-size:12px !important; bottom:12px !important; padding:9px 12px !important; max-width:92vw !important;}
+  .call-orb{width:min(52vw,190px) !important; height:min(52vw,190px) !important;}
+  #selfView{width:min(32vw,130px) !important; bottom:72px !important;}
+  .bubble{max-width:94% !important;}
+  .bubble img{max-width:100% !important; height:auto !important; border-radius:12px;}
+}
+@media (max-width: 400px){
+  .modebtn{height:30px !important; font-size:11px !important;}
+  .modebtn .mi-l{max-width:64px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .callbtn{min-width:48px !important; min-height:48px !important;}
+}
+
 </style>
 <script>
 (function(){var t=null;try{t=localStorage.getItem('oc_theme')}catch(e){};if(t!=='light'&&t!=='dark')t='dark';document.documentElement.setAttribute('data-theme',t);
@@ -3995,23 +4023,58 @@ function askPerms(){
 let callActive=false, callMode='voice', callMuted=false, callSpkOn=true, callT0=0, callTimer=null;
 let callRec=null, callCamStream=null, callSpeaking=false, callMxRaf=null, callMxT=0;
 function fmtCallT(){ const s=Math.floor((Date.now()-callT0)/1000); return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); }
+function callUnlockTTS(){
+  /* iOS 15 Safari only lets speech start from inside a user gesture — prime the engine now */
+  try{ if(window.speechSynthesis){ speechSynthesis.resume(); const u=new SpeechSynthesisUtterance(' '); u.volume=0; speechSynthesis.speak(u); } }catch(e){}
+}
 function callSay(t){
   t=(t||'').trim(); if(!t) return;
   const o=document.getElementById('callOrb');
-  function done(){ callSpeaking=false; if(o) o.classList.remove('talking'); if(callActive && !callMuted) callListen(); else if(callActive) document.getElementById('callCap').textContent='Microphone muted — tap 🎤 to speak.'; }
-  if(!callSpkOn){ document.getElementById('callCap').textContent='OraCool: '+t; setTimeout(done, 900); return; }
+  let settled=false;
+  function done(){ if(settled) return; settled=true; callSpeaking=false; if(o) o.classList.remove('talking'); if(callActive && !callMuted) callListen(); else if(callActive) document.getElementById('callCap').textContent='Microphone muted — tap 🎤 to speak.'; }
+  if(!callSpkOn){ document.getElementById('callCap').textContent='OraCool: '+t; setTimeout(done, 500); return; }
   callSpeaking=true; if(o) o.classList.add('talking');
   try{
-    if(window.speechSynthesis){ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(t); u.rate=1.03; u.onend=done; u.onerror=done; speechSynthesis.speak(u);
-      setTimeout(function(){ if(callSpeaking && !(window.speechSynthesis&&speechSynthesis.speaking)) done(); }, Math.min(20000, 1200+t.length*90));
-    } else { done(); }
+    if(window.speechSynthesis && typeof SpeechSynthesisUtterance!=='undefined'){
+      speechSynthesis.cancel(); speechSynthesis.resume();
+      const u=new SpeechSynthesisUtterance(t); u.rate=1.03; u.onend=done; u.onerror=done;
+      speechSynthesis.speak(u);
+      /* iOS can silently refuse out-of-gesture speech: if nothing started in 900ms,
+         the caption already carries the reply — continue the conversation anyway */
+      setTimeout(function(){ if(!settled && !(window.speechSynthesis&&speechSynthesis.speaking)) done(); }, 900);
+      setTimeout(function(){ if(!settled && callSpeaking) done(); }, Math.min(22000, 1500+t.length*95));
+    } else { document.getElementById('callCap').textContent='OraCool: '+t; setTimeout(done, 700); }
   }catch(e){ done(); }
 }
 async function callTurn(text){
   text=(text||'').trim(); if(!text) return;
   document.getElementById('callCap').textContent='You: '+text;
   addUser(text); histPush({role:'user',content:text});
-  const msgs=[{role:'system',content:systemPrompt()},...history.slice(-18)];
+  /* patch90: on video calls the AI sees the user + surroundings — one camera frame is
+     described by the vision tool each turn (text only travels; the raw frame is never stored) */
+  let seen='';
+  if(callMode==='video' && callCamStream){
+    try{
+      const v=document.getElementById('selfView');
+      if(v && v.videoWidth){
+        const cv=document.createElement('canvas');
+        cv.width=384; cv.height=Math.max(200,Math.round(384*(v.videoHeight/v.videoWidth)));
+        cv.getContext('2d').drawImage(v,0,0,cv.width,cv.height);
+        const b64=(cv.toDataURL('image/jpeg',0.72)||'').split(',')[1]||'';
+        if(b64){
+          document.getElementById('callCap').textContent='Looking through the camera…';
+          const r=await post('/api/files/analyze',{name:'call-frame.jpg', mime:'image/jpeg', data_b64:b64, purpose:'attachment'});
+          if(r && r.text) seen=String(r.text).slice(0,1500);
+        }
+      }
+    }catch(e){ seen=''; }
+  }
+  let _sys=''; try{ _sys=systemPrompt(); }catch(e){ _sys='You are OraCool, a helpful voice assistant. Keep answers short and natural.'; }
+  const tail=history.slice(-18).map(function(m){ return {role:m.role, content:m.content}; });
+  if(seen && tail.length && tail[tail.length-1].role==='user'){
+    tail[tail.length-1]={role:'user',content:tail[tail.length-1].content+'\n\n[Live camera frame — you can see the user and their surroundings right now. Briefly acknowledge what you see when relevant (their look, place, mood), then answer what they said:] '+seen};
+  }
+  const msgs=[{role:'system',content:_sys},...tail];
   let _csid=''; try{ _csid = privMode ? '' : (sessionId || await ensureSession()); }catch(e){}
   const payload={messages:msgs,stream:true,provider:(modelMode==='direct'&&mmA?mmA:(settings.provider||'auto')),voice_mode:true,max_tokens:300,
                  session_id:_csid||'',private:!!privMode,mode:'auto',tz:(Intl.DateTimeFormat().resolvedOptions().timeZone||'')};
@@ -4038,7 +4101,7 @@ async function callTurn(text){
     histPush({role:'assistant',content:acc});
     try{ const b=addAI(''); renderCmpOrRich(b.lastChild, acc); }catch(e){}
     callSay(acc);
-  }).catch(function(){ document.getElementById('callCap').textContent='Connection hiccup — try again.'; if(callActive&&!callMuted) setTimeout(callListen,600); });
+  }).catch(function(e){ document.getElementById('callCap').textContent='Connection hiccup ('+((e&&e.message)||'network')+') — say that again?'; if(callActive&&!callMuted) setTimeout(callListen,700); });
 }
 function callListen(){
   if(!callActive||callMuted||callSpeaking) return;
@@ -4048,15 +4111,20 @@ function callListen(){
   try{ if(callRec){ callRec.onend=null; try{callRec.stop();}catch(e){} callRec=null; } }catch(e){}
   try{
     callRec=new SR(); callRec.lang='en-US'; callRec.continuous=false; callRec.interimResults=true;
-    let interim='';
+    let heard='';
     callRec.onresult=function(ev){
       let fin='';
-      for(let i=ev.resultIndex;i<ev.results.length;i++){ const r=ev.results[i]; if(r.isFinal) fin+=r[0].transcript; else interim+=r[0].transcript; }
-      if(interim && !fin) document.getElementById('callCap').textContent='You: '+interim;
-      if(fin){ interim=''; try{callRec.stop();}catch(e){} callTurn(fin); }
+      for(let i=ev.resultIndex;i<ev.results.length;i++){ const r=ev.results[i]; if(r.isFinal) fin+=r[0].transcript; else heard+=r[0].transcript; }
+      if(fin) heard+=fin;
+      if(heard){ document.getElementById('callCap').textContent='You: '+heard; }
+      if(fin){ try{callRec.stop();}catch(e){} const said=heard; heard=''; callTurn(said); }
     };
     callRec.onerror=function(ev){ if(ev.error==='no-speech'){ if(callActive&&!callMuted&&!callSpeaking) setTimeout(callListen,400); } else if(ev.error==='not-allowed'){ document.getElementById('callCap').textContent='Microphone permission blocked — allow the mic, or type below.'; const t2=document.getElementById('callTyped'); if(t2) t2.classList.add('show'); } };
-    callRec.onend=function(){ if(callActive&&!callMuted&&!callSpeaking) setTimeout(callListen,350); };
+    callRec.onend=function(){
+      /* some engines never flag isFinal — commit whatever was heard so the AI always replies */
+      if(heard && callActive && !callMuted && !callSpeaking){ const said=heard; heard=''; callTurn(said); return; }
+      if(callActive&&!callMuted&&!callSpeaking) setTimeout(callListen,350);
+    };
     callRec.start();
     document.getElementById('callCap').textContent='Listening…';
   }catch(e){ const t3=document.getElementById('callTyped'); if(t3) t3.classList.add('show'); }
@@ -4116,6 +4184,7 @@ function startMatrix(){
 function stopMatrix(){ try{ if(callMxRaf){ cancelAnimationFrame(callMxRaf); callMxRaf=null; } }catch(e){} }
 async function startCall(mode){
   try{ if(window._wireCallOv) window._wireCallOv(); }catch(e){}
+  callUnlockTTS();
   askPerms();
   callActive=true; callMode=(mode==='video')?'video':'voice'; callMuted=false; callSpkOn=true;
   document.body.classList.add('in-call');

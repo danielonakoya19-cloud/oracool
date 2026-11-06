@@ -13,7 +13,7 @@ APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch89b-call-buttons"'), 2)
+        self.assertEqual(SRV.count('"patch90-call-vision-fit"'), 2)
         self.assertIn('/api/admin/users/resync', SRV)
         self.assertIn('admin_users_resync', SRV)
 

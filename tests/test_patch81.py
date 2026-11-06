@@ -32,7 +32,7 @@ class TestPatch81LiveFeed(unittest.TestCase):
 
     def test_marker_patch81(self):
         src = open("server.py", encoding="utf-8").read()
-        assert src.count("patch89b-call-buttons") == 2
+        assert src.count("patch90-call-vision-fit") == 2
         assert "def _intraday_series(" in src and "def _signal_series(" in src
         assert "asof" in src and "Yahoo uses epoch seconds" in src
 

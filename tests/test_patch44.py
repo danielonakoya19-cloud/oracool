@@ -20,7 +20,7 @@ def _http_err(code, msg):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch89b-call-buttons"'), 2)
+        self.assertEqual(SRV.count('"patch90-call-vision-fit"'), 2)
         self.assertNotIn("patch43-modes", SRV)
 
 
@@ -90,7 +90,7 @@ class Client(unittest.TestCase):
                        "never say you cannot see images", "f.type==='image'?'IMAGE':f.type==='video'?'VIDEO':f.type==='audio'?'AUDIO':'FILE'",
                        "files.some(f=>f.thumb)", "I could not look inside this picture right now"):
             self.assertIn(needle, APP, needle)
-        self.assertEqual(APP.count("purpose:'attachment'"), 3)  # camera x2 + patch78 shared paste/pick path
+        self.assertEqual(APP.count("purpose:'attachment'"), 4)  # camera x2 + patch78 paste/pick + patch90 call-frame vision
 
     def test_composer_clears_before_early_returns(self):
         i_clear = APP.index("// patch44: clear the box before any early-return path")

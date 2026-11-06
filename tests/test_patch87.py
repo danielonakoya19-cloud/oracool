@@ -18,7 +18,7 @@ def holo_layer(page):
 
 class TestPatch87Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch89b-call-buttons"'), 2)
+        self.assertEqual(SRV.count('"patch90-call-vision-fit"'), 2)
 
 
 class TestPatch87BuilderGlass(unittest.TestCase):
