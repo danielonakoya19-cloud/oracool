@@ -47,7 +47,7 @@ class FakeSSE:
 class BuildMarkerTests(unittest.TestCase):
     def test_patch21_marker(self):
         src = (ROOT / "server.py").read_text(errors="ignore")
-        self.assertIn('"build": "patch83-brain-resilience"', src)
+        self.assertIn('"build": "patch84-video-modes-edit"', src)
 
 
 class CascadeOrderTests(unittest.TestCase):
@@ -229,8 +229,11 @@ class Wan22FreePathTests(unittest.TestCase):
         sv.assert_not_called()
 
     def test_healthy_space_frame_from_cvron(self):
+        # patch84 retarget: CVRON died (email wall) — frames now come from the live
+        # engine cascade _gemini_image -> _agnes_image -> _nexa_image
         with mock.patch.object(server, "_hf_space_health", return_value=0.8), \
-             mock.patch.object(server, "_cvron_image", return_value={"ok": True, "urls": ["https://i/x.jpg"]}), \
+             mock.patch.object(server, "_gemini_image", return_value=None), \
+             mock.patch.object(server, "_agnes_image", return_value={"ok": True, "urls": ["https://i/x.jpg"]}), \
              mock.patch.object(server, "_hf_space_video", return_value={"ok": True, "urls": ["https://v/y.mp4"]}) as sv:
             r = server._hf_wan22_video("a forest at night")
         self.assertTrue(r.get("ok"), r)

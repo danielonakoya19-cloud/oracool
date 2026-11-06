@@ -11,7 +11,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 SW = open(os.path.join(ROOT, "sw.js"), encoding="utf-8").read()
 
-MARK = "patch83-brain-resilience"
+MARK = "patch84-video-modes-edit"
 
 
 class Marker(unittest.TestCase):

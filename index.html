@@ -309,6 +309,28 @@
 
   #wave{height:44px; margin:0 16px; opacity:0; transition:opacity .3s;}
   #wave.on{opacity:1;}
+  .mm-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%}
+  .mm-col{background:var(--panel2,rgba(255,255,255,.05));border:1px solid var(--line);border-radius:14px;padding:10px 12px;min-width:0}
+  .mm-lab{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);margin-bottom:6px;font-weight:700}
+  .mm-body{font-size:13.5px;line-height:1.55;word-wrap:break-word;white-space:pre-wrap}
+  .mm-vote{display:flex;gap:8px;margin-top:8px}
+  .mm-vote button{font-size:11px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--text);cursor:pointer}
+  .mm-vote button.win{background:var(--accent,#22c55e);color:#fff;border-color:transparent}
+  .mm-picks{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--line);flex-wrap:wrap;align-items:center}
+  .mm-picks select{font-size:11px;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:var(--panel2,rgba(255,255,255,.06));color:var(--text)}
+  .mm-picks span{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:var(--dim)}
+  @media(max-width:720px){ .mm-row{grid-template-columns:1fr} }
+  .mm-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%}
+  .mm-col{background:var(--panel2,rgba(255,255,255,.05));border:1px solid var(--line);border-radius:14px;padding:10px 12px;min-width:0}
+  .mm-lab{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);margin-bottom:6px;font-weight:700}
+  .mm-body{font-size:13.5px;line-height:1.55;word-wrap:break-word;white-space:pre-wrap}
+  .mm-vote{display:flex;gap:8px;margin-top:8px}
+  .mm-vote button{font-size:11px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--text);cursor:pointer}
+  .mm-vote button.win{background:var(--accent,#22c55e);color:#fff;border-color:transparent}
+  .mm-picks{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--line);flex-wrap:wrap;align-items:center}
+  .mm-picks select{font-size:11px;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:var(--panel2,rgba(255,255,255,.06));color:var(--text)}
+  .mm-picks span{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:var(--dim)}
+  @media(max-width:720px){ .mm-row{grid-template-columns:1fr} }
   .inputbar{display:flex; gap:10px; padding:12px 16px calc(14px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); align-items:center;}
   .iconbtn{flex:0 0 auto; width:48px; height:48px; border-radius:12px; cursor:pointer; background:rgba(0,229,255,.06); border:1px solid var(--line); color:var(--cyan2); touch-action:manipulation;
     display:flex; align-items:center; justify-content:center; transition:.2s; font-size:18px;}
@@ -828,6 +850,8 @@
             <button class="iconbtn" id="chatEmoji" title="Emoji">😀</button>
             <button class="iconbtn" id="micBtn" title="Speak to OraCool">🎙️</button>
             <button class="modebtn" id="modeBtn" title="Mode — Auto, Fast, Build or Expert" aria-haspopup="menu" aria-expanded="false"><span class="mi-ic">✦</span><span class="mi-l">Auto</span><span class="mi-ch">▾</span></button>
+            <button class="modebtn" id="mmBtn" title="Models — Agent, Direct, Side by Side or Battle" aria-haspopup="menu" aria-expanded="false"><span class="mi-ic">⇄</span><span class="mi-l" id="mmLab">Agent</span><span class="mi-ch">▾</span></button>
+            <button class="modebtn" id="mmBtn" title="Models — Agent, Direct, Side by Side or Battle" aria-haspopup="menu" aria-expanded="false"><span class="mi-ic">⇄</span><span class="mi-l" id="mmLab">Agent</span><span class="mi-ch">▾</span></button>
             <span class="gpt-spacer"></span>
             <span class="gpt-hint">Enter ↵ to send · Shift+Enter = new line · Ctrl+V = paste screenshot</span>
             <button class="gpt-send" id="sendBtn" title="Send">↑</button>
@@ -839,6 +863,28 @@
             <button class="mi" data-mode="auto" role="menuitemradio"><span class="mi-ic">✦</span><span><b>Auto</b><small>OraCool decides — chat, tools, media or build</small></span><span class="mi-ok">✓</span></button>
             <button class="mi" data-mode="expert" role="menuitemradio"><span class="mi-ic">💡</span><span><b>Expert</b><small>deeper reasoning, fuller answers</small></span><span class="mi-ok">✓</span></button>
             <div class="mi-up" id="modeUpgrade"><span><b>OraCool Plans</b><small>more builds, OSINT tools, longer memory</small></span><button class="mi-upbtn" type="button">Upgrade</button></div>
+          </div>
+          <div class="modemenu" id="mmMenu" role="menu" hidden>
+            <button class="mi" data-mm="agent" role="menuitemradio"><span class="mi-ic">🤖</span><span><b>Agent</b><small>the full OraCool agent — tools, builds, media</small></span><span class="mi-ok">✓</span></button>
+            <button class="mi" data-mm="direct" role="menuitemradio"><span class="mi-ic">💬</span><span><b>Direct</b><small>chat with 1 model at a time</small></span><span class="mi-ok">✓</span></button>
+            <button class="mi" data-mm="side" role="menuitemradio"><span class="mi-ic">⇄</span><span><b>Side by Side</b><small>compare 2 models of your choice</small></span><span class="mi-ok">✓</span></button>
+            <button class="mi" data-mm="battle" role="menuitemradio"><span class="mi-ic">⚔️</span><span><b>Battle</b><small>battle 2 anonymous models — then vote</small></span><span class="mi-ok">✓</span></button>
+            <div class="mm-picks" id="mmPicks" hidden>
+              <span id="mmPickLbl">Models</span>
+              <select id="mmA"><option value="auto">OraCool Auto</option><option value="groq">Groq (Fast)</option><option value="gemini">Gemini</option><option value="anthropic">Claude</option><option value="openai">GPT</option></select>
+              <select id="mmB"><option value="groq">Groq (Fast)</option><option value="gemini">Gemini</option><option value="anthropic">Claude</option><option value="openai">GPT</option><option value="auto">OraCool Auto</option></select>
+            </div>
+          </div>
+          <div class="modemenu" id="mmMenu" role="menu" hidden>
+            <button class="mi" data-mm="agent" role="menuitemradio"><span class="mi-ic">🤖</span><span><b>Agent</b><small>the full OraCool agent — tools, builds, media</small></span><span class="mi-ok">✓</span></button>
+            <button class="mi" data-mm="direct" role="menuitemradio"><span class="mi-ic">💬</span><span><b>Direct</b><small>chat with 1 model at a time</small></span><span class="mi-ok">✓</span></button>
+            <button class="mi" data-mm="side" role="menuitemradio"><span class="mi-ic">⇄</span><span><b>Side by Side</b><small>compare 2 models of your choice</small></span><span class="mi-ok">✓</span></button>
+            <button class="mi" data-mm="battle" role="menuitemradio"><span class="mi-ic">⚔️</span><span><b>Battle</b><small>battle 2 anonymous models — then vote</small></span><span class="mi-ok">✓</span></button>
+            <div class="mm-picks" id="mmPicks" hidden>
+              <span id="mmPickLbl">Models</span>
+              <select id="mmA"><option value="auto">OraCool Auto</option><option value="groq">Groq (Fast)</option><option value="gemini">Gemini</option><option value="anthropic">Claude</option><option value="openai">GPT</option></select>
+              <select id="mmB"><option value="groq">Groq (Fast)</option><option value="gemini">Gemini</option><option value="anthropic">Claude</option><option value="openai">GPT</option><option value="auto">OraCool Auto</option></select>
+            </div>
           </div>
         </div>
       </div>
@@ -2226,7 +2272,7 @@ function restoreChat(){
     chat.innerHTML=''; history.length=0;
     arr.forEach(m=>{
       if(m.role==='user'){ const b=document.createElement('div'); b.className='bubble user'; renderUserRich(b, m.content); chat.appendChild(b); history.push({role:'user',content:m.content}); }
-      else if(m.role==='assistant'){ const b=document.createElement('div'); b.className='bubble ai'; b.innerHTML='<span class="who">ORA-COOL</span>'; const bd=document.createElement('div'); renderRich(bd, m.content); b.appendChild(bd); chat.appendChild(b); history.push({role:'assistant',content:m.content}); }
+      else if(m.role==='assistant'){ const b=document.createElement('div'); b.className='bubble ai'; b.innerHTML='<span class="who">ORA-COOL</span>'; const bd=document.createElement('div'); renderCmpOrRich(bd, m.content); b.appendChild(bd); chat.appendChild(b); history.push({role:'assistant',content:m.content}); }
       else { addSystemNote('⟲ '+m.content); }
     });
     const note=document.createElement('div'); note.className='tagline'; note.textContent='⟲ Previous conversation restored'; chat.prepend(note);
@@ -2311,7 +2357,7 @@ async function openSession(id){
   msgs.forEach(m=>{
     if(m.role==='user'){ const b=document.createElement('div'); b.className='bubble user'; renderUserRich(b, m.content); chat.appendChild(b); history.push({role:'user',content:m.content}); }
     else if(m.role==='assistant'){ const b=document.createElement('div'); b.className='bubble ai'; b.innerHTML='<span class="who">ORA-COOL</span>';
-      const bd=document.createElement('div'); renderRich(bd,m.content); b.appendChild(bd); chat.appendChild(b); history.push({role:'assistant',content:m.content}); } });
+      const bd=document.createElement('div'); renderCmpOrRich(bd,m.content); b.appendChild(bd); chat.appendChild(b); history.push({role:'assistant',content:m.content}); } });
   setSessionId(id);
   const tag=document.createElement('div'); tag.className='tagline'; tag.textContent='⟲ '+(msgs.length?('Loaded “'+((r.session&&r.session.title)||'chat')+'”'):'New chat');
   chat.prepend(tag);
@@ -2942,6 +2988,79 @@ function predictIntent(){
 
 let busy=false;
 let CHAT_TURN=0;
+/* patch84: model modes — Agent / Direct / Side by Side / Battle */
+let modelMode='agent'; let mmA='auto'; let mmB='groq';
+const MM_LABELS={auto:'OraCool Auto',groq:'Groq (Fast)',gemini:'Gemini',anthropic:'Claude',openai:'GPT'};
+function mmLabel(k){ return MM_LABELS[k]||k; }
+function parseCmp(t){ const m=String(t||'').match(/^\[\[cmp:([\s\S]*)\]\]$/); if(!m) return null; try{ return JSON.parse(decodeURIComponent(m[1])); }catch(e){ return null; } }
+function renderCmpOrRich(el, text){ const c=parseCmp(text); if(c){ renderCompare(el,c); } else { renderRich(el, text); } }
+function renderCompare(el, c){
+  el.innerHTML='';
+  const row=document.createElement('div'); row.className='mm-row';
+  (c.texts||['','']).forEach((tx,i)=>{
+    const col=document.createElement('div'); col.className='mm-col';
+    const lab=document.createElement('div'); lab.className='mm-lab'; lab.textContent=(c.labels&&c.labels[i])||('Model '+String.fromCharCode(65+i));
+    const bd=document.createElement('div'); bd.className='mm-body'; renderRich(bd, tx||'(no answer)');
+    col.appendChild(lab); col.appendChild(bd); row.appendChild(col);
+    if(c.battle){ const v=document.createElement('div'); v.className='mm-vote';
+      const b=document.createElement('button'); b.textContent='👍 vote'; b.className=(c.winner===i?'win':'');
+      b.onclick=()=>{ c.winner=i; const es=history.filter(h=>h&&h.content&&parseCmp(h.content)); const e2=es[es.length-1]; if(e2){ e2.content='[[cmp:'+encodeURIComponent(JSON.stringify(c))+']]'; } renderCompare(el,c); };
+      v.appendChild(b); col.appendChild(v);
+      if(c.winner===i) lab.textContent+=' · winner ✓';
+    }
+  });
+  el.appendChild(row);
+}
+async function sendCompare(display, content){
+  const battle = modelMode==='battle';
+  const labels = battle?['Model A','Model B']:[mmLabel(mmA), mmLabel(mmB)];
+  const b=addAI(''); const body=b.lastChild;
+  body.innerHTML='<div class="mm-row">'+labels.map((l,i)=>'<div class="mm-col"><div class="mm-lab">'+escapeHtml(l)+'</div><div class="mm-body" id="mmb'+i+'"><span class="dots"></span></div></div>').join('')+'</div>';
+  scrollChat();
+  const texts=['','']; const _sid=await ensureSession();
+  const run=async(i)=>{
+    const prov=i?mmB:mmA;
+    const payload={messages:[{role:'system',content:systemPrompt()},...history],stream:true,provider:prov,max_tokens:900,session_id:_sid||'',mode:'auto'};
+    try{ if(session&&session.access_token) payload.access_token=session.access_token; const _em=myEmail(); if(_em) payload.email=_em; if(proToken) payload.token=proToken;
+      const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if(!resp.ok) throw new Error('provider error '+resp.status);
+      const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf='';
+      outer: while(true){ const {done,value}=await reader.read(); if(done)break; buf+=dec.decode(value,{stream:true});
+        let idx; while((idx=buf.indexOf('\n\n'))>=0){ const chunk=buf.slice(0,idx); buf=buf.slice(idx+2);
+          for(const line of chunk.split('\n')){ if(line.startsWith('data:')){ const data=line.slice(5).trim(); if(data==='[DONE]')break outer;
+            try{ const j=JSON.parse(data); const d=j.choices?.[0]?.delta?.content; if(d){ texts[i]+=d; const el=document.getElementById('mmb'+i); if(el){ el.textContent=_cleanReply(texts[i]); scrollChat(); } } }catch(e){} } } } }
+    }catch(e){ texts[i]='⚠ '+String(e.message||e).slice(0,160); }
+  };
+  await Promise.all([run(0),run(1)]);
+  const c={labels,texts,winner:null,battle};
+  renderCompare(body, c);
+  history.push({role:'assistant',content:'[[cmp:'+encodeURIComponent(JSON.stringify(c))+']]'});
+  if(history.length>MAXH)history.splice(0,history.length-MAXH);
+  scrollChat();
+  if(window.OraVoice&&window.OraVoice.enabled){ try{ speak(_cleanReply(texts[0]||'')); }catch(e){} }
+}
+(function(){
+  const mmBtn=document.getElementById('mmBtn'), mmMenu=document.getElementById('mmMenu'), mmLab=document.getElementById('mmLab');
+  const mmPicks=document.getElementById('mmPicks'), mmA_=document.getElementById('mmA'), mmB_=document.getElementById('mmB'), mmPickLbl=document.getElementById('mmPickLbl');
+  if(!mmBtn||!mmMenu) return;
+  mmBtn.addEventListener('click',(e)=>{ e.stopPropagation(); mmMenu.hidden=!mmMenu.hidden; mmBtn.setAttribute('aria-expanded',String(!mmMenu.hidden)); });
+  document.addEventListener('click',(e)=>{ if(!mmMenu.hidden && !mmMenu.contains(e.target) && e.target!==mmBtn){ mmMenu.hidden=true; } });
+  mmMenu.querySelectorAll('.mi[data-mm]').forEach(it=>{
+    it.addEventListener('click',()=>{
+      modelMode=it.getAttribute('data-mm');
+      mmMenu.querySelectorAll('.mi[data-mm]').forEach(x=>x.classList.toggle('sel',x===it));
+      const nm={agent:'Agent',direct:'Direct',side:'Side by Side',battle:'Battle'};
+      mmLab.textContent=nm[modelMode]||'Agent';
+      mmPicks.hidden = !(modelMode==='direct'||modelMode==='side'||modelMode==='battle');
+      if(mmPickLbl) mmPickLbl.textContent = modelMode==='direct' ? 'Model' : (modelMode==='battle' ? 'hidden — anonymous' : 'Models');
+      if(mmA_) mmA_.style.display = (modelMode==='battle')?'none':'';
+      if(mmB_) mmB_.style.display = (modelMode==='side')?'':'none';
+      mmMenu.hidden=true;
+    });
+  });
+  if(mmA_) mmA_.addEventListener('change',()=>{ mmA=mmA_.value; });
+  if(mmB_) mmB_.addEventListener('change',()=>{ mmB=mmB_.value; });
+})();
 async function send(text){
   unlockAudio();
   text=(text||'').trim();
@@ -2989,6 +3108,7 @@ async function send(text){
   addUser(display, content);
   if(files.some(f=>f.thumb)){ try{ const ub=chat.querySelector('.bubble.user:last-of-type .bttext')||chat.querySelector('.bubble.user:last-of-type'); if(ub){ files.filter(f=>f.thumb).forEach(f=>{ const im=document.createElement('img'); im.src=f.thumb; im.alt=f.name; im.style.cssText='display:block;max-height:180px;max-width:100%;border-radius:10px;margin-top:6px'; ub.appendChild(im); }); } }catch(e){} }
   if(mediaRefs.length){ try{ const ub2=chat.querySelector('.bubble.user:last-of-type .bttext')||chat.querySelector('.bubble.user:last-of-type'); if(ub2){ mediaRefs.forEach(r=>{ ub2.appendChild(mediaEl(r.kind, r.src, r.name)); }); } }catch(e){} }
+  if(modelMode==='side'||modelMode==='battle'){ try{ return await sendCompare(display, content); }catch(e){ addAI('⚠ '+String(e.message||e).slice(0,160)); return; } }
   let coreNames=[], coreExtra='';
   if(activeCore){ coreNames.push(activeCore.name); coreExtra+=activeCore.persona+'\n\n'; }
   if(/[@#][A-Za-z0-9_]+/.test(text)){
@@ -3009,13 +3129,13 @@ async function send(text){
     const _sid=await ensureSession();
     let _tz=''; try{ _tz=Intl.DateTimeFormat().resolvedOptions().timeZone||''; }catch(e){}
     const _lt=(()=>{ try{ const d=new Date(); const o=-d.getTimezoneOffset(); const sg=o>=0?'+':'-'; const pad=n=>String(Math.abs(n)).padStart(2,'0'); return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,19)+sg+pad(Math.floor(Math.abs(o)/60))+':'+pad(Math.abs(o)%60); }catch(e){ return ''; } })();
-    const payload={messages:msgs, stream:true, provider:settings.provider||'auto', max_tokens:(window.OraVoice?.enabled?450:(_mode==='expert'?2200:900)), voice_mode:!!window.OraVoice?.enabled, session_id:_sid||'', mode:_mode, tz:_tz, local_time:_lt};
+    const payload={messages:msgs, stream:true, provider:(modelMode==='direct'&&mmA?mmA:(settings.provider||'auto')), max_tokens:(window.OraVoice?.enabled?450:(_mode==='expert'?2200:900)), voice_mode:!!window.OraVoice?.enabled, session_id:_sid||'', mode:_mode, tz:_tz, local_time:_lt};
     await ensureFreshLogin();
     if(session&&session.access_token) payload.access_token=session.access_token;
     const _em=myEmail(); if(_em) payload.email=_em; if(proToken) payload.token=proToken;
     if(settings.haUrl && settings.haToken){ payload.ha_url=settings.haUrl; payload.ha_token=settings.haToken; }
     if(isAdminSession() && settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
-    else if((_mode==='fast' || (settings.brainMode==='fast' && _mode!=='expert')) && srv && srv.brain && srv.brain.fast_model){ payload.provider='groq'; payload.model=srv.brain.fast_model; }
+    else if(modelMode!=='direct' && (_mode==='fast' || (settings.brainMode==='fast' && _mode!=='expert')) && srv && srv.brain && srv.brain.fast_model){ payload.provider='groq'; payload.model=srv.brain.fast_model; }
     const _chatFetch=()=>fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:chatAbort.signal});
     let resp=await Promise.race([_chatFetch(), new Promise((_,rej)=>setTimeout(()=>rej(new Error('No answer from the brain in 45s — the provider is jammed. Send again.')),45000))]);
     if(resp.status===429||resp.status===502||resp.status===503||resp.status===504){ body.innerHTML='<span class="dots"></span> <span style="color:var(--dim);font-size:12px">busy — retrying…</span>'; await new Promise(res=>setTimeout(res,1800+Math.random()*900)); resp=await Promise.race([_chatFetch(), new Promise((_,rej)=>setTimeout(()=>rej(new Error('No answer from the brain in 45s — the provider is jammed. Send again.')),45000))]); body.innerHTML='<span class="dots"></span>'; }
@@ -4896,7 +5016,7 @@ async function runAssistantReply(){
   try{
     let acc='';
     await ensureFreshLogin();
-    const payload={messages:msgs,stream:true,provider:settings.provider||'auto',email:myEmail(),token:proToken||'',session_id:await ensureSession(),access_token:session&&session.access_token};
+    const payload={messages:msgs,stream:true,provider:(modelMode==='direct'&&mmA?mmA:(settings.provider||'auto')),email:myEmail(),token:proToken||'',session_id:await ensureSession(),access_token:session&&session.access_token};
     if(isAdminSession() && settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
     const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!resp.ok){ let j=null; try{j=await resp.json();}catch(e){} if(resp.status===403 && j && (j.suspended||j.blocked)){ showBlockedScreen(); throw new Error('Account suspended — pay the reinstatement fine to continue.'); } throw new Error((j&&j.error)||('AI provider error '+resp.status)); }

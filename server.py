@@ -4103,7 +4103,7 @@ def _cvron_image(prompt):
     last = "cvron: no response"
     for ep, key_field in (("flux-dev.php", "image_url"), ("r000n-image.php", None)):
         try:
-            _, raw, _ = http_fetch(f"{CVRON}/cvronai/{ep}?prompt={q}", timeout=150,
+            _, raw, _ = http_fetch(f"{CVRON}/cvronai/{ep}?prompt={q}", timeout=20,
                                    headers={"User-Agent": "Mozilla/5.0"})
             d = json.loads(raw)
         except Exception as e:
@@ -4158,6 +4158,9 @@ def _cvron_video(prompt, attempts=2):
 # Lightning 480p model (auto-failover; each is health-probed via /monitoring).
 HF_ROUTER = "https://router.huggingface.co"
 HF_WAN22_SPACES = [
+    ("saravutw", "https://saravutw-wan2-2-i2v-lightning-4-8step-custom.hf.space"),
+    ("jcishere", "https://jcishere-wan2-2-i2v-v3.hf.space"),
+    ("obsxrver", "https://obsxrver-wan22-i2v-omni-lora.hf.space"),
     ("kekkonapoli", "https://kekkonapoli-wan2-2-14b-i2v-480p-lightning-nsfw-diffusers.hf.space"),
     ("kingkladze", "https://kingkladze-wan2-2-14b-i2v-480p-lightning-nsfw-diffusers.hf.space"),
     ("tmtanu", "https://tmtanu-wan2-2-14b-i2v-480p-lightning-nsfw-diffusers.hf.space"),
@@ -4304,8 +4307,17 @@ def _hf_wan22_video(prompt, image_url=None):
                 continue
             img = image_url
             if not img:
-                im = _cvron_image(prompt)
-                if im.get("ok"):
+                im = {}
+                for _f in (_gemini_image, _agnes_image, _nexa_image):  # patch84: CVRON died (email wall) — frames from live engines
+                    try:
+                        im = _f(prompt) or {}
+                        if isinstance(im, (tuple, list)):  # some engines return (dict, err)
+                            im = next((x for x in im if isinstance(x, dict)), {})
+                    except Exception as _fe:
+                        im = {"error": str(_fe)[:80]}
+                    if isinstance(im, dict) and im.get("ok"):
+                        break
+                if isinstance(im, dict) and im.get("ok"):
                     img = im["urls"][0]
                 else:
                     failures.append(name + ": frame failed (" + str(im.get("error"))[:80] + ")")
@@ -4387,7 +4399,7 @@ def _agnes_video(prompt, duration=None):
             return {"error": str(d.get("message") or d.get("error") or "Provider did not return a video task ID.")[:180]}
         print("Video job accepted by Agnes; waiting for provider output.")
         poll_url = root + "/agnesapi?" + urllib.parse.urlencode({"video_id": tid, "model_name": model})
-        deadline = time.monotonic() + 360
+        deadline = time.monotonic() + 120  # patch84: 2 min then move on — six-minute stalls looked like "video not generating"
         while time.monotonic() < deadline:
             time.sleep(15)
             try:
@@ -5348,6 +5360,10 @@ def _creative_direction(prompt, name):
 
 
 def build_site(email, name, prompt):
+    _mp = prompt or ""
+    _murls = re.findall(r"\[\[media:[^\]|]*\|[^|]*\|([^\]]+)\]\]", _mp)
+    if _murls:
+        prompt = _mp + "\n\nCLIENT ASSETS (the client sent these files — use these EXACT URLs in the page for images/logos/heroes; do NOT invent other image URLs):\n" + "\n".join("- " + u for u in dict.fromkeys(_murls))
     """Arena-style builder (patch27): designs a complete, professional static
     website matched to the brief — Lovable/Base44-grade template, real copy,
     motion, forms — saved to data/builds/<slug>/ and served same-origin at
@@ -5644,7 +5660,11 @@ def build_edit(email, slug, instructions):
         return {"error": "60 edits/day is the fair-use cap — edits are free, this just keeps the AI healthy."}
     c, prov, finish = "", "", ""
     try:
-        c, prov, finish = _llm_text_stream(_EDIT_SYS, "REQUEST: " + instructions + "\n\nCURRENT index.html:\n\n" + old,
+        _mreq = instructions or ""
+        _murls = re.findall(r"\[\[media:[^\]|]*\|[^|]*\|([^\]]+)\]\]", _mreq)
+        if _murls:
+            _mreq += "\n\nCLIENT ASSETS (the client sent these files — use these EXACT URLs in the code wherever images, logos or hero backgrounds belong; do NOT invent other image URLs):\n" + "\n".join("- " + u for u in dict.fromkeys(_murls))
+        c, prov, finish = _llm_text_stream(_EDIT_SYS, "REQUEST: " + _mreq + "\n\nCURRENT index.html:\n\n" + old,
                                            max_tokens=16000, on_delta=_writer_progress(email, "Rewriting"))
     except Exception:
         pass
@@ -6822,6 +6842,42 @@ def _mux_video_audio(video_url, audio_url):
         print("video+audio mux failed:", str(e)[:140])
     return None
 
+def _pexels_videos(query, n=3):
+    """patch84: real licensed stock CLIPS as an honest last resort when every
+    AI video engine is down — clearly labelled as stock footage, never as
+    generated video."""
+    pk = key("PEXELS_API_KEY")
+    q = (query or "").strip()[:120]
+    if not pk or not q:
+        return {"error": "no stock-video key"}
+    try:
+        _, raw, _ = http_fetch("https://api.pexels.com/videos/search?" + urllib.parse.urlencode(
+            {"query": q, "per_page": max(1, min(int(n), 8)), "orientation": "landscape"}),
+            headers={"Authorization": pk}, timeout=25)
+        d = json.loads(raw)
+        out = []
+        for v in (d.get("videos") or [])[:max(1, min(int(n), 8))]:
+            files = sorted((v.get("video_files") or []), key=lambda f: abs((f.get("width") or 0) - 1280))
+            if files and files[0].get("link"):
+                out.append({"url": files[0]["link"], "w": files[0].get("width"), "h": files[0].get("height"),
+                            "duration": v.get("duration"), "source_url": v.get("url")})
+        if out:
+            best = out[0]
+            try:  # localize so playback never depends on CDN hotlink rules
+                _, raw, _ = http_fetch(best["url"], timeout=90, headers={"User-Agent": "Mozilla/5.0"})
+                if raw and len(raw) > 20000:
+                    fn = os.path.join(_gen_dir(), "stock-" + secrets.token_hex(8) + ".mp4")
+                    with open(fn, "wb") as f:
+                        f.write(raw)
+                    best["url"] = "/generated/" + os.path.basename(fn)
+            except Exception:
+                pass  # direct CDN link still works in browsers
+            return {"ok": True, "clips": out}
+        return {"error": "no stock clips matched that description"}
+    except Exception as e:
+        return {"error": "stock video search failed: " + str(e)[:100]}
+
+
 def _gen_video_raw(prompt, duration=None, want_audio=False):
     """Text-to-video cascade: Agnes free → Hugging Face Wan 2.2 (router with a
     free HF token, else the live public Wan2.2 I2V-14B Lightning spaces) →
@@ -6912,6 +6968,14 @@ def _gen_video_raw(prompt, duration=None, want_audio=False):
         if notes:
             out["note"] = " ".join(notes)
         return out
+    st = _pexels_videos(prompt, 3)
+    if st.get("ok"):
+        return {"ok": True, "provider": "pexels-stock", "model": "stock footage",
+                "prompt": prompt, "videos": [c["url"] for c in st["clips"]], "clips": st["clips"],
+                "stock": True,
+                "note": "The AI video engines are all busy/down right now, so this is REAL licensed stock "
+                        "footage matching your scene (clearly not AI-generated). Ask again in a few minutes "
+                        "for an AI-generated clip."}
     return {"error": "Video engines are down right now (" + " | ".join(failures + [cv.get("error", "cvron failed")])
             + "). Please try again in a few minutes — the free Wan 2.2 and Agnes engines retry automatically."}
 
@@ -9410,7 +9474,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch83-brain-resilience",
+        "build": "patch84-video-modes-edit",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -13004,7 +13068,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch83-brain-resilience", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch84-video-modes-edit", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -14119,6 +14183,9 @@ class Handler(BaseHTTPRequestHandler):
         if provider == "agnes":
             k = key("AGNES_API_KEY")
             return k, AGNES_BASE, model or KEYS.get("AGNES_MODEL", "agnes-2.5-flash"), provider
+        if provider in ("gemini", "google"):
+            k = key("GEMINI_API_KEY")
+            return k, "https://generativelanguage.googleapis.com/v1beta/openai", model or KEYS.get("GEMINI_MODEL", "gemini-3.1-flash-lite"), provider
         if provider == "openai":
             k = key("OPENAI_API_KEY")
             return k, "https://api.openai.com/v1", model or "gpt-4o-mini", provider

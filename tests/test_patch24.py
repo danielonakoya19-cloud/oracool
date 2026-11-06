@@ -31,7 +31,7 @@ def read(name):
 # ---------------------------------------------------------------- markers
 
 def test_build_marker_patch24():
-    assert read("server.py").count('"build": "patch83-brain-resilience"') == 2
+    assert read("server.py").count('"build": "patch84-video-modes-edit"') == 2
 
 
 def test_key_configured_locally_and_not_committed():
