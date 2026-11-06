@@ -22,7 +22,7 @@ def _handler():
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch89-call-install-private"'), 2)
+        self.assertEqual(SRV.count('"patch89b-call-buttons"'), 2)
         self.assertNotIn("patch48b-creator", SRV)
 
 

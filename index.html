@@ -4115,6 +4115,7 @@ function startMatrix(){
 }
 function stopMatrix(){ try{ if(callMxRaf){ cancelAnimationFrame(callMxRaf); callMxRaf=null; } }catch(e){} }
 async function startCall(mode){
+  try{ if(window._wireCallOv) window._wireCallOv(); }catch(e){}
   askPerms();
   callActive=true; callMode=(mode==='video')?'video':'voice'; callMuted=false; callSpkOn=true;
   document.body.classList.add('in-call');
@@ -4140,8 +4141,15 @@ function endCall(){
   const t=document.getElementById('callTyped'); if(t) t.classList.remove('show');
 }
 (function(){
+  /* patch89b: the call overlay markup sits AFTER this script in the page — wiring must run
+     once the DOM actually contains the buttons (they were dead on arrival otherwise). */
+  let wired=false;
   function on(id,fn){ const el=document.getElementById(id); if(el) el.addEventListener('click',fn); }
-  on('callBtn',function(){ startCall('voice'); });
+  function wireCall(){
+    if(wired) return;
+    if(!document.getElementById('callEnd') || !document.getElementById('callBtn')) return;
+    wired=true;
+    on('callBtn',function(){ startCall('voice'); });
   on('callEnd',function(){ endCall(); });
   on('callMute',function(){
     callMuted=!callMuted;
@@ -4170,9 +4178,13 @@ function endCall(){
       document.getElementById('callCap').textContent='Back to voice call.';
     }
   });
-  on('callSend',function(){ const i=document.getElementById('callIn'); if(i&&i.value.trim()){ callTurn(i.value); i.value=''; } });
-  const ci=document.getElementById('callIn');
-  if(ci) ci.addEventListener('keydown',function(e){ if(e.key==='Enter'){ const i=document.getElementById('callIn'); if(i&&i.value.trim()){ callTurn(i.value); i.value=''; } } });
+    on('callSend',function(){ const i=document.getElementById('callIn'); if(i&&i.value.trim()){ callTurn(i.value); i.value=''; } });
+    const ci=document.getElementById('callIn');
+    if(ci) ci.addEventListener('keydown',function(e){ if(e.key==='Enter'){ const i=document.getElementById('callIn'); if(i&&i.value.trim()){ callTurn(i.value); i.value=''; } } });
+  }
+  window._wireCallOv=wireCall;
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',wireCall);
+  else wireCall();
 })();
 
 async function send(text){

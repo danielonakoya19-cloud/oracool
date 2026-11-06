@@ -13,7 +13,7 @@ LAND = Path("landing.html").read_text(encoding="utf-8")
 
 class TestPatch89Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch89-call-install-private"'), 2)
+        self.assertEqual(SRV.count('"patch89b-call-buttons"'), 2)
 
 
 class TestPatch89PrivateNeverPersists(unittest.TestCase):
@@ -94,6 +94,15 @@ class TestPatch89VoiceVideoCalls(unittest.TestCase):
         self.assertIn("call-video", APP)
         self.assertIn('id="selfView"', APP)
         self.assertIn("facingMode", APP)
+
+    def test_overlay_wiring_is_deferred_to_dom_ready(self):
+        # patch89b: the call overlay markup sits after the main script — wiring must wait for
+        # the DOM (the mute/speaker/video/end buttons were dead otherwise)
+        self.assertIn("function wireCall(){", APP)
+        self.assertIn("window._wireCallOv=wireCall", APP)
+        self.assertIn("document.addEventListener('DOMContentLoaded',wireCall)", APP)
+        self.assertIn("if(window._wireCallOv) window._wireCallOv()", APP)
+        self.assertIn("if(wired) return;", APP)
 
     def test_call_controls(self):
         for cid in ('callMute', 'callSpk', 'callCam', 'callT'):
