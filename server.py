@@ -2535,17 +2535,35 @@ def _brain_note_fail(prov, err_text, code=None):
 
 
 def _brain_health_report():
-    """patch83: operator-facing provider health (admin route). patch47's
-    brain_status() (latency EWMA) stays untouched under its own name."""
+    """patch83: operator-facing provider health (admin route) — merges the
+    chat-stream stats (patch47 brain_status, latency EWMA + cooldowns) with
+    the completer ladder's breaker state. patch47's brain_status() keeps its
+    own name and behavior."""
     now = time.time()
+    chat = {}
+    try:
+        chat = brain_status() or {}
+    except Exception:
+        chat = {}
     out = []
     for att in _llm_attempts():
         st = _BRAIN_STATE.get(att[3], {})
-        cooling = st.get("bad_until", 0) > now
+        c = chat.get(att[3], {}) or {}
+        cool = int(max(max(0, st.get("bad_until", 0) - now), c.get("cooling_s", 0) or 0))
         out.append({"provider": att[3], "model": att[2],
-                    "state": "cooling" if cooling else ("ok" if st.get("good") else "untested"),
-                    "cooldown_s": int(max(0, st.get("bad_until", 0) - now)),
-                    "latency_s": st.get("latency"), "last_err": st.get("last_err", "")})
+                    "state": "cooling" if cool > 0 else ("ok" if (st.get("good") or c.get("samples")) else "untested"),
+                    "cooldown_s": cool,
+                    "latency_s": st.get("latency") if st.get("latency") is not None else c.get("first_token_s"),
+                    "chat_samples": c.get("samples", 0),
+                    "last_err": st.get("last_err", "")})
+    seen = {x["provider"] for x in out}
+    for name, c in chat.items():
+        if name not in seen:
+            cool = int(c.get("cooling_s", 0) or 0)
+            out.append({"provider": name, "model": "",
+                        "state": "cooling" if cool > 0 else ("ok" if c.get("samples") else "untested"),
+                        "cooldown_s": cool, "latency_s": c.get("first_token_s"),
+                        "chat_samples": c.get("samples", 0), "last_err": ""})
     return out
 
 
