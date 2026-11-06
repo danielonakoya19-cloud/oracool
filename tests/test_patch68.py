@@ -12,7 +12,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 CSS = open(os.path.join(ROOT, "console-layout.css"), encoding="utf-8").read()
 
-MARK = "patch88-movers-faq-logo"
+MARK = "patch89-call-install-private"
 
 
 class Marker(unittest.TestCase):

@@ -221,4 +221,4 @@
 
 - User picked option 2 for the liquid-glass orb logo icon → `images/oracool-icon.png` (2048px) resized via PIL into `apple-touch-icon.png` (180), `icon-192.png`, `icon-512.png`, `logo.png` (og), `favicon.ico` (multi-size) at the repo root; index.html icon links cache-busted `?v=2`→`?v=3`.
 - **Workspace-path corrections (snapshot drift):** `MEMORY.md` = `/home/user/oracool/MEMORY.md`; `keys.json` = `/home/user/oracool/keys.json` with key **`GITHUB_TOKEN`** (not `github_token`); the deploy vault PUT must tolerate a missing sha (404 on GET = create). `/home/user/private/RENDER-ENV-UPDATED.txt` holds the OLD rotated token (401) — never use.
-- /landing route 404s on plain fetch (verify via the real route `/` or `/landing.html`); /app works.
+- Landing serves at **`/`** (both /landing and /landing.html 404); app = `/app` and `/index.html`. Verified live: FAQ glass + Private FAQ + logoGlow on `/`; icon set 200s.

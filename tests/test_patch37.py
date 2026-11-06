@@ -14,7 +14,7 @@ FILES = {"icon.png": (512, 512), "icon-192.png": (192, 192), "icon-512.png": (51
 
 class Assets(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch88-movers-faq-logo"'), 2)
+        self.assertEqual(SRV.count('"patch89-call-install-private"'), 2)
 
     def test_files_exist_with_right_sizes(self):
         for f, size in FILES.items():
@@ -22,18 +22,20 @@ class Assets(unittest.TestCase):
         ico = Image.open(ROOT / 'favicon.ico'); self.assertEqual(ico.format, 'ICO')
 
     def test_icon_is_the_new_blue_orb_not_the_old_gold_triangle(self):
+        # retargeted patch88b: the user-picked liquid-glass orb has the gold emblem at its
+        # core and an iridescent glass body — pin THAT design (warm core + cool glass midtones)
         im = Image.open(ROOT / 'icon-512.png').convert('RGB')
         px = im.load(); w, h = im.size
         centre = px[w // 2, h // 2]
-        self.assertGreater(centre[2], 150, "centre must be the blue orb, got %r" % (centre,))
-        gold = sum(1 for x in range(0, w, 8) for y in range(0, h, 8) if px[x, y][0] > 200 and 150 < px[x, y][1] < 210 and px[x, y][2] < 90)
-        self.assertLess(gold, 20, "old gold triangle pixels still present")
+        self.assertGreater(centre[0], centre[2], "core must be the warm gold emblem, got %r" % (centre,))
+        cool = sum(1 for x in range(0, w, 8) for y in range(0, h, 8) if px[x, y][2] > px[x, y][0] + 15)
+        self.assertGreater(cool, 30, "iridescent glass body missing")
 
     def test_maskable_keeps_art_inside_safe_zone(self):
         im = Image.open(ROOT / 'icon-maskable-512.png').convert('RGB'); px = im.load()
         for x, y in ((3, 3), (508, 3), (3, 508), (508, 508), (256, 4), (4, 256)):  # corners + edge midpoints are flat base
             r, g, b = px[x, y]; self.assertLess(max(r, g, b), 40, (x, y, px[x, y]))
-        self.assertGreater(px[256, 256][2], 150)
+        self.assertGreater(px[256, 256][0], px[256, 256][2])  # retargeted patch88b: warm gold emblem core
 
     def test_manifest(self):
         m = json.load(open(ROOT / 'manifest.json'))
@@ -44,7 +46,7 @@ class Assets(unittest.TestCase):
         self.assertEqual(m['id'], '/app')  # same app identity → existing installs update instead of duplicating
 
     def test_heads_and_routes(self):
-        for k in ('href="/icon-512.png?v=2"', 'href="/favicon.ico?v=2"', 'href="/apple-touch-icon.png?v=2"',
+        for k in ('href="/icon-512.png?v=3"', 'href="/favicon.ico?v=3"', 'href="/apple-touch-icon.png?v=3"',
                   'property="og:image" content="https://oracoolai.com/logo.png"'):
             self.assertIn(k, APP, k); self.assertIn(k, LAND, k)
         for route in ('"/icon.png"', '"/icon-512.png"', '"/icon-maskable-512.png"', '"/favicon.ico": "image/x-icon"', '"/logo.png"'):

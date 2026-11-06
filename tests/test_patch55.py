@@ -11,7 +11,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch88-movers-faq-logo"'), 2)
+        self.assertEqual(SRV.count('"patch89-call-install-private"'), 2)
         self.assertIn("/api/security/console", SRV)
 
 

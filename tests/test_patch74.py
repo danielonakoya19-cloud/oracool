@@ -12,7 +12,7 @@ import server as s  # noqa: E402
 
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
-MARK = "patch88-movers-faq-logo"
+MARK = "patch89-call-install-private"
 
 
 class Marker(unittest.TestCase):

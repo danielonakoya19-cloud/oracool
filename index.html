@@ -1558,6 +1558,76 @@ html[data-theme="light"] .orbring{
   box-shadow:0 0 34px rgba(8,145,178,.22), inset 0 0 22px rgba(124,58,237,.14) !important;
 }
 
+
+/* ---- patch89: private banner + voice/video call overlay (liquid glass) ---- */
+#privBanner{display:none; align-items:center; gap:8px; width:100%; order:-1;
+  font-size:11.5px; letter-spacing:.4px; color:#7dd3fc;
+  background:rgba(125,211,252,.10); border:1px solid rgba(125,211,252,.32);
+  border-radius:12px; padding:7px 12px; margin-bottom:8px;}
+body.priv-on #privBanner{display:flex !important;}
+html[data-theme="light"] #privBanner{color:#0369a1; background:rgba(3,105,161,.10); border-color:rgba(3,105,161,.3);}
+.privbtn.on{background:rgba(125,211,252,.22) !important; border-color:rgba(125,211,252,.6) !important; color:#bae6fd !important; box-shadow:0 0 18px rgba(125,211,252,.35) !important;}
+html[data-theme="light"] .privbtn.on{background:rgba(3,105,161,.18) !important; color:#075985 !important; border-color:rgba(3,105,161,.5) !important;}
+
+.callov{position:fixed; inset:0; z-index:3000; display:none; flex-direction:column;
+  background:radial-gradient(1100px 700px at 50% -12%, rgba(103,232,249,.16), transparent 58%),
+             radial-gradient(900px 640px at 8% 112%, rgba(168,85,247,.16), transparent 62%),
+             rgba(4,6,16,.92);
+  -webkit-backdrop-filter:blur(26px) saturate(180%); backdrop-filter:blur(26px) saturate(180%);}
+.callov.open{display:flex !important;}
+.call-top{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 22px;}
+.call-title{display:flex; align-items:center; gap:10px; font-size:13px; letter-spacing:2.6px; color:#e8f2ff;}
+.call-dot{width:8px; height:8px; border-radius:50%; background:#34d399; box-shadow:0 0 12px #34d399; animation:blink 1.6s ease-in-out infinite;}
+.call-timer{font:600 13px/1 ui-monospace,monospace; color:#7dd3fc; letter-spacing:1.5px;}
+.call-stage{position:relative; flex:1; min-height:0; display:grid; place-items:center; overflow:hidden;}
+#mxCv{position:absolute; inset:0; width:100%; height:100%; display:none;}
+body.call-video #mxCv{display:block !important;}
+.call-orb{position:relative; width:min(46vw,230px); height:min(46vw,230px); display:grid; place-items:center;
+  animation:holoFloat 7s ease-in-out infinite; transition:transform .35s ease;}
+.call-orb .orbring{position:absolute; inset:-14px; border-radius:50%; border:1px solid rgba(125,211,252,.45);
+  box-shadow:0 0 44px rgba(34,211,238,.35), inset 0 0 30px rgba(168,85,247,.28); animation:holoSpin 16s linear infinite;}
+.call-orb .orbcore{width:100%; height:100%; border-radius:50%; display:grid; place-items:center;
+  background:
+    radial-gradient(circle at 30% 26%, rgba(255,255,255,.9), rgba(255,255,255,0) 42%),
+    conic-gradient(from 200deg,#22d3ee,#6366f1,#a855f7,#f472b6,#fbbf24,#22d3ee) !important;
+  border:1px solid rgba(255,255,255,.5) !important;
+  box-shadow:0 20px 60px rgba(34,211,238,.4), 0 0 80px rgba(168,85,247,.35),
+             inset 0 -14px 30px rgba(2,4,20,.35), inset 0 6px 16px rgba(255,255,255,.55) !important;}
+.call-orb.talking{transform:scale(1.06);}
+.call-orb.talking .orbcore{animation:callTalk 1.1s ease-in-out infinite !important;}
+@keyframes callTalk{
+  0%,100%{box-shadow:0 20px 60px rgba(34,211,238,.4), 0 0 80px rgba(168,85,247,.35), inset 0 -14px 30px rgba(2,4,20,.35), inset 0 6px 16px rgba(255,255,255,.55)}
+  50%{box-shadow:0 26px 80px rgba(34,211,238,.6), 0 0 120px rgba(168,85,247,.55), inset 0 -14px 30px rgba(2,4,20,.35), inset 0 6px 16px rgba(255,255,255,.7)}}
+#selfView{position:absolute; right:18px; bottom:86px; width:min(30vw,180px); aspect-ratio:9/14; object-fit:cover;
+  display:none; border-radius:18px; border:1px solid rgba(255,255,255,.35); z-index:5;
+  box-shadow:0 18px 50px rgba(2,4,20,.55), inset 0 1px 0 rgba(255,255,255,.4);
+  background:rgba(10,14,28,.6); transform:scaleX(-1);}
+body.call-video #selfView{display:block !important;}
+.call-cap{position:absolute; left:50%; bottom:22px; transform:translateX(-50%); max-width:min(88vw,640px);
+  padding:11px 18px; border-radius:14px; font-size:13.5px; line-height:1.55; text-align:center; color:#eaf3ff;
+  background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.16);
+  -webkit-backdrop-filter:blur(18px) saturate(180%); backdrop-filter:blur(18px) saturate(180%);
+  box-shadow:0 14px 40px rgba(2,4,20,.4), inset 0 1px 0 rgba(255,255,255,.18);}
+.call-ctrls{display:flex; justify-content:center; gap:14px; padding:18px 16px 26px; flex-wrap:wrap;}
+.callbtn{min-width:60px; min-height:60px; border-radius:50%; border:1px solid rgba(255,255,255,.22);
+  background:rgba(255,255,255,.10); color:#eaf3ff; font-size:21px; cursor:pointer;
+  -webkit-backdrop-filter:blur(16px) saturate(180%); backdrop-filter:blur(16px) saturate(180%);
+  box-shadow:0 12px 32px rgba(2,4,20,.4), inset 0 1px 0 rgba(255,255,255,.22); transition:transform .16s ease;}
+.callbtn:active{transform:scale(.93);}
+.callbtn.end{background:linear-gradient(140deg,#f43f5e,#b91c1c); border-color:rgba(255,255,255,.25); padding:0 22px; border-radius:22px;}
+.callbtn.off{opacity:.55;}
+.call-typed{display:none; gap:8px; justify-content:center; padding:0 16px 6px;}
+.call-typed.show{display:flex !important;}
+.call-typed input{flex:1; max-width:520px; padding:11px 15px; border-radius:13px; border:1px solid rgba(255,255,255,.2);
+  background:rgba(255,255,255,.09); color:#eaf3ff; font-size:14px;}
+.call-typed button{width:46px; border-radius:13px; border:1px solid rgba(255,255,255,.22); background:rgba(125,211,252,.28); color:#eaf3ff; font-size:17px; cursor:pointer;}
+html[data-theme="light"] .callov{background:radial-gradient(1100px 700px at 50% -12%, rgba(8,145,178,.16), transparent 58%),
+             radial-gradient(900px 640px at 8% 112%, rgba(124,58,237,.14), transparent 62%), rgba(232,238,250,.92);}
+html[data-theme="light"] .call-title, html[data-theme="light"] .callbtn, html[data-theme="light"] .call-cap{color:#12203c;}
+html[data-theme="light"] .call-cap{background:rgba(255,255,255,.7); border-color:rgba(255,255,255,.9);}
+html[data-theme="light"] .callbtn{background:rgba(255,255,255,.72); border-color:rgba(255,255,255,.9); color:#12203c;}
+html[data-theme="light"] .callbtn.end{color:#fff;}
+
 </style>
 <script>
 (function(){var t=null;try{t=localStorage.getItem('oc_theme')}catch(e){};if(t!=='light'&&t!=='dark')t='dark';document.documentElement.setAttribute('data-theme',t);
@@ -1689,6 +1759,8 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
             <button class="modebtn" id="modeBtn" title="Mode — Auto, Fast, Build or Expert" aria-haspopup="menu" aria-expanded="false"><span class="mi-ic">✦</span><span class="mi-l">Auto</span><span class="mi-ch">▾</span></button>
             <button class="modebtn" id="mmBtn" title="Models — Agent, Direct, Side by Side or Battle" aria-haspopup="menu" aria-expanded="false"><span class="mi-ic">⇄</span><span class="mi-l" id="mmLab">Agent</span><span class="mi-ch">▾</span></button>
             <button class="modebtn privbtn" id="privBtn" title="Private chat — this conversation is never saved to your history" aria-pressed="false"><span class="mi-ic">🔒</span><span class="mi-l">Private</span></button>
+            <button class="modebtn" id="callBtn" title="Voice or video call with OraCool"><span class="mi-ic">📞</span><span class="mi-l">Call</span></button>
+            <div id="privBanner">🔒 <b>Private chat</b> — messages are never saved to your history or this browser</div>
             <span class="gpt-spacer"></span>
             <span class="gpt-hint">Enter ↵ to send · Shift+Enter = new line · Ctrl+V = paste screenshot</span>
             <button class="gpt-send" id="sendBtn" title="Send">↑</button>
@@ -3088,13 +3160,20 @@ function systemPrompt(){
     `Keep replies concise and conversational as if spoken aloud, unless the user asks for detail — then go deep and complete. When the user shares tool results, analyze them like a calm intelligence analyst. Never claim to have run a tool whose output you have not seen. Stay helpful, lawful, and ethical. Never break character.`;
 }
 /* patch36: the board's own moves/announcements arrive as OraCool lines */
-if(window.OraApps){ OraApps.onSay=(t)=>{ try{ addAI(t); history.push({role:'assistant',content:t}); speak(t); }catch(e){} }; OraApps.onAsk=(t)=>{ try{ send(t); }catch(e){} }; }
+if(window.OraApps){ OraApps.onSay=(t)=>{ try{ addAI(t); histPush({role:'assistant',content:t}); speak(t); }catch(e){} }; OraApps.onAsk=(t)=>{ try{ send(t); }catch(e){} }; }
 /* patch39: Arena-style clean layout toggle */
 function applyLayout(){ try{ document.body.classList.toggle('clean', (settings.layout||'clean')!=='neon'); }catch(e){} }
 applyLayout();
 /* ---------- last-chat persistence (per user) ---------- */
 function chatKey(){ return 'oracool_chat_'+((myEmail&&myEmail())||'anon'); }
-function saveChat(){ try{ if(storageOK && history.length) localStorage.setItem(chatKey(), JSON.stringify(history.slice(-60))); }catch(e){} }
+function histPush(m){ try{ if(privMode) m._priv=true; }catch(e){} history.push(m); return m; }
+function saveChat(){ try{
+  /* patch89: Private turns are never cached in the browser either — _priv entries are
+     stripped before the localStorage write, so nothing private survives a reload. */
+  const keep=history.filter(function(m){ return !m._priv; }).slice(-60);
+  if(storageOK && keep.length) localStorage.setItem(chatKey(), JSON.stringify(keep));
+  else if(storageOK && !keep.length) localStorage.removeItem(chatKey());
+}catch(e){} }
 function restoreChat(){
   try{
     if(!storageOK) return 0;
@@ -3102,6 +3181,7 @@ function restoreChat(){
     const arr=JSON.parse(s); if(!Array.isArray(arr)||!arr.length) return 0;
     chat.innerHTML=''; history.length=0;
     arr.forEach(m=>{
+      if(m._priv) return;  /* patch89: never re-surface private turns from old caches */
       if(m.role==='user'){ const b=document.createElement('div'); b.className='bubble user'; renderUserRich(b, m.content); chat.appendChild(b); history.push({role:'user',content:m.content}); }
       else if(m.role==='assistant'){ const b=document.createElement('div'); b.className='bubble ai'; b.innerHTML='<span class="who">ORA-COOL</span>'; const bd=document.createElement('div'); renderCmpOrRich(bd, m.content); b.appendChild(bd); chat.appendChild(b); history.push({role:'assistant',content:m.content}); }
       else { addSystemNote('⟲ '+m.content); }
@@ -3219,7 +3299,7 @@ function addUser(text, histText){
   b.innerHTML='<span class="bt">'+new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</span><span class="bttext"></span>';
   b.querySelector('.bttext').textContent=text;
   chat.appendChild(b); scrollChat();
-  history.push({role:'user',content:histText!==undefined?histText:text}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
+  histPush({role:'user',content:histText!==undefined?histText:text}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
 }
 function addAI(text, cls){
   const b=document.createElement('div'); b.className='bubble ai'+(cls?' '+cls:'');
@@ -3866,7 +3946,7 @@ async function sendCompare(display, content){
   await Promise.all([run(0),run(1)]);
   const c={labels,texts,winner:null,battle};
   renderCompare(body, c);
-  history.push({role:'assistant',content:'[[cmp:'+encodeURIComponent(JSON.stringify(c))+']]'});
+  histPush({role:'assistant',content:'[[cmp:'+encodeURIComponent(JSON.stringify(c))+']]'});
   if(history.length>MAXH)history.splice(0,history.length-MAXH);
   scrollChat();
   if(window.OraVoice&&window.OraVoice.enabled){ try{ speak(_cleanReply(texts[0]||'')); }catch(e){} }
@@ -3899,8 +3979,202 @@ async function sendCompare(display, content){
     privMode=!privMode;
     pb.classList.toggle('on',privMode);
     pb.setAttribute('aria-pressed',String(privMode));
+    const _pl=pb.querySelector('.mi-l'); if(_pl) _pl.textContent = privMode ? 'Private ON' : 'Private';
+    document.body.classList.toggle('priv-on',privMode);
+    try{ if(privMode) saveChat(); }catch(e){}  /* flush the cached thread BEFORE private turns begin */
+    addSystemNote(privMode ? '🔒 <b>Private mode ON</b> — this chat is never saved to your history or this browser. Turn it off to return to your saved conversation.' : 'Private mode OFF — new messages are saved to your history again.');
   });
 })();
+/* ---------- patch89: permissions (notifications + location; camera on video call) ---------- */
+function askPerms(){
+  try{ if(window.Notification && Notification.permission==='default') Notification.requestPermission().catch(function(){}); }catch(e){}
+  try{ if(navigator.geolocation) navigator.geolocation.getCurrentPosition(function(){}, function(){}, {timeout:8000, maximumAge:600000}); }catch(e){}
+}
+
+/* ---------- patch89: voice & video calls with OraCool (liquid-glass orb / matrix stage) ---------- */
+let callActive=false, callMode='voice', callMuted=false, callSpkOn=true, callT0=0, callTimer=null;
+let callRec=null, callCamStream=null, callSpeaking=false, callMxRaf=null, callMxT=0;
+function fmtCallT(){ const s=Math.floor((Date.now()-callT0)/1000); return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); }
+function callSay(t){
+  t=(t||'').trim(); if(!t) return;
+  const o=document.getElementById('callOrb');
+  function done(){ callSpeaking=false; if(o) o.classList.remove('talking'); if(callActive && !callMuted) callListen(); else if(callActive) document.getElementById('callCap').textContent='Microphone muted — tap 🎤 to speak.'; }
+  if(!callSpkOn){ document.getElementById('callCap').textContent='OraCool: '+t; setTimeout(done, 900); return; }
+  callSpeaking=true; if(o) o.classList.add('talking');
+  try{
+    if(window.speechSynthesis){ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(t); u.rate=1.03; u.onend=done; u.onerror=done; speechSynthesis.speak(u);
+      setTimeout(function(){ if(callSpeaking && !(window.speechSynthesis&&speechSynthesis.speaking)) done(); }, Math.min(20000, 1200+t.length*90));
+    } else { done(); }
+  }catch(e){ done(); }
+}
+async function callTurn(text){
+  text=(text||'').trim(); if(!text) return;
+  document.getElementById('callCap').textContent='You: '+text;
+  addUser(text); histPush({role:'user',content:text});
+  const msgs=[{role:'system',content:systemPrompt()},...history.slice(-18)];
+  let _csid=''; try{ _csid = privMode ? '' : (sessionId || await ensureSession()); }catch(e){}
+  const payload={messages:msgs,stream:true,provider:(modelMode==='direct'&&mmA?mmA:(settings.provider||'auto')),voice_mode:true,max_tokens:300,
+                 session_id:_csid||'',private:!!privMode,mode:'auto',tz:(Intl.DateTimeFormat().resolvedOptions().timeZone||'')};
+  try{ if(session&&session.access_token) payload.access_token=session.access_token; const _em=myEmail(); if(_em) payload.email=_em; if(proToken) payload.token=proToken; }catch(e){}
+  document.getElementById('callCap').innerHTML='<span class="dots"></span>';
+  fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(resp){
+    const rd=resp.body && resp.body.getReader ? resp.body.getReader() : null;
+    if(!rd){ return resp.text().then(function(tx){ let out=tx; try{ const j=JSON.parse(tx); out=j.reply||j.text||tx; }catch(e){} return out; }); }
+    return new Promise(function(res){ let acc='';
+      (function pump(){ rd.read().then(function(r){
+        if(r.done){ res(acc); return; }
+        const chunk=new TextDecoder().decode(r.value||new Uint8Array());
+        chunk.split('\n\n').forEach(function(ln){
+          const m=ln.match(/^data: ?(.*)$/m); if(!m) return; const data=m[1];
+          if(data==='[DONE]'){ res(acc); return; }
+          try{ const j=JSON.parse(data); const d=j.delta!==undefined?j.delta:(j.text||j.content||''); if(d){ acc+=d; document.getElementById('callCap').textContent='OraCool: '+acc; } }catch(e){}
+        });
+        pump();
+      }).catch(function(){ res(acc); }); })();
+    });
+  }).then(function(acc){
+    acc=(acc||'').replace(/\s*FOLLOW-UPS:[\s\S]*$/,'').trim();
+    if(!acc) acc='I\'m here — say that again?';
+    histPush({role:'assistant',content:acc});
+    try{ const b=addAI(''); renderCmpOrRich(b.lastChild, acc); }catch(e){}
+    callSay(acc);
+  }).catch(function(){ document.getElementById('callCap').textContent='Connection hiccup — try again.'; if(callActive&&!callMuted) setTimeout(callListen,600); });
+}
+function callListen(){
+  if(!callActive||callMuted||callSpeaking) return;
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  const typed=document.getElementById('callTyped');
+  if(!SR){ if(typed) typed.classList.add('show'); document.getElementById('callCap').textContent='Voice input is unavailable in this browser — type below and I\'ll answer out loud.'; return; }
+  try{ if(callRec){ callRec.onend=null; try{callRec.stop();}catch(e){} callRec=null; } }catch(e){}
+  try{
+    callRec=new SR(); callRec.lang='en-US'; callRec.continuous=false; callRec.interimResults=true;
+    let interim='';
+    callRec.onresult=function(ev){
+      let fin='';
+      for(let i=ev.resultIndex;i<ev.results.length;i++){ const r=ev.results[i]; if(r.isFinal) fin+=r[0].transcript; else interim+=r[0].transcript; }
+      if(interim && !fin) document.getElementById('callCap').textContent='You: '+interim;
+      if(fin){ interim=''; try{callRec.stop();}catch(e){} callTurn(fin); }
+    };
+    callRec.onerror=function(ev){ if(ev.error==='no-speech'){ if(callActive&&!callMuted&&!callSpeaking) setTimeout(callListen,400); } else if(ev.error==='not-allowed'){ document.getElementById('callCap').textContent='Microphone permission blocked — allow the mic, or type below.'; const t2=document.getElementById('callTyped'); if(t2) t2.classList.add('show'); } };
+    callRec.onend=function(){ if(callActive&&!callMuted&&!callSpeaking) setTimeout(callListen,350); };
+    callRec.start();
+    document.getElementById('callCap').textContent='Listening…';
+  }catch(e){ const t3=document.getElementById('callTyped'); if(t3) t3.classList.add('show'); }
+}
+async function startCam(){
+  try{
+    if(callCamStream){ callCamStream.getTracks().forEach(function(t){t.stop();}); callCamStream=null; }
+    callCamStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
+    const v=document.getElementById('selfView'); if(v){ v.srcObject=callCamStream; }
+    return true;
+  }catch(e){ document.getElementById('callCap').textContent='Camera unavailable — the call continues without video.'; return false; }
+}
+function stopCam(){ try{ if(callCamStream){ callCamStream.getTracks().forEach(function(t){t.stop();}); callCamStream=null; } const v=document.getElementById('selfView'); if(v) v.srcObject=null; }catch(e){} }
+function startMatrix(){
+  const cv=document.getElementById('mxCv'); if(!cv) return;
+  const ctx=cv.getContext('2d');
+  function size(){ cv.width=cv.clientWidth||window.innerWidth; cv.height=cv.clientHeight||window.innerHeight; }
+  size(); window.addEventListener('resize', size);
+  const glyphs='01アカサタナ◇◆△▽░▒▓ΞΛΣΩ';
+  let cols=Math.floor((cv.width||800)/16), drops=[];
+  for(let i=0;i<cols;i++) drops[i]=Math.random()*-60;
+  callMxT=0;
+  function frame(){
+    if(!callActive || callMode!=='video'){ callMxRaf=null; return; }
+    callMxT+=1;
+    ctx.fillStyle='rgba(3,6,18,0.16)'; ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.font='15px monospace';
+    for(let i=0;i<cols;i++){
+      const x=i*16, y=drops[i]*16;
+      const hue=185+((i*7+callMxT*0.35)%120);
+      ctx.fillStyle='hsla('+hue+',95%,'+(callSpeaking?72:58)+'%,0.9)';
+      ctx.fillText(glyphs[Math.floor(Math.random()*glyphs.length)], x, y);
+      if(y>cv.height && Math.random()>0.975) drops[i]=0;
+      drops[i]+=callSpeaking?1.25:(callMuted?0.45:0.85);
+    }
+    /* the AI face — a morphing holographic visage that "talks" */
+    const cx=cv.width/2, cy=cv.height/2, R=Math.min(cv.width,cv.height)*0.16;
+    const pulse=callSpeaking?(1+0.06*Math.sin(callMxT/4.5)):1;
+    const g=ctx.createRadialGradient(cx-R*0.35,cy-R*0.4,R*0.15,cx,cy,R*1.6*pulse);
+    g.addColorStop(0,'rgba(125,211,252,0.5)'); g.addColorStop(0.55,'rgba(124,58,237,0.34)'); g.addColorStop(1,'rgba(244,114,182,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(cx,cy,R*1.6*pulse,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='rgba(190,240,255,0.85)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(cx,cy,R*pulse,0,Math.PI*2); ctx.stroke();
+    /* eyes */
+    const eyeY=cy-R*0.18, eyeDX=R*0.34, blink=(Math.sin(callMxT/32)>0.985)?0.12:1;
+    ctx.fillStyle='rgba(230,250,255,0.95)';
+    ctx.beginPath(); ctx.ellipse(cx-eyeDX,eyeY,R*0.10,R*0.13*blink,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx+eyeDX,eyeY,R*0.10,R*0.13*blink,0,0,Math.PI*2); ctx.fill();
+    /* mouth — animates while talking */
+    const mw=R*(callSpeaking?(0.34+0.22*Math.abs(Math.sin(callMxT/3.2))):0.26), mh=R*(callSpeaking?(0.10+0.10*Math.abs(Math.sin(callMxT/2.4))):0.05);
+    ctx.strokeStyle='rgba(255,210,240,0.95)'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.ellipse(cx,cy+R*0.34,mw,mh,0,0,Math.PI*2); ctx.stroke();
+    callMxRaf=requestAnimationFrame(frame);
+  }
+  if(!callMxRaf) callMxRaf=requestAnimationFrame(frame);
+}
+function stopMatrix(){ try{ if(callMxRaf){ cancelAnimationFrame(callMxRaf); callMxRaf=null; } }catch(e){} }
+async function startCall(mode){
+  askPerms();
+  callActive=true; callMode=(mode==='video')?'video':'voice'; callMuted=false; callSpkOn=true;
+  document.body.classList.add('in-call');
+  if(callMode==='video') document.body.classList.add('call-video'); else document.body.classList.remove('call-video');
+  const ov=document.getElementById('callOv'); if(ov){ ov.classList.add('open'); ov.setAttribute('aria-hidden','false'); }
+  document.getElementById('callKind').textContent = callMode==='video' ? 'Video call' : 'Voice call';
+  document.getElementById('callCam').textContent = callMode==='video' ? '🎤 Voice' : '🎥 Video';
+  document.getElementById('callT').textContent='00:00';
+  callT0=Date.now(); if(callTimer) clearInterval(callTimer);
+  callTimer=setInterval(function(){ const t=document.getElementById('callT'); if(t) t.textContent=fmtCallT(); },1000);
+  try{ if(window.OraVoice&&OraVoice.stop) OraVoice.stop(); }catch(e){}
+  try{ if(window.speechSynthesis) speechSynthesis.cancel(); }catch(e){}
+  if(callMode==='video'){ await startCam(); startMatrix(); } else { stopCam(); stopMatrix(); }
+  callSay('Hello! This is OraCool. How can I help you today?');
+}
+function endCall(){
+  callActive=false;
+  try{ if(callRec){ callRec.onend=null; callRec.stop(); callRec=null; } }catch(e){}
+  try{ if(window.speechSynthesis) speechSynthesis.cancel(); }catch(e){}
+  stopCam(); stopMatrix(); if(callTimer){ clearInterval(callTimer); callTimer=null; }
+  document.body.classList.remove('in-call','call-video');
+  const ov=document.getElementById('callOv'); if(ov){ ov.classList.remove('open'); ov.setAttribute('aria-hidden','true'); }
+  const t=document.getElementById('callTyped'); if(t) t.classList.remove('show');
+}
+(function(){
+  function on(id,fn){ const el=document.getElementById(id); if(el) el.addEventListener('click',fn); }
+  on('callBtn',function(){ startCall('voice'); });
+  on('callEnd',function(){ endCall(); });
+  on('callMute',function(){
+    callMuted=!callMuted;
+    const b=document.getElementById('callMute'); if(b){ b.classList.toggle('off',callMuted); b.textContent=callMuted?'🎤':'🎤'; }
+    if(callMuted){ try{ if(callRec){ callRec.onend=null; callRec.stop(); callRec=null; } }catch(e){} document.getElementById('callCap').textContent='Muted — tap 🎤 to unmute.'; }
+    else { document.getElementById('callCap').textContent='Listening…'; callListen(); }
+  });
+  on('callSpk',function(){
+    callSpkOn=!callSpkOn;
+    const b=document.getElementById('callSpk'); if(b){ b.classList.toggle('off',!callSpkOn); b.textContent=callSpkOn?'🔊':'🔇'; }
+    if(!callSpkOn){ try{ if(window.speechSynthesis) speechSynthesis.cancel(); }catch(e){} callSpeaking=false; const o=document.getElementById('callOrb'); if(o) o.classList.remove('talking'); }
+    else if(callActive&&!callMuted) callListen();
+  });
+  on('callCam',function(){
+    if(callMode==='voice'){
+      callMode='video'; document.body.classList.add('call-video');
+      document.getElementById('callKind').textContent='Video call';
+      document.getElementById('callCam').textContent='🎤 Voice';
+      startCam(); startMatrix();
+      document.getElementById('callCap').textContent='Video on — your camera preview is in the corner.';
+    } else {
+      callMode='voice'; document.body.classList.remove('call-video');
+      document.getElementById('callKind').textContent='Voice call';
+      document.getElementById('callCam').textContent='🎥 Video';
+      stopCam(); stopMatrix();
+      document.getElementById('callCap').textContent='Back to voice call.';
+    }
+  });
+  on('callSend',function(){ const i=document.getElementById('callIn'); if(i&&i.value.trim()){ callTurn(i.value); i.value=''; } });
+  const ci=document.getElementById('callIn');
+  if(ci) ci.addEventListener('keydown',function(e){ if(e.key==='Enter'){ const i=document.getElementById('callIn'); if(i&&i.value.trim()){ callTurn(i.value); i.value=''; } } });
+})();
+
 async function send(text){
   unlockAudio();
   text=(text||'').trim();
@@ -3920,7 +4194,7 @@ async function send(text){
     const dc=runDeviceCommand(text);
     if(dc.handled){ addUser(text); const m=dc.reply; if(m){ addAI(m); speak(m); } return; }
     if(await trySaveDoc(text)){ addUser(text); return; }
-    if(window.OraApps && OraApps.active){ const gr=OraApps.command(text); if(gr){ addUser(text); addAI(gr); history.push({role:'assistant',content:gr}); speak(gr); if(window.OraVoice)window.OraVoice.resume(); return; } }
+    if(window.OraApps && OraApps.active){ const gr=OraApps.command(text); if(gr){ addUser(text); addAI(gr); histPush({role:'assistant',content:gr}); speak(gr); if(window.OraVoice)window.OraVoice.resume(); return; } }
   }
   let _wd=null, lastByte=Date.now(), _wdFired=false;
   busy=true; { const _sb=$('#sendBtn'); if(_sb){_sb.disabled=false;_sb.title='Send — interrupts the current reply';} }
@@ -4056,7 +4330,7 @@ async function send(text){
         });
       }
     }catch(e){}
-    history.push({role:'assistant',content:acc}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
+    histPush({role:'assistant',content:acc}); if(history.length>MAXH)history.splice(0,history.length-MAXH);
     if(_steps){ try{ _steps.finish(); }catch(e){} _steps=null; }
     attachActions(b, acc);
     try{ loadSessions(); }catch(e){}
@@ -5822,7 +6096,7 @@ function renderIntelResult(tool,val,r){
   const btn=$('#oanalyze'); if(btn)btn.onclick=()=>{
     const prompt=`Here are the raw results of my ${tool} lookup for "${val}":\n\n${JSON.stringify(r,null,2)}\n\nAnalyze and summarize these findings as a calm, precise intelligence analyst: what does this tell us, anything notable, and suggested next steps (staying legal and ethical). Keep it concise.`;
     addUser('🔎 Intel '+(tool.toUpperCase())+': '+val);
-    history.push({role:'user',content:prompt});
+    histPush({role:'user',content:prompt});
     runAssistantReply();
   };
 }
@@ -5843,7 +6117,7 @@ function runWeather(city,fromChat){
     if(r.error){ addErr('Weather: '+r.error); return; }
     if(fromChat){
       addSystemNote(`🌤 <b>${escapeHtml(r.location)}</b> — ${escapeHtml(r.current.temperature_c+'°C, '+r.current.condition)} · Today ${escapeHtml(r.today.min_c+'° / '+r.today.max_c+'°')}`);
-      history.push({role:'user',content:`The user asked for the weather. Live results: ${JSON.stringify(r)}. Report it briefly and naturally in character.`});
+      histPush({role:'user',content:`The user asked for the weather. Live results: ${JSON.stringify(r)}. Report it briefly and naturally in character.`});
       runAssistantReply();
     }
   }).catch(e=>addErr('Weather: '+e));
@@ -5856,7 +6130,7 @@ async function runAssistantReply(){
   try{
     let acc='';
     await ensureFreshLogin();
-    const payload={messages:msgs,stream:true,provider:(modelMode==='direct'&&mmA?mmA:(settings.provider||'auto')),email:myEmail(),token:proToken||'',session_id:await ensureSession(),access_token:session&&session.access_token};
+    const payload={messages:msgs,stream:true,provider:(modelMode==='direct'&&mmA?mmA:(settings.provider||'auto')),email:myEmail(),token:proToken||'',session_id:(privMode?'':await ensureSession()),private:!!privMode,access_token:session&&session.access_token};
     if(isAdminSession() && settings.apiKey){ payload.api_key=settings.apiKey; payload.base_url=settings.baseUrl||undefined; payload.model=settings.model||undefined; }
     const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!resp.ok){ let j=null; try{j=await resp.json();}catch(e){} if(resp.status===403 && j && (j.suspended||j.blocked)){ showBlockedScreen(); throw new Error('Account suspended — pay the reinstatement fine to continue.'); } throw new Error((j&&j.error)||('AI provider error '+resp.status)); }
@@ -5870,13 +6144,13 @@ async function runAssistantReply(){
         for(const line of chunk.split('\n')){
           if(line.startsWith('data:')){
             const data=line.slice(5).trim();
-            if(data==='[DONE]'){ body.textContent=acc; history.push({role:'assistant',content:acc}); speak(acc); return; }
+            if(data==='[DONE]'){ body.textContent=acc; histPush({role:'assistant',content:acc}); speak(acc); return; }
             try{ const j=JSON.parse(data); if(j.error){ addErr('⚠️ '+String(j.error).slice(0,200)); return; } const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; body.textContent=acc; scrollChat(); } }catch(e){}
           }
         }
       }
     }
-    body.textContent=acc; history.push({role:'assistant',content:acc}); speak(acc);
+    body.textContent=acc; histPush({role:'assistant',content:acc}); speak(acc);
   }catch(e){ body.textContent=''; addErr('⚠️ '+(e.message||e)); }
 }
 
@@ -7912,6 +8186,7 @@ function _pwaRefreshInstall(){
       _deferredInstall.prompt();
       try { await _deferredInstall.userChoice; } catch (e) {}
       _deferredInstall = null;
+      try{ askPerms(); }catch(e){}
       _pwaRefreshInstall();
     };
   } else {
@@ -7919,14 +8194,38 @@ function _pwaRefreshInstall(){
   }
 }
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); _deferredInstall = e; _pwaRefreshInstall(); });
-window.addEventListener('appinstalled', () => { _deferredInstall = null; _pwaHideInstall(); });
+window.addEventListener('appinstalled', () => { _deferredInstall = null; _pwaHideInstall(); try{ askPerms(); }catch(e){} });
 _pwaRefreshInstall();
 </script>
 <script src="/md.js?v=42"></script>
 <script src="/apps.js?v=39"></script>
 <script>/* patch41: these hooks must attach AFTER apps.js loads — the main script runs before it, so option taps never reached send() */
-if(window.OraApps){ OraApps.onSay=(t)=>{ try{ addAI(t); history.push({role:'assistant',content:t}); speak(t); }catch(e){} }; OraApps.onAsk=(t)=>{ try{ send(t); }catch(e){} }; }</script>
+if(window.OraApps){ OraApps.onSay=(t)=>{ try{ addAI(t); histPush({role:'assistant',content:t}); speak(t); }catch(e){} }; OraApps.onAsk=(t)=>{ try{ send(t); }catch(e){} }; }</script>
 <script src="/voice-reminders.js?v=41"></script>
 <script src="/communications.js?v=69"></script>
+<div id="callOv" class="callov" aria-hidden="true">
+  <div class="call-top">
+    <div class="call-title"><b>ORA-COOL AI</b> <span class="call-dot"></span> <span id="callKind">Voice call</span></div>
+    <div class="call-timer" id="callT">00:00</div>
+  </div>
+  <div class="call-stage" id="callStage">
+    <canvas id="mxCv"></canvas>
+    <div class="call-orb" id="callOrb">
+      <div class="orbring"></div>
+      <div class="orbcore">
+        <svg class="emblem" viewBox="0 0 100 100" width="52" height="52"><polygon points="50,26 27,62 73,62" fill="none" stroke="#ffc24b" stroke-width="4" stroke-linejoin="round"/><polygon points="50,40 38,58 62,58" fill="#ffc24b" opacity=".95"/></svg>
+      </div>
+    </div>
+    <video id="selfView" autoplay playsinline muted></video>
+    <div class="call-cap" id="callCap">Connecting to OraCool…</div>
+  </div>
+  <div class="call-typed" id="callTyped"><input id="callIn" placeholder="Type instead of speaking…"><button id="callSend">↑</button></div>
+  <div class="call-ctrls">
+    <button class="callbtn" id="callMute" title="Mute your microphone">🎤</button>
+    <button class="callbtn" id="callSpk" title="Speaker">🔊</button>
+    <button class="callbtn" id="callCam" title="Switch voice / video">🎥 Video</button>
+    <button class="callbtn end" id="callEnd" title="End call">📵 End call</button>
+  </div>
+</div>
 </body>
 </html>
