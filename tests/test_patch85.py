@@ -90,6 +90,24 @@ class TestPatch85Look(unittest.TestCase):
         for sel in (".bubble.ai", ".gpt-input.big", ".sidebar", ".settings-sheet", ".modemenu"):
             self.assertIn(sel, css)
 
+    def test_sidebar_and_account_bar_glassed(self):
+        """User screenshot (patch85b): sidebar + chats list + account dock were flat."""
+        css = holo_layer(APP)
+        self.assertIn("rgba(13,16,32,.42)", css)          # translucent sidebar, aurora shows
+        self.assertIn(".sb-foot, .drawerfoot", css)        # account dock is glass
+        self.assertIn("#sbUpgrade", css)                   # Upgrade button is holo CTA
+        self.assertIn(".coinpill", css)                    # coins pill gold-iris glass
+        self.assertIn(".sessgrp", css)                     # TODAY/YESTERDAY labels styled
+
+    def test_boot_screen_glassed(self):
+        """User screenshot (patch85b): boot sequence + uplink map were flat black."""
+        css = holo_layer(APP)
+        self.assertIn("#boot{", css)
+        self.assertIn("#bootMap{", css)
+        self.assertIn(".bootcap{", css)
+        self.assertIn(".bootlines{", css)
+        self.assertIn(".gatecard{", css)
+
 
 if __name__ == "__main__":
     unittest.main()

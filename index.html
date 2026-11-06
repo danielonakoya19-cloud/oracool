@@ -1005,6 +1005,127 @@ code, .md-code, .md-pre{background:rgba(255,255,255,.06) !important; border-colo
   .gpt-input.big:focus-within, .settings-sheet[open], .voicebar, .holo-live{animation:none !important;}
 }
 
+/* ================= patch85b: sidebar, account bar & boot screen (user-reported gaps) ===== */
+/* sidebar: real translucent glass so the aurora refracts through (was near-opaque) */
+.sidebar{
+  background:linear-gradient(178deg,rgba(13,16,32,.42),rgba(8,10,22,.52)) !important;
+  border-right:1px solid rgba(255,255,255,.12) !important;
+  -webkit-backdrop-filter:blur(28px) saturate(185%) !important;
+  backdrop-filter:blur(28px) saturate(185%) !important;
+  box-shadow:18px 0 44px rgba(2,4,14,.30), inset -1px 0 0 rgba(255,255,255,.08) !important;
+}
+.side-label, .sessgrp{
+  color:#8fa2d6 !important;
+  text-shadow:0 0 14px rgba(103,232,249,.25);
+}
+.side-label::before, .sessgrp::before{
+  content:"◆"; margin-right:6px; font-size:7px; vertical-align:2px;
+  color:#7dd3fc; text-shadow:0 0 10px rgba(34,211,238,.8);
+}
+.sessgrp{letter-spacing:1.6px !important;}
+/* account bar = a glass dock */
+.sb-foot, .drawerfoot{
+  background-color:rgba(255,255,255,.055) !important;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.11),rgba(255,255,255,.02)) !important;
+  border:1px solid rgba(255,255,255,.13) !important;
+  border-radius:18px !important;
+  box-shadow:0 16px 40px rgba(2,4,14,.38), inset 0 1px 0 rgba(255,255,255,.16), inset 0 -16px 32px rgba(168,85,247,.05) !important;
+  -webkit-backdrop-filter:blur(24px) saturate(180%) !important;
+  backdrop-filter:blur(24px) saturate(180%) !important;
+  padding:10px !important;
+}
+.side-user{border-radius:12px;}
+.side-user:hover{background:rgba(255,255,255,.07);}
+.su-plan{
+  background:linear-gradient(115deg,rgba(34,211,238,.20),rgba(168,85,247,.20));
+  border:1px solid rgba(125,211,252,.4); border-radius:999px;
+  padding:1px 8px; color:#bfeaff !important;
+}
+.sb-footnote{color:#7f8db8 !important;}
+/* coins pill: gold-iris glass */
+.coinpill, #app .coinpill{
+  background-color:rgba(251,191,36,.12) !important;
+  background-image:linear-gradient(180deg,rgba(251,191,36,.22),rgba(251,191,36,.05)) !important;
+  border:1px solid rgba(251,191,36,.45) !important;
+  border-radius:999px !important;
+  color:#ffd98a !important;
+  box-shadow:0 8px 22px rgba(251,191,36,.18), inset 0 1px 0 rgba(255,255,255,.22) !important;
+  -webkit-backdrop-filter:blur(14px) saturate(170%) !important;
+  backdrop-filter:blur(14px) saturate(170%) !important;
+  text-shadow:0 0 12px rgba(251,191,36,.55) !important;
+}
+/* upgrade + every primary .btn = holographic CTA */
+.btn.primary, #sbUpgrade{
+  background:var(--holo-shine) !important;
+  background-size:260% 260% !important;
+  animation:holoSweep 8.5s ease infinite !important;
+  border:1px solid rgba(255,255,255,.32) !important;
+  border-radius:999px !important;
+  color:#fff !important;
+  box-shadow:0 12px 32px rgba(99,102,241,.38), inset 0 1px 0 rgba(255,255,255,.42), inset 0 -10px 22px rgba(2,4,20,.22) !important;
+  text-shadow:0 1px 8px rgba(2,4,20,.35) !important;
+}
+.btn.primary:hover, #sbUpgrade:hover{
+  filter:brightness(1.1) saturate(1.15);
+  transform:translateY(-1px);
+}
+/* boot screen: aurora glass */
+#boot{
+  background:linear-gradient(180deg,rgba(5,6,14,.58),rgba(5,6,14,.80)) !important;
+  -webkit-backdrop-filter:blur(6px) saturate(150%) !important;
+  backdrop-filter:blur(6px) saturate(150%) !important;
+}
+#bootMap{
+  border-radius:24px;
+  border:1px solid rgba(255,255,255,.13);
+  box-shadow:0 30px 80px rgba(2,4,14,.5), inset 0 1px 0 rgba(255,255,255,.12), 0 0 90px rgba(34,211,238,.14);
+  background-color:rgba(255,255,255,.04);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
+  -webkit-backdrop-filter:blur(18px) saturate(170%);
+  backdrop-filter:blur(18px) saturate(170%);
+}
+.bootcap{
+  padding:9px 22px; border-radius:999px;
+  background-color:rgba(255,255,255,.06) !important;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.02)) !important;
+  border:1px solid rgba(255,255,255,.14) !important;
+  box-shadow:0 12px 30px rgba(2,4,14,.35), inset 0 1px 0 rgba(255,255,255,.16) !important;
+  -webkit-backdrop-filter:blur(16px) saturate(170%) !important;
+  backdrop-filter:blur(16px) saturate(170%) !important;
+}
+.bootcap b{
+  background:linear-gradient(115deg,#7dd3fc,#a78bfa,#f0abfc,#fcd34d,#7dd3fc) !important;
+  background-size:230% 230% !important;
+  -webkit-background-clip:text !important; background-clip:text !important;
+  color:transparent !important; font-weight:600 !important;
+  animation:holoSweep 10s ease infinite !important;
+}
+.bootlines{
+  padding:18px 34px; border-radius:22px;
+  background-color:rgba(255,255,255,.055) !important;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,.02)) !important;
+  border:1px solid rgba(255,255,255,.12) !important;
+  box-shadow:0 22px 55px rgba(2,4,14,.42), inset 0 1px 0 rgba(255,255,255,.14), 0 0 60px rgba(168,85,247,.07) !important;
+  -webkit-backdrop-filter:blur(22px) saturate(180%) !important;
+  backdrop-filter:blur(22px) saturate(180%) !important;
+}
+.bootlines .ok{
+  text-shadow:0 0 12px rgba(52,211,153,.75);
+}
+/* sign-in gate card joins the glass family */
+.gatecard{
+  background-color:rgba(255,255,255,.055) !important;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,.02)) !important;
+  border:1px solid rgba(255,255,255,.13) !important;
+  border-radius:24px !important;
+  box-shadow:0 30px 80px rgba(2,4,14,.5), inset 0 1px 0 rgba(255,255,255,.16) !important;
+  -webkit-backdrop-filter:blur(26px) saturate(180%) !important;
+  backdrop-filter:blur(26px) saturate(180%) !important;
+}
+@media (prefers-reduced-motion:reduce){
+  .btn.primary, #sbUpgrade, .bootcap b{animation:none !important;}
+}
+
 </style>
 </head>
 <body>
