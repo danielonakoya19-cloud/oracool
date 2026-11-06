@@ -14,7 +14,7 @@ import server as s  # noqa: E402
 
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
-MARK = "patch80-trade-signals"
+MARK = "patch81-live-feed"
 
 
 class Marker(unittest.TestCase):

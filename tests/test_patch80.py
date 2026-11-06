@@ -15,12 +15,18 @@ class TestPatch80TradeSignals(unittest.TestCase):
     DOWN = [100 * (0.996 ** i) for i in range(90)]
     FLAT = [100 + ((i * 7919) % 5 - 2) * 0.02 for i in range(90)]
 
+    def setUp(self):
+        self._sv = server._signal_series
+
+    def tearDown(self):
+        server._signal_series = self._sv
+
     def _feed(self, series):
-        server._forecast_series = lambda k, sym: (series, [100.0] * 90, "test feed")
+        server._signal_series = lambda k, sym, mins: (series, [100.0] * 90, None, "test feed")
 
     def test_marker_patch80(self):
         src = open("server.py", encoding="utf-8").read()
-        assert src.count("patch80-trade-signals") == 2
+        assert src.count("patch81-live-feed") == 2
         assert "def market_signal(" in src and "SIGNAL_TRIGGER" in src
 
     def test_uptrend_gives_buy_with_confidence(self):
@@ -59,7 +65,9 @@ class TestPatch80TradeSignals(unittest.TestCase):
         assert "market" in r["error"].lower()
 
     def test_data_error_refuses_to_guess(self):
-        server._forecast_series = lambda k, sym: ({}, "No history returned for that symbol.")
+        def boom(k, sym, mins):
+            raise ValueError("No history returned for that symbol.")
+        server._signal_series = boom
         r = server.market_signal("should i buy or sell litecoin in 30 mins")
         assert r["ok"] is False and r["saw_symbol"] is True
         assert "guess" in r.get("disclaimer", "")

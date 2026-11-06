@@ -3094,72 +3094,228 @@ def _signal_horizon(text):
     return (240, "the next 4 hours (short-term)")
 
 
+def _intraday_series(kind, sym, mins):
+    """patch81: LIVE short-horizon bars -> (closes, vols, timestamps_ms, label).
+    Crypto: CoinGecko 5-minute ticks for 1 day, else Yahoo 1m/5m candles
+    (works for FX, gold/silver and stocks too). Raises when nothing usable."""
+    if kind == "crypto":
+        try:
+            k = key("COINGECKO_API_KEY")
+            hdrs = {"x-cg-demo-api-key": k} if k else {}
+            url = ("https://api.coingecko.com/api/v3/coins/" + urllib.parse.quote(sym)
+                   + "/market_chart?vs_currency=usd&days=1")
+            _, raw, _ = http_fetch(url, headers=hdrs, timeout=25)
+            d = json.loads(raw)
+            pts = [(float(x[0]), float(x[1])) for x in (d.get("prices") or []) if len(x) > 1]
+            vols = [float(x[1]) for x in (d.get("total_volumes") or []) if len(x) > 1]
+            if len(pts) >= 30:
+                return ([p for _, p in pts], vols, [int(t) for t, _ in pts],
+                        "CoinGecko live (5-minute ticks)")
+        except Exception:
+            pass
+    iv, rng = ("1m", "1d") if mins <= 30 else ("5m", "5d")
+    symq = _yahoo_symbol(kind, sym)
+    url = ("https://query1.finance.yahoo.com/v8/finance/chart/" + urllib.parse.quote(symq)
+           + "?range=" + rng + "&interval=" + iv)
+    _, raw, _ = http_fetch(url, headers={"User-Agent": _YAHOO_UA}, timeout=25)
+    r0 = ((json.loads(raw).get("chart") or {}).get("result") or [None])[0]
+    q = (((r0 or {}).get("indicators") or {}).get("quote") or [{}])[0]
+    ts_raw = [int(t) for t in ((r0 or {}).get("timestamp") or [])]
+    c_raw = (q.get("close") or [])
+    v_raw = (q.get("volume") or [])
+    pairs = [(ts_raw[i], float(c_raw[i]),
+              float(v_raw[i]) if i < len(v_raw) and v_raw[i] is not None else 0.0)
+             for i in range(min(len(ts_raw), len(c_raw))) if c_raw[i] is not None]
+    if len(pairs) >= 30:
+        ts = [(t * 1000 if t < 10 ** 12 else t) for t, _, _ in pairs]  # Yahoo uses epoch seconds
+        return ([c for _, c, _ in pairs], [v for _, _, v in pairs], ts,
+                "Yahoo Finance live (" + iv + " candles)")
+    raise ValueError("no intraday bars returned")
+
+
+def _signal_series(kind, sym, mins):
+    """patch81: horizon-aware live series -> (closes, vols, ts_or_None, label).
+    Short horizons get the live intraday feed (1m/5m bars) with a daily
+    fallback; long horizons use the daily chain (CoinGecko/Yahoo/Stooq)."""
+    if mins <= 1440:
+        try:
+            return _intraday_series(kind, sym, mins)
+        except Exception:
+            pass  # fall back to daily bars below
+    got = _forecast_series(kind, sym)
+    if isinstance(got, tuple) and len(got) == 3 and isinstance(got[0], list) and len(got[0]) >= 30:
+        return (got[0], got[1], None, got[2])
+    msg = (got[1] if isinstance(got, tuple) and len(got) == 2 and isinstance(got[1], str)
+           else "no price history returned")
+    raise ValueError(msg)
+
+
+def _win_label(minutes):
+    minutes = float(minutes)
+    if minutes < 60:
+        return "last " + str(int(minutes)) + " min"
+    if minutes < 1440:
+        return "last " + ("%.0f" % (minutes / 60.0)) + " h"
+    days = minutes / 1440.0
+    return "last " + ("%.0f" % days) + " day" + ("s" if abs(days - 1) > 0.01 else "")
+
+
 def market_signal(text):
-    """patch80 — trade signal for ANY market, built from live data through the
-    forecast engine. Answers BUY / SELL / WAIT with a confidence %, entry/stop/
-    target for the requested horizon (e.g. 'in the next 4 mins'), and the
-    reasons why. WAIT is a first-class, honest answer when the edge is weak —
-    the system never invents numbers or forces a call."""
+    """patch81 — trade signal on a LIVE price feed for every market. Answers
+    BUY / SELL / WAIT with confidence %, entry/stop/target for the requested
+    horizon and the reasons why. Short horizons use real 1m/5m candles so
+    "in the next 4 mins" is analysed on minute data, not daily guesses.
+    WAIT is a first-class, honest answer; nothing is invented."""
     kind, sym, disp, low = _resolve_market(text)
     if not sym:
         return {"ok": False, "saw_symbol": False,
                 "error": "Tell me which market the trade is on (for example: gold, EUR/USD, BTC, or AAPL) and I will build the signal from its live data."}
     mins, hlab = _signal_horizon(text)
-    fc = market_forecast(text)
-    if not fc.get("ok"):
+    try:
+        closes, vols, ts, src = _signal_series(kind, sym, mins)
+    except Exception as e:
         return {"ok": False, "saw_symbol": True, "market": disp, "horizon": hlab,
-                "error": fc.get("error", "Market data unavailable."),
+                "error": (str(e)[:160] or "Market data unavailable."),
                 "disclaimer": "A signal without live data would be a guess — I will not guess."}
-    score = {"Bullish": 1.5 if fc.get("strength") == "Strong" else 0.75,
-             "Bearish": -1.5 if fc.get("strength") == "Strong" else -0.75}.get(fc.get("direction"), 0.0)
+    closes = [float(c) for c in closes if c is not None][-400:]
+    vols = [float(v) for v in vols][-400:] if isinstance(vols, list) else []
+    if len(vols) != len(closes):
+        vols = []
+    n = len(closes)
+    last = closes[-1]
+    bar_minutes = 1440
+    live = False
+    asof = "last daily close"
+    if isinstance(ts, list) and len(ts) >= 2:
+        diffs = sorted((ts[i] - ts[i - 1]) / 60000.0 for i in range(1, len(ts)) if ts[i] > ts[i - 1])
+        if diffs:
+            bar_minutes = max(1, int(round(diffs[len(diffs) // 2])))
+            live = True
+            try:
+                asof = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(ts[-1] / 1000.0))
+            except Exception:
+                asof = "just now"
+    coarse = (mins <= 240 and bar_minutes >= 1440)
+
+    def sma(k2):
+        w = closes[-k2:]
+        return sum(w) / len(w)
+    s7, s25 = sma(min(7, n)), sma(min(25, n))
+    gains = [max(0.0, closes[i] - closes[i - 1]) for i in range(1, n)]
+    losses = [max(0.0, closes[i - 1] - closes[i]) for i in range(1, n)]
+    ag = (sum(gains[-14:]) / min(14, len(gains))) or 1e-9
+    al = (sum(losses[-14:]) / min(14, len(losses))) or 1e-9
+    rsi = 100.0 - (100.0 / (1.0 + ag / al))
+    chg_a = (last / closes[-min(n, 8)] - 1.0) * 100.0
+    chg_b = (last / closes[-min(n, 31)] - 1.0) * 100.0
+    hi14 = max(closes[-14:]); lo14 = min(closes[-14:])
+    pos = (last - lo14) / max(hi14 - lo14, 1e-9)
+    rets = [(closes[i] / closes[i - 1] - 1.0) for i in range(1, n)]
+    tail = rets[-min(50, len(rets)):] or [0.0]
+    mu = sum(tail) / len(tail)
+    bar_vol = max((sum((r - mu) ** 2 for r in tail) / len(tail)) ** 0.5, 0.0005)
+    vt = None
+    if vols:
+        nv = len(vols)
+        vh = sum(vols[-7:]) / min(7, nv)
+        vall = (sum(vols) / nv) or 1e-9
+        vt = vh / vall if vall else None
+    scale = (bar_minutes / 1440.0) ** 0.5
+    mthr = max(0.05, 1.5 * scale)
+    tthr = max(0.3, 8.0 * scale)
+    xthr = 0.005 if bar_minutes >= 1440 else 0.002
+    mlab = _win_label(7 * bar_minutes); blab = _win_label(30 * bar_minutes)
+
+    score = 0.0
+    reasons = [{"factor": "Horizon", "value": hlab,
+                "reading": ("analysed on live " + ("daily" if bar_minutes >= 1440 else str(bar_minutes) + "-minute") + " bars as of " + asof) if not coarse
+                else ("daily bars are coarser than your horizon — the live intraday feed was unreachable; treat this as coarse, not a precise short-term call")}]
+    if chg_a > mthr:
+        score += 1; reasons.append({"factor": "Momentum (" + mlab + ")", "value": "+%.2f%% over %s" % (chg_a, mlab[5:]), "reading": "buyers are in control"})
+    elif chg_a < -mthr:
+        score -= 1; reasons.append({"factor": "Momentum (" + mlab + ")", "value": "%.2f%% over %s" % (chg_a, mlab[5:]), "reading": "sellers are pressing"})
+    else:
+        reasons.append({"factor": "Momentum (" + mlab + ")", "value": "%+.2f%% over %s" % (chg_a, mlab[5:]), "reading": "flat — no strong push"})
+    if s7 > s25 * (1 + xthr):
+        score += 1; reasons.append({"factor": "Short trend (SMA cross)", "value": "7-bar SMA %.4g above 25-bar %.4g" % (s7, s25), "reading": "short-term trend is up (a golden cross)"})
+    elif s7 < s25 * (1 - xthr):
+        score -= 1; reasons.append({"factor": "Short trend (SMA cross)", "value": "7-bar SMA %.4g below 25-bar %.4g" % (s7, s25), "reading": "short-term trend is down (a death cross)"})
+    else:
+        reasons.append({"factor": "Short trend (SMA cross)", "value": "7-bar and 25-bar SMAs intertwined", "reading": "no clear trend agreement"})
+    if rsi >= 70:
+        score -= 1; reasons.append({"factor": "RSI (14)", "value": "%.0f — overbought" % rsi, "reading": "price ran far fast; pullbacks become more likely"})
+    elif rsi <= 30:
+        score += 1; reasons.append({"factor": "RSI (14)", "value": "%.0f — oversold" % rsi, "reading": "selling is stretched; bounces become more likely"})
+    elif rsi > 55:
+        score += 0.5; reasons.append({"factor": "RSI (14)", "value": "%.0f — mild bullish zone" % rsi, "reading": "momentum leans positive without being extreme"})
+    elif rsi < 45:
+        score -= 0.5; reasons.append({"factor": "RSI (14)", "value": "%.0f — mild bearish zone" % rsi, "reading": "momentum leans negative without being extreme"})
+    else:
+        reasons.append({"factor": "RSI (14)", "value": "%.0f — neutral" % rsi, "reading": "neither side dominates"})
+    if chg_b > tthr:
+        score += 0.5; reasons.append({"factor": "Trend (" + blab + ")", "value": "+%.2f%% over %s" % (chg_b, blab[5:]), "reading": "the broader trend supports buyers"})
+    elif chg_b < -tthr:
+        score -= 0.5; reasons.append({"factor": "Trend (" + blab + ")", "value": "%.2f%% over %s" % (chg_b, blab[5:]), "reading": "the broader trend supports sellers"})
+    else:
+        reasons.append({"factor": "Trend (" + blab + ")", "value": "%+.2f%% over %s" % (chg_b, blab[5:]), "reading": "range-bound on the wider view"})
+    reasons.append({"factor": "14-bar range", "value": "%.0f%% of the %.4g–%.4g range" % (pos * 100, lo14, hi14),
+                    "reading": "near the top — resistance close by" if pos > 0.8 else ("near the bottom — support close by" if pos < 0.2 else "mid-range — room in both directions")})
+    if vt is not None:
+        reasons.append({"factor": "Volume", "value": "recent %.0f%% of average" % (vt * 100),
+                        "reading": "participation is rising — moves get confirmed" if vt > 1.25 else ("participation is fading — moves get doubted" if vt < 0.75 else "participation is normal")})
+    score = max(-2.5, min(2.5, score))
     strength = abs(score)
     threshold = 0.9 if mins <= 30 else (0.7 if mins <= 240 else (0.6 if mins <= 1440 else 0.55))
     if strength >= threshold:
         sig = "BUY" if score > 0 else "SELL"
     else:
         sig = "WAIT"
-    fconf = int(fc.get("confidence_pct") or 52)
     if sig == "WAIT":
         conf = min(72, 54 + int(round(8 * (threshold + 0.4 - min(strength, threshold)))))
     else:
-        conf = min(92, 52 + int(round(14 * strength)) + max(0, fconf - 58) // 2)
-    vol_w = float(fc.get("volatility_weekly_pct") or 5.0) / 100.0
-    day_vol = vol_w / (5 ** 0.5)
-    h_vol = day_vol * ((mins / 1440.0) ** 0.5)
-    entry = fc.get("last_price")
+        conf = min(92, 52 + int(round(14 * strength)))
+    h_bars = max(mins / float(max(bar_minutes, 1)), 0.02)
+    h_vol = bar_vol * (h_bars ** 0.5)
+    dec = 6 if last < 10 else 2
+
+    def _lvl(v):
+        r_ = round(v, dec)
+        return r_ if r_ != round(last, dec) else round(v, dec + 2)  # keep levels distinct from entry
+    entry = round(last, dec)
     stop = target = None
     if sig == "BUY":
-        stop = round(entry * (1 - 1.3 * h_vol), 6 if entry < 10 else 2)
-        target = round(entry * (1 + 1.6 * h_vol), 6 if entry < 10 else 2)
+        stop = _lvl(entry * (1 - 1.3 * h_vol))
+        target = _lvl(entry * (1 + 1.6 * h_vol))
     elif sig == "SELL":
-        stop = round(entry * (1 + 1.3 * h_vol), 6 if entry < 10 else 2)
-        target = round(entry * (1 - 1.6 * h_vol), 6 if entry < 10 else 2)
-    exp_move = round(h_vol * 1.15 * 100.0, 2)
+        stop = _lvl(entry * (1 + 1.3 * h_vol))
+        target = _lvl(entry * (1 - 1.6 * h_vol))
+    exp_move = round(h_vol * 1.15 * 100.0, 4)
     if mins <= 60:
-        hnote = (f"Horizon {hlab}: horizons this short are dominated by noise — the factors below "
-                 f"are daily-scale, so treat this as a lean with strict risk, never a promise.")
+        hnote = (f"Horizon {hlab}: horizons this short carry heavy noise — the factors above come from "
+                 f"live {bar_minutes}-minute bars, so treat this as a lean with strict risk, never a promise.")
     elif mins <= 1440:
         hnote = f"Horizon {hlab}: use the entry/stop/target as decision levels, not certainties."
     else:
         hnote = f"Horizon {hlab}: expected move about {exp_move}% either way at current volatility."
-    reasons = list(fc.get("reasons") or [])
-    reasons.insert(0, {"factor": "Horizon", "value": hlab, "reading": hnote})
-    why = ("WHY THIS SIGNAL: " + sig + f" with {conf}% confidence at the {hlab} horizon. "
-           + fc.get("why", "") + "  " + hnote)
+    why = ("WHY THIS SIGNAL: " + sig + f" with {conf}% confidence at the {hlab} horizon, computed from "
+           + ("LIVE " if live else "") + ("daily bars" if bar_minutes >= 1440 else str(bar_minutes) + "-minute bars") + " as of " + asof + ".  "
+           + "  ".join(r_["factor"] + ": " + r_["value"] + " — " + r_["reading"] + "." for r_ in reasons[1:])
+           + "  " + hnote)
     return {"ok": True, "market": disp, "kind": kind, "symbol": sym,
             "signal": sig, "confidence_pct": conf,
             "horizon": hlab, "horizon_minutes": mins,
             "entry": entry, "stop": stop, "target": target,
-            "expected_move_pct": exp_move,
-            "last_price": entry, "direction": fc.get("direction"), "strength": fc.get("strength"),
-            "rsi14": fc.get("rsi14"), "support_14d": fc.get("support_14d"),
-            "resistance_14d": fc.get("resistance_14d"),
-            "reasons": reasons, "why": why, "source": fc.get("source"),
+            "expected_move_pct": exp_move, "last_price": entry,
+            "asof": asof, "live": live,
+            "bar": ("daily bars" if bar_minutes >= 1440 else str(bar_minutes) + "-minute bars"),
+            "rsi14": round(rsi, 1), "support_14d": round(lo14, 6 if last < 10 else 2),
+            "resistance_14d": round(hi14, 6 if last < 10 else 2),
+            "reasons": reasons, "why": why, "source": src,
             "trader_info_note": "Weigh the trader's own information (patterns they see, their entry price, risk limits) with these factors; if it conflicts with the live data, say so plainly.",
-            "disclaimer": ("This signal is computed from live market data (source above) — it is a "
-                           "probability, not a promise, and a WAIT is an honest, complete answer when "
-                           "the edge is weak. No system avoids losses. Not financial advice; size every "
-                           "trade to your own risk.")}
+            "disclaimer": ("This signal is computed from live market data (source and timestamp above) — "
+                           "it is a probability, not a promise, and a WAIT is an honest, complete answer "
+                           "when the edge is weak. No system avoids losses. Not financial advice; size "
+                           "every trade to your own risk.")}
 
 
 def trade_signal(symbol):
@@ -9134,7 +9290,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch80-trade-signals",
+        "build": "patch81-live-feed",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -10288,7 +10444,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         r = market_signal(t)
         if r.get("ok"):
             out.append({"tool": "signal",
-                         "label": "signal · " + str(r.get("market", "")) + " · " + str(r.get("signal", "")),
+                         "label": "signal · " + str(r.get("market", "")) + " · " + str(r.get("signal", "")) + (" · live" if r.get("live") else ""),
                          "result": _shrink(r, 2600)})
         elif r.get("saw_symbol"):
             out.append({"tool": "signal", "label": "signal", "result": _shrink(r, 800)})
@@ -12728,7 +12884,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch80-trade-signals", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch81-live-feed", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
