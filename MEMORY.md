@@ -216,3 +216,9 @@
 - **OraCool logo = liquid glass:** landing `.brand i` + app `.orbcore` (sidebar/boot/reactor) get conic holo + gloss + `logoGlow` pulse + light-theme variants; `#hdrReactor .reactorhead .orbcore` keeps its holoSweep (more specific) ✓.
 - **Pins/lessons:** old pins broke twice on this change — test_patch79 pinned the literal "MARKETS & FORECASTS (patch79)" (retarget to scrubbed text) and test_patch45's `fake_tools` mock lacked the new `tz=` kwarg (TypeError → 0 feed frames; mocks must track the real signature). CSS pins: `rindex(".foo{")` can land on the LIGHT variant appended later — anchor on section comments instead. Suite **726 passed**.
 - Prod: `patch88-movers-faq-logo` free_mode true; repo release log synced.
+
+## patch88b — liquid-glass icon set (this session)
+
+- User picked option 2 for the liquid-glass orb logo icon → `images/oracool-icon.png` (2048px) resized via PIL into `apple-touch-icon.png` (180), `icon-192.png`, `icon-512.png`, `logo.png` (og), `favicon.ico` (multi-size) at the repo root; index.html icon links cache-busted `?v=2`→`?v=3`.
+- **Workspace-path corrections (snapshot drift):** `MEMORY.md` = `/home/user/oracool/MEMORY.md`; `keys.json` = `/home/user/oracool/keys.json` with key **`GITHUB_TOKEN`** (not `github_token`); the deploy vault PUT must tolerate a missing sha (404 on GET = create). `/home/user/private/RENDER-ENV-UPDATED.txt` holds the OLD rotated token (401) — never use.
+- /landing route 404s on plain fetch (verify via the real route `/` or `/landing.html`); /app works.
