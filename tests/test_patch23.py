@@ -31,7 +31,7 @@ def read(name):
 
 def test_build_marker_patch23():
     src = read("server.py")
-    assert src.count('"build": "patch85-holo-glass"') == 2
+    assert src.count('"build": "patch86-theme-toggle"') == 2
 
 
 # ---------------------------------------------------------------- media persistence

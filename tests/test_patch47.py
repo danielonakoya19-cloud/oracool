@@ -21,7 +21,7 @@ def _keys(**have):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch85-holo-glass"'), 2)
+        self.assertEqual(SRV.count('"patch86-theme-toggle"'), 2)
         self.assertNotIn("patch46-durable", SRV)
 
 
