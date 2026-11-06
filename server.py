@@ -3480,6 +3480,31 @@ def trade_signal(symbol):
     return out
 
 
+def market_movers():
+    """patch88 — live market-movers basket (the thing 'morning briefing' promises):
+    price + change% for the flagship instruments straight from the signal feed."""
+    basket = ["BTC", "ETH", "EUR/USD", "USD/NGN", "gold", "silver", "AAPL", "TSLA", "NVDA"]
+    rows = []
+    for name in basket:
+        try:
+            kind, sym, disp, _l = _resolve_market(name)
+            if not sym:
+                continue
+            closes, _vols, _ts, src = _signal_series(kind, sym, 1440)
+            closes = [float(c) for c in (closes or []) if c is not None]
+            if len(closes) < 2:
+                continue
+            last = closes[-1]
+            chg = (last / closes[-min(len(closes), 8)] - 1.0) * 100.0
+            rows.append({"market": disp, "price": round(last, 6),
+                         "change_pct": round(chg, 2), "source": src})
+        except Exception:
+            continue
+    rows.sort(key=lambda r: abs(r.get("change_pct") or 0), reverse=True)
+    return {"ok": bool(rows), "movers": rows,
+            "note": "Live timestamped quotes from the same feed as trade signals. Educational, not financial advice."}
+
+
 def auto_status():
     return {"enabled": AUTO["enabled"], "interval_min": AUTO["interval_min"],
             "watchlist": AUTO["watchlist"], "budget_pct": AUTO["budget_pct"],
@@ -9486,7 +9511,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch87-glass-private-accounts",
+        "build": "patch88-movers-faq-logo",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -10557,7 +10582,7 @@ def _pending_media_brief(history, current):
     return kind, cur.rstrip(".!, "), style
 
 
-def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto_site="", history=None, force_build=False):
+def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto_site="", history=None, force_build=False, tz=""):
     """Detect intent in the user's message and RUN the matching live tool(s)."""
     t = (text or "").strip()
     if not t:
@@ -10629,8 +10654,15 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             out.append({"tool": "openapp", "label": "open " + cand["app"],
                         "result": _shrink(cand, 600)})
             return out[:4]
-    # weather
+    # patch88: "movers" / morning briefing — live basket, no buy/sell wording needed
+    if re.search(r"\b(morning brief|briefing|movers?|what'?s moving|top (gainers|losers|movers))\b", low) \
+            and not SIGNAL_TRIGGER.search(t):
+        out.append({"tool": "movers", "label": "market movers",
+                    "result": _shrink(market_movers(), 1400)})
+    # weather (patch88: briefings with no city fall back to the user's timezone city)
     wc = _weather_city(t)
+    if not wc and re.search(r"\b(weather|briefing|forecast|temperature)\b", low):
+        wc = ((tz or "").split("/")[-1].replace("_", " ").strip()) or "Lagos"
     if wc:
         out.append({"tool": "weather", "label": "weather · " + wc,
                     "result": _shrink(weather(wc))})
@@ -13080,7 +13112,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch87-glass-private-accounts", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch88-movers-faq-logo", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -14314,7 +14346,8 @@ class Handler(BaseHTTPRequestHandler):
                                 _tr["r"] = auto_tools(last_user, tier, ha_url=body.get("ha_url"),
                                                       ha_token=body.get("ha_token"),
                                                       email=chat_email, crypto_site=_site, history=messages,
-                                                      force_build=(_mode == "build"))
+                                                      force_build=(_mode == "build"),
+                                                      tz=str(body.get("tz") or ""))
                             except Exception as _e:
                                 _tr["e"] = _e
                         _th = threading.Thread(target=_run_tools, daemon=True)
@@ -14357,7 +14390,8 @@ class Handler(BaseHTTPRequestHandler):
                                                ha_url=body.get("ha_url"),
                                                ha_token=body.get("ha_token"),
                                                email=chat_email, crypto_site=_site, history=messages,
-                                               force_build=(_mode == "build"))
+                                               force_build=(_mode == "build"),
+                                               tz=str(body.get("tz") or ""))
                 except Exception as e:
                     tool_runs = [{"tool": "error", "label": "auto-tools", "result": str(e)[:200]}]
         tool_ctx = tool_context(tool_runs)

@@ -11,7 +11,7 @@ PAGE = Path("index.html").read_text(encoding="utf-8")
 
 class TestPatch84VideoGen(unittest.TestCase):
     def test_marker_is_patch84(self):
-        self.assertEqual(SRV.count('"patch87-glass-private-accounts"'), 2)
+        self.assertEqual(SRV.count('"patch88-movers-faq-logo"'), 2)
 
     def test_wan22_frame_cascade(self):
         # frames come from gemini image -> agnes image -> nexa image, NEVER the dead CVRON

@@ -19,7 +19,7 @@ PNG = base64.b64encode(bytes.fromhex(
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count("patch87-glass-private-accounts"), 2)
+        self.assertEqual(SRV.count("patch88-movers-faq-logo"), 2)
 
 
 class ServerUpload(unittest.TestCase):

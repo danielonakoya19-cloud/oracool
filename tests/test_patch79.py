@@ -22,7 +22,7 @@ def fake_series(kind, sym):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count("patch87-glass-private-accounts"), 2)
+        self.assertEqual(SRV.count("patch88-movers-faq-logo"), 2)
 
 
 class ForecastEngine(unittest.TestCase):
@@ -91,7 +91,7 @@ class Composer(unittest.TestCase):
         self.assertIn("function renderUserRich(box, content)", APP)   # patch78 survives
         self.assertEqual(APP.count("renderUserRich(b, m.content)"), 2)
         self.assertIn("m.kind==='audio'?`<audio src=", APP)
-        self.assertIn("MARKETS & FORECASTS (patch79)", APP)
+        self.assertIn("MARKETS & FORECASTS:", APP)
         self.assertIn("the REASONS WHY", APP)
 
 

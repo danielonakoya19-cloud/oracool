@@ -14,7 +14,7 @@ APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch87-glass-private-accounts"'), 2)
+        self.assertEqual(SRV.count('"patch88-movers-faq-logo"'), 2)
         self.assertNotIn("patch44-vision", SRV)
 
 
@@ -56,7 +56,7 @@ class InlineFeed(unittest.TestCase):
     def test_chat_stream_carries_the_build_feed(self):
         email = "feed45@example.invalid"
 
-        def fake_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto_site="", history=None, force_build=False):
+        def fake_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto_site="", history=None, force_build=False, tz=""):
             s._bp_reset(email, "Fashion Designer")
             s._bp_step(email, "Reading the brief", text[:40]); time.sleep(0.9)
             s._bp_step(email, "Building Fashion Designer", "thinking…", kind="build"); time.sleep(0.9)
