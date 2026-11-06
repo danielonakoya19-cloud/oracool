@@ -94,5 +94,30 @@ class TestPatch84BuilderEdits(unittest.TestCase):
                          ["/media/abc/logo.png", "https://x.supabase.co/hero.jpg"])
 
 
+class TestPatch84FreeMediaTools(unittest.TestCase):
+    """patch74 rule: the WHOLE AI is free while growing — no 'offer the upgrade'
+    tool notes for media, no tier lock on images/video/search. Security-scan
+    gate (patch64) deliberately stays enterprise-only."""
+
+    def test_video_tools_free_under_growth_mode(self):
+        self.assertIn('if tier_gte(tier, "ultra") or free_mode():  # patch84/74: video is FREE while growing', SRV)
+        self.assertIn('if tier_gte(tier, "ultra") or free_mode():  # patch84/74', SRV)
+        # the upgrade-pitch note may only live in the ELSE of the free gate
+        i = SRV.index('if tier_gte(tier, "ultra") or free_mode():  # patch84/74: video is FREE while growing')
+        j = SRV.index('Video creation is on the Professional plan')
+        self.assertGreater(j, i)
+        else_branch = SRV[i:j]
+        self.assertIn("else:", else_branch[-200:])
+
+    def test_image_never_denied(self):
+        self.assertIn('if tier_gte(tier, "pro") or free_mode():  # patch74: never deny image gen', SRV)
+
+    def test_search_free(self):
+        self.assertIn('if tier_gte(tier, "starter") or free_mode():  # patch84/74', SRV)
+
+    def test_security_scan_still_enterprise(self):
+        self.assertIn('if tier_gte(tier, "enterprise") and (_SECURITY_TOOL_RX.search(low)', SRV)
+
+
 if __name__ == "__main__":
     unittest.main()

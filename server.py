@@ -10749,13 +10749,13 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                     "result": _shrink(r)})
 
     # Starter-tier tools (web search)
-    if tier_gte(tier, "starter"):
+    if tier_gte(tier, "starter") or free_mode():  # patch84/74: whole AI free while growing
         if any(k in low for k in ("search for", "search the web", "web search", "google ")):
             out.append({"tool": "search", "label": "web search",
                         "result": _shrink(pro_search(t, 3), 1500)})
 
-    # Pro-tier tools (deep OSINT + image creation)
-    if tier_gte(tier, "pro"):
+    # Pro-tier tools (deep OSINT + image creation) — free under GROWTH_FREE_MODE (patch74/84)
+    if tier_gte(tier, "pro") or free_mode():
         if "shodan" in low and ipm:
             out.append({"tool": "shodan", "label": "shodan " + ipm.group(1),
                         "result": _shrink(pro_shodan(ipm.group(1)), 1500)})
@@ -11049,7 +11049,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                                                "{\"app\":\"ask\",\"question\":\"What should the " + _bk + " show?\",\"options\":[\"A Lagos skyline at sunset\","
                                                "\"A product spinning on a table\",\"A lion walking through the savannah\",\"Other - I will describe it\"]}. "
                                                "Their answer becomes the subject and the " + _bk + " is generated automatically." +
-                                               ("" if tier_gte(tier, _need) else " NOTE: " + _bk + " creation is on the " + ("Professional" if _bk == "video" else "Pro") +
+                                               ("" if tier_gte(tier, _need) or free_mode() else " NOTE: " + _bk + " creation is on the " + ("Professional" if _bk == "video" else "Pro") +
                                                 " plan - mention that in one sentence."))}})
     # patch41: the answer to that question ("a lion in the savannah") carries the pending brief
     _pmb = _pending_media_brief(history, t) if not out else None
@@ -11057,20 +11057,20 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         _pk, _psub, _pstyle = _pmb
         _pprompt = (_psub + ((" - " + _pstyle) if _pstyle else "")).strip()
         if _pk == "video":
-            if tier_gte(tier, "ultra"):
+            if tier_gte(tier, "ultra") or free_mode():  # patch84/74: video is FREE while growing
                 _want_aud = bool(re.search(r"\b(?:voice|narration|narrated|sound|audio|speech|talking)\b", (_pstyle + " " + _psub), re.I))
                 out.append({"tool": "video", "label": "video · " + _psub[:40], "result": _shrink(gen_video(_pprompt, want_audio=_want_aud), 1200)})
             else:
                 out.append({"tool": "video", "label": "video · plan", "result": {"locked": True, "plan": "ultra",
                             "note": "Video creation is on the Professional plan - tell the user in one sentence and offer the upgrade."}})
         else:
-            if tier_gte(tier, "pro"):
+            if tier_gte(tier, "pro") or free_mode():  # patch74: never deny image gen
                 out.append({"tool": "image", "label": "image · " + _psub[:40], "result": _shrink(gen_image(_pprompt), 1200)})
             else:
                 out.append({"tool": "image", "label": "image · plan", "result": {"locked": True, "plan": "pro",
                             "note": "Image creation is on the Pro plan - tell the user in one sentence and offer the upgrade."}})
-    # Ultra-tier tools (video creation + GitHub console)
-    if tier_gte(tier, "ultra"):
+    # Ultra-tier tools (video creation + GitHub console) — free under GROWTH_FREE_MODE (patch84/74)
+    if tier_gte(tier, "ultra") or free_mode():
         vm = re.search(r"(?:generate|create|make|produce|render)\s+(?:me\s+)?(?:a\s+|an\s+)?(?:(?:short|quick|cinematic|realistic|animated|ai)\s+){0,2}(?:video|clip|animation|film|movie|reel)\s*(?:of|about|for|showing|where|with)?\s*(.{4,200})", low)
         if vm and any(k in low for k in ("video", "clip", "animation", "film", "movie", "reel")) and not _bare and not _pmb:
             prompt = vm.group(1).strip().rstrip("?!., ")
@@ -11287,16 +11287,16 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         out.append({"tool": "locked", "label": feature,
                     "result": json.dumps({"feature": feature, "unlocks_on": plan,
                                           "note": f"This feature unlocks on the {PLANS.get(plan, {}).get('label', plan.title())} plan. The user is currently on {PLANS.get(tier, {}).get('label', tier.title())}."})})
-    if not tier_gte(tier, "starter") and any(k in low for k in ("search for", "search the web", "web search")):
+    if not (tier_gte(tier, "starter") or free_mode()) and any(k in low for k in ("search for", "search the web", "web search")):
         _locked("web search", "starter")
-    if not tier_gte(tier, "starter"):
+    if not (tier_gte(tier, "starter") or free_mode()):
         _osint_ask = bool(ipm) or any(k in low for k in ("dark web", "dark-web", "darkweb", "onion", "breach", "pwned", "whois",
                                                           "osint", "carrier", "who called", "caller", "username", "handle")) \
             or (em is not None and any(k in low for k in ("leak", "hack", "investigate", "check", "email"))) \
             or (ph is not None and any(k in low for k in ("phone", "number", "trace")))
         if _osint_ask:
             _locked("OSINT tools (IP · domain · email breach · phone · username · dark-web index)", "starter")
-    if not tier_gte(tier, "pro"):
+    if not (tier_gte(tier, "pro") or free_mode()):
         if any(k in low for k in ("shodan", "virustotal", "abuseipdb", "urlscan", "leakcheck")):
             _locked("deep OSINT (Shodan / VirusTotal / AbuseIPDB / URLScan / LeakCheck)", "pro")
         im2 = re.search(r"(?:generate|create|make|draw|imagine|design)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
