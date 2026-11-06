@@ -26,7 +26,7 @@ class TestPatch80TradeSignals(unittest.TestCase):
 
     def test_marker_patch80(self):
         src = open("server.py", encoding="utf-8").read()
-        assert src.count("patch84-video-modes-edit") == 2
+        assert src.count("patch85-holo-glass") == 2
         assert "def market_signal(" in src and "SIGNAL_TRIGGER" in src
 
     def test_uptrend_gives_buy_with_confidence(self):

@@ -22,7 +22,7 @@ def fake_series(kind, sym):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count("patch84-video-modes-edit"), 2)
+        self.assertEqual(SRV.count("patch85-holo-glass"), 2)
 
 
 class ForecastEngine(unittest.TestCase):

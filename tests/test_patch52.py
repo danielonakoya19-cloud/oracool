@@ -22,7 +22,7 @@ class _Resp(io.BytesIO):
 
 class Marker(unittest.TestCase):
     def test_marker_routes_and_catalog(self):
-        self.assertEqual(SRV.count('"patch84-video-modes-edit"'), 2)
+        self.assertEqual(SRV.count('"patch85-holo-glass"'), 2)
         for needle in ("/api/security/sqlmap", "security_sqlmap_audit", "SQLMap-style SQLi audit",
                        '"sqlmap": "SQLMap-style low-impact SQL injection indicator audit',
                        '"security_tools": ["secscan", "sqlmap", "pcap", "hashaudit", "login_audit"]'):

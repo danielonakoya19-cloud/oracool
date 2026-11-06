@@ -1,7 +1,39 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>Signing in…</title>
-<style>body{background:#04070d;color:#d9f6ff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}.b{text-align:center}.o{font-size:34px;color:#00e5ff;text-shadow:0 0 18px rgba(0,229,255,.6);animation:p 1.2s infinite}p{opacity:.7;font-size:13px}@keyframes p{0%,100%{opacity:.4}50%{opacity:1}}</style></head>
-<body><div class="b"><div class="o">◤</div><p>Linking your account…</p></div>
+<style>body{background:#04070d;color:#d9f6ff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}.b{text-align:center}.o{font-size:34px;color:#00e5ff;text-shadow:0 0 18px rgba(0,229,255,.6);animation:p 1.2s infinite}p{opacity:.7;font-size:13px}@keyframes p{0%,100%{opacity:.4}50%{opacity:1}}</style><style id="holoGlass">
+:root{--holo-ring:linear-gradient(120deg,#22d3ee,#818cf8,#c084fc,#f472b6,#fbbf24,#22d3ee)}
+body{background:#05060e !important; color:#eaf0ff !important;}
+#holoBg{position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none}
+#holoBg .blob{position:absolute; display:block; border-radius:42% 58% 63% 37% / 54% 42% 58% 46%; filter:blur(72px) saturate(165%); opacity:.42}
+#holoBg .b1{width:60vw;height:60vw;left:-16vw;top:-20vh;background:radial-gradient(circle at 34% 32%,#22d3ee,transparent 62%) !important;animation:d1 38s ease-in-out infinite alternate}
+#holoBg .b2{width:52vw;height:52vw;right:-14vw;top:6vh;background:radial-gradient(circle at 60% 40%,#6366f1,transparent 62%) !important;animation:d2 46s ease-in-out infinite alternate}
+#holoBg .b3{width:56vw;height:56vw;left:18vw;bottom:-26vh;background:radial-gradient(circle at 45% 55%,#a855f7,transparent 62%) !important;animation:d3 52s ease-in-out infinite alternate}
+@keyframes d1{0%{transform:none}100%{transform:translate3d(14vw,12vh,0) rotate(38deg) scale(1.22)}}
+@keyframes d2{0%{transform:none}100%{transform:translate3d(-12vw,14vh,0) rotate(-30deg) scale(.92)}}
+@keyframes d3{0%{transform:none}100%{transform:translate3d(10vw,-12vh,0) rotate(24deg) scale(1.18)}}
+main, .b{
+  position:relative; z-index:1;
+  background-color:rgba(255,255,255,.055) !important;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,.02) 42%,rgba(255,255,255,0)) !important;
+  border:1px solid rgba(255,255,255,.13) !important;
+  border-radius:26px !important;
+  box-shadow:0 26px 70px rgba(2,4,14,.48), inset 0 1px 0 rgba(255,255,255,.16) !important;
+  -webkit-backdrop-filter:blur(26px) saturate(180%) !important; backdrop-filter:blur(26px) saturate(180%) !important;
+  padding:44px 34px !important; margin:44px auto !important;
+}
+h1{background:linear-gradient(115deg,#7dd3fc,#a78bfa,#f0abfc,#fcd34d,#7dd3fc) !important; background-size:230% 230% !important;
+  -webkit-background-clip:text; background-clip:text !important; color:transparent; animation:hs 10s ease infinite}
+@keyframes hs{0%{background-position:0% 40%}50%{background-position:100% 60%}100%{background-position:0% 40%}}
+h2{color:#eaf0ff !important; border-top:1px solid rgba(255,255,255,.10); padding-top:22px;}
+p, li{color:#a2afdd !important}
+small{color:#8b9ac2 !important}
+a{color:#8fdcff !important}
+.o{color:#7dd3fc !important; text-shadow:0 0 22px rgba(34,211,238,.65) !important}
+::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(103,232,249,.55),rgba(168,85,247,.55)) !important; border-radius:8px}
+@media (prefers-reduced-motion:reduce){ #holoBg .blob, h1{animation:none !important} }
+
+</style></head>
+<body><div id="holoBg" aria-hidden="true"><i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i><i class="blob b4"></i></div><div class="b"><div class="o">◤</div><p>Linking your account…</p></div>
 <script>
 (function(){
   var h = location.hash ? location.hash.slice(1) : '';

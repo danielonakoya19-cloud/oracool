@@ -732,8 +732,283 @@
 .oc-cdn{font-size:26px;font-weight:800;color:#00e5ff;font-variant-numeric:tabular-nums}.oc-cdu{font-size:9px;color:#64748b}
 </style>
 <link rel="stylesheet" href="/console-layout.css?v=69">
+<style id="holoGlass">
+body{background:#05060e !important; color:#eaf0ff;}
+body::before{
+  background-image:
+    linear-gradient(rgba(103,232,249,.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(168,85,247,.05) 1px, transparent 1px);
+}
+#app{height:100vh; height:100dvh;}
+.scanline{background:linear-gradient(180deg, transparent, rgba(103,232,249,.05), transparent);}
+
+/* ============================================================
+   HOLOGRAPHIC LIQUID GLASS — dark iridescent theme
+   ============================================================ */
+:root{
+  --holo-ice:#7dd3fc; --holo-cyan:#22d3ee; --holo-indigo:#6366f1;
+  --holo-violet:#a855f7; --holo-pink:#f472b6; --holo-gold:#fbbf24;
+  --holo-glass:rgba(255,255,255,.055); --holo-glass2:rgba(255,255,255,.085);
+  --holo-edge:rgba(255,255,255,.13); --holo-gloss:rgba(255,255,255,.20);
+  --holo-deep:#05060e; --holo-ink:#eaf0ff; --holo-dim:#96a3c9;
+  --holo-shine:linear-gradient(115deg,#22d3ee,#6366f1 26%,#a855f7 52%,#f472b6 74%,#fbbf24);
+  --holo-ring:linear-gradient(120deg,#22d3ee,#818cf8,#c084fc,#f472b6,#fbbf24,#22d3ee);
+}
+
+/* ---- liquid aurora backdrop ---- */
+#holoBg{position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none;}
+#holoBg .blob{position:absolute; display:block; border-radius:42% 58% 63% 37% / 54% 42% 58% 46%;
+  filter:blur(72px) saturate(165%); opacity:.42; will-change:transform;}
+#holoBg .b1{width:60vw; height:60vw; left:-16vw; top:-20vh;
+  background:radial-gradient(circle at 34% 32%, #22d3ee, transparent 62%) !important;
+  animation:holoDrift1 38s ease-in-out infinite alternate;}
+#holoBg .b2{width:52vw; height:52vw; right:-14vw; top:6vh;
+  background:radial-gradient(circle at 60% 40%, #6366f1, transparent 62%) !important;
+  animation:holoDrift2 46s ease-in-out infinite alternate;}
+#holoBg .b3{width:56vw; height:56vw; left:18vw; bottom:-26vh;
+  background:radial-gradient(circle at 45% 55%, #a855f7, transparent 62%) !important;
+  animation:holoDrift3 52s ease-in-out infinite alternate;}
+#holoBg .b4{width:38vw; height:38vw; right:6vw; bottom:-12vh;
+  background:radial-gradient(circle at 50% 50%, #f472b6, transparent 64%) !important;
+  opacity:.30; animation:holoDrift2 40s ease-in-out infinite alternate-reverse;}
+@keyframes holoDrift1{0%{transform:translate3d(0,0,0) rotate(0deg) scale(1)}100%{transform:translate3d(14vw,12vh,0) rotate(38deg) scale(1.22)}}
+@keyframes holoDrift2{0%{transform:translate3d(0,0,0) rotate(0deg) scale(1.08)}100%{transform:translate3d(-12vw,14vh,0) rotate(-30deg) scale(.92)}}
+@keyframes holoDrift3{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(10vw,-12vh,0) rotate(24deg) scale(1.18)}}
+
+/* ---- holographic shimmer keyframes ---- */
+@keyframes holoShift{0%{background-position:0 0,0% 50%}100%{background-position:0 0,300% 50%}}
+@keyframes holoSweep{0%{background-position:0% 40%}50%{background-position:100% 60%}100%{background-position:0% 40%}}
+@keyframes holoFloat{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-9px) rotate(1.2deg)}}
+@keyframes holoMorph{0%{border-radius:42% 58% 63% 37% / 54% 42% 58% 46%}
+  33%{border-radius:60% 40% 46% 54% / 44% 62% 38% 56%}
+  66%{border-radius:48% 52% 38% 62% / 62% 38% 62% 38%}
+  100%{border-radius:42% 58% 63% 37% / 54% 42% 58% 46%}}
+@keyframes holoSpin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+
+/* ---- glass recipe ---- */
+.holo-glass, .card, .bubble.ai, .bubble.user, .gpt-input.big, .modemenu, .settings-sheet,
+.right, .steps, .run-box, .oc-ask, .edbar, .gal, .drawer, .voicebar, .codeov .codecard,
+.comms-review, .dmgame-offer, .dg-card, .webcard, .pubcard, .plancard, .planchip,
+.chatgreet, .chatview .card.chatwrap, .inputbar, .wa-bub, .cmsg, .cperson, .wa-rep, .wa-quote, .wa-file{
+  background-color:var(--holo-glass) !important;
+  background-image:linear-gradient(180deg,var(--holo-gloss),rgba(255,255,255,.03) 42%,rgba(255,255,255,0)) !important;
+  background-repeat:no-repeat !important;
+  border:1px solid var(--holo-edge) !important;
+  box-shadow:0 22px 55px rgba(2,4,14,.42), inset 0 1px 0 rgba(255,255,255,.14), inset 0 -22px 44px rgba(103,232,249,.05) !important;
+  -webkit-backdrop-filter:blur(26px) saturate(180%) !important;
+  backdrop-filter:blur(26px) saturate(180%) !important;
+}
+
+/* ---- iridescent live borders (focus / hero / primary) ---- */
+.holo-live{
+  border:1px solid transparent !important;
+  background-image:linear-gradient(rgba(10,12,26,.72),rgba(10,12,26,.72)),var(--holo-ring) !important;
+  background-origin:border-box !important;
+  background-clip:padding-box,border-box !important;
+  background-size:100% 100%,300% 300% !important;
+  animation:holoShift 14s linear infinite !important;
+}
+.gpt-input.big:focus-within, .settings-sheet[open], .voicebar, .chatgreet .cg-orb{
+  border-color:transparent !important;
+  background-image:linear-gradient(var(--holo-glass2),var(--holo-glass2)),var(--holo-ring) !important;
+  background-origin:border-box !important;
+  background-clip:padding-box,border-box !important;
+  background-size:100% 100%,300% 300% !important;
+  animation:holoShift 14s linear infinite;
+}
+
+/* ---- buttons ---- */
+.gpt-send, .sendbtn, .wa-send, .side-new, .jumpbtn, .mi-upbtn, .button.primary{
+  background:var(--holo-shine) !important;
+  background-size:260% 260% !important;
+  animation:holoSweep 8.5s ease infinite !important;
+  border:1px solid rgba(255,255,255,.32) !important;
+  color:#fff !important;
+  box-shadow:0 12px 32px rgba(99,102,241,.38), inset 0 1px 0 rgba(255,255,255,.42), inset 0 -10px 22px rgba(2,4,20,.22) !important;
+  text-shadow:0 1px 8px rgba(2,4,20,.35) !important;
+}
+.gpt-send:hover, .sendbtn:hover, .wa-send:hover, .side-new:hover, .jumpbtn:hover, .mi-upbtn:hover, .button.primary:hover{
+  filter:brightness(1.1) saturate(1.15);
+  transform:translateY(-1px);
+  box-shadow:0 18px 42px rgba(139,92,246,.46), inset 0 1px 0 rgba(255,255,255,.5) !important;
+}
+.button.secondary, .iconbtn, .modebtn, .acts button, .fups button, .oc-ask .opts button,
+.comms-tabs button, .wa-ico, .comms-row .btn, .cperson .btn, .wa-repbar button, .cws-dl, .rf button, .rf a{
+  background-color:rgba(255,255,255,.07) !important;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.14),rgba(255,255,255,.02)) !important;
+  border:1px solid var(--holo-edge) !important;
+  color:var(--holo-ink);
+  box-shadow:0 8px 22px rgba(2,4,14,.30), inset 0 1px 0 rgba(255,255,255,.16) !important;
+  -webkit-backdrop-filter:blur(14px) saturate(160%) !important;
+  backdrop-filter:blur(14px) saturate(160%) !important;
+}
+.button.secondary:hover, .iconbtn:hover, .modebtn:hover, .acts button:hover, .fups button:hover,
+.oc-ask .opts button:hover, .wa-ico:hover, .wa-repbar button:hover{
+  border-color:rgba(125,211,252,.55) !important;
+  box-shadow:0 12px 30px rgba(34,211,238,.22), inset 0 1px 0 rgba(255,255,255,.22) !important;
+  color:#fff;
+}
+
+/* ---- chrome: headers, sidebars, panels ---- */
+#app>header, .app-main>header, header{
+  background:linear-gradient(180deg,rgba(10,13,26,.82),rgba(10,13,26,.62)) !important;
+  border-bottom:1px solid rgba(255,255,255,.10) !important;
+  -webkit-backdrop-filter:blur(22px) saturate(170%) !important;
+  backdrop-filter:blur(22px) saturate(170%) !important;
+  box-shadow:0 12px 34px rgba(2,4,14,.34) !important;
+}
+.sidebar{
+  background:linear-gradient(178deg,rgba(13,16,32,.86),rgba(8,10,22,.90)) !important;
+  border-right:1px solid rgba(255,255,255,.10) !important;
+  -webkit-backdrop-filter:blur(26px) saturate(175%) !important;
+  backdrop-filter:blur(26px) saturate(175%) !important;
+  box-shadow:18px 0 44px rgba(2,4,14,.34) !important;
+}
+.side-item{border-radius:12px;}
+.side-item:hover{background:rgba(125,211,252,.10) !important; color:#fff;}
+.side-item.active{
+  background:linear-gradient(115deg,rgba(34,211,238,.16),rgba(139,92,246,.16)) !important;
+  border-color:rgba(125,211,252,.45) !important;
+  color:#bfeaff !important;
+  box-shadow:0 0 22px rgba(34,211,238,.16), inset 0 1px 0 rgba(255,255,255,.18) !important;
+}
+.side-label{color:#7f8db8;}
+.sb-title{color:#eef3ff; text-shadow:0 0 18px rgba(103,232,249,.35) !important;}
+.sb-sub{color:#8b9ac2;}
+.sb-footnote{color:#6f7ea8;}
+.sess{border-radius:12px; border:1px solid transparent !important;}
+.sess:hover{background:rgba(255,255,255,.07) !important; border-color:rgba(255,255,255,.12) !important;}
+.sess.on{background:linear-gradient(115deg,rgba(34,211,238,.14),rgba(168,85,247,.14)) !important; border-color:rgba(125,211,252,.38) !important;}
+.sess .st{color:#dfe8ff;}
+.sess .sm, .sess .sp{color:#7f8db8;}
+.menulbl{color:#8b9ac2;}
+.drawer, .settings-sheet{
+  background:linear-gradient(170deg,rgba(15,18,36,.94),rgba(9,11,24,.96)) !important;
+  border:1px solid rgba(255,255,255,.12) !important;
+  box-shadow:-30px 0 80px rgba(2,4,14,.6) !important;
+}
+.settings-sheet::backdrop{background:rgba(3,5,14,.62) !important; -webkit-backdrop-filter:blur(6px) !important; backdrop-filter:blur(6px) !important;}
+.sheet-head h2, .settings-sheet h3.ptitle{color:#eef3ff;}
+.settings-sheet .hint{color:#8b9ac2;}
+.settings-sheet input:not([type=checkbox]), .settings-sheet select, .settings-sheet textarea,
+.comms-field>input, .comms-field>textarea, .comms-field>select, .commcompose input, .wa-compose input{
+  background:rgba(255,255,255,.06) !important;
+  border:1px solid rgba(255,255,255,.13) !important;
+  color:var(--holo-ink) !important;
+  border-radius:12px;
+  box-shadow:inset 0 2px 10px rgba(2,4,14,.30) !important;
+}
+.settings-sheet input:focus, .settings-sheet select:focus, .settings-sheet textarea:focus,
+.comms-field>input:focus, .commcompose input:focus, .wa-compose input:focus, .chatinput:focus, .chatinput:focus-visible{
+  outline:none;
+  border-color:rgba(125,211,252,.6) !important;
+  box-shadow:0 0 0 2px rgba(103,232,249,.28), 0 0 28px rgba(168,85,247,.22), inset 0 2px 10px rgba(2,4,14,.22) !important;
+}
+.settings-sheet .okbox{background:rgba(52,211,153,.12) !important; border-color:rgba(52,211,153,.4) !important; border-radius:12px;}
+.settings-sheet .errbox{background:rgba(251,113,133,.12) !important; border-color:rgba(251,113,133,.4) !important; border-radius:12px;}
+.settings-sheet .result, .settings-sheet .row{border-color:rgba(255,255,255,.10) !important;}
+
+/* ---- chat: bubbles & composer ---- */
+.bubble{border-radius:20px;}
+.bubble.ai{
+  border-color:rgba(125,211,252,.22) !important;
+  box-shadow:0 18px 44px rgba(2,4,14,.38), inset 0 1px 0 rgba(255,255,255,.14), 0 0 44px rgba(34,211,238,.06) !important;
+}
+.bubble.ai .who{color:#7dd3fc; letter-spacing:1.4px; text-shadow:0 0 14px rgba(34,211,238,.5) !important;}
+.bubble.user{
+  border-color:rgba(168,85,247,.30) !important;
+  box-shadow:0 18px 44px rgba(2,4,14,.38), inset 0 1px 0 rgba(255,255,255,.12), 0 0 44px rgba(168,85,247,.08) !important;
+}
+.bubble.err{border-color:rgba(251,113,133,.45) !important;}
+.gpt-input.big{
+  border-radius:24px;
+  box-shadow:0 26px 64px rgba(2,4,14,.5), inset 0 1px 0 rgba(255,255,255,.16), 0 0 60px rgba(103,232,249,.07) !important;
+}
+.gpt-input.big .chatinput{color:var(--holo-ink);}
+.gpt-input.big .chatinput::placeholder{color:#6f7ea8;}
+.gpt-input.big .chatinput::placeholder, ::placeholder{color:#6f7ea8; opacity:1;}
+.mm-col{background-color:rgba(255,255,255,.055) !important; border-color:var(--holo-edge) !important;}
+.mm-lab{color:#8fa2d6;}
+.mm-vote button{border-radius:999px;}
+.mm-vote button.win{background:linear-gradient(115deg,#22d3ee,#6366f1) !important;}
+.mm-picks select{background:rgba(255,255,255,.07) !important; color:var(--holo-ink); border-color:var(--holo-edge) !important;}
+
+/* ---- chips, tabs, badges ---- */
+.chip, .chiprow .chip{background:rgba(255,255,255,.06) !important; border:1px solid var(--holo-edge) !important; color:#c3cdef;}
+.chip:hover{border-color:rgba(125,211,252,.5) !important; color:#fff;}
+.chip.on{background:linear-gradient(115deg,rgba(34,211,238,.22),rgba(139,92,246,.22)) !important; border-color:rgba(125,211,252,.55) !important; color:#dff6ff;}
+.tab{color:#8fa2d6;}
+.tab.on{color:#bfeaff; box-shadow:inset 0 -2px 0 transparent !important;}
+.tabbadge.on{background:linear-gradient(115deg,#22d3ee,#6366f1) !important; color:#fff;}
+.tier{background:rgba(255,255,255,.07) !important; border:1px solid var(--holo-edge) !important; color:#c3cdef;}
+.tier.pro{background:var(--holo-shine) !important; background-size:220% 220% !important; animation:holoSweep 9s ease infinite; color:#fff; border-color:rgba(255,255,255,.3) !important;}
+.coinpill, .planchip, #app .coinpill, #app .planchip, #app .plancard{background-color:rgba(255,255,255,.055) !important; border:1px solid var(--holo-edge) !important;}
+#app .planchip.popular{border-color:rgba(125,211,252,.55) !important; box-shadow:0 0 34px rgba(34,211,238,.18) !important;}
+
+/* ---- cards & extras ---- */
+.steps, .run-box, .oc-ask, .edbar, .gal, .codeov .codecard, .webcard, .pubcard, .dmgame-offer, .dg-card{border-radius:18px;}
+.oc-ask .q{color:#dfe8ff;}
+.run-box .ro{background:rgba(255,255,255,.04) !important;}
+.toolsline{color:#8fa2d6;}
+.gal .galph, .webmeta, .webname{color:#c3cdef;}
+.wa-bub{border-radius:16px;}
+.wa-row.mine .wa-bub{background:linear-gradient(135deg,rgba(34,211,238,.16),rgba(99,102,241,.16)) !important; border-color:rgba(125,211,252,.3) !important;}
+.cmsg{border-radius:14px;}
+.cmsg.mine{background:linear-gradient(135deg,rgba(34,211,238,.13),rgba(139,92,246,.13)) !important;}
+.voicebar{border-radius:18px;}
+.reacthead, .reactorhead .rtitle{color:#eef3ff;}
+.reactorhead .rsub{color:#8b9ac2;}
+.reactorhead .orbring{border-color:rgba(125,211,252,.4) !important; box-shadow:0 0 34px rgba(34,211,238,.22), inset 0 0 22px rgba(168,85,247,.18) !important;}
+.reactorhead .orbcore{background:var(--holo-shine) !important; background-size:240% 240% !important; animation:holoSweep 10s ease infinite; box-shadow:0 0 44px rgba(139,92,246,.5) !important;}
+.chatgreet h2{color:#eef3ff;}
+.chatgreet p{color:#9aa8cf;}
+.chatgreet .cg-orb{background:var(--holo-shine) !important; background-size:240% 240% !important; animation:holoSweep 11s ease infinite;}
+.acct .em, .su-info .em{color:#dfe8ff;}
+.su-plan{color:#7f8db8;}
+.clock .t{color:#dfe8ff;}
+.clock .d, .live{color:#8b9ac2;}
+.live i{background:linear-gradient(115deg,#34d399,#22d3ee) !important; box-shadow:0 0 12px rgba(52,211,153,.8) !important;}
+.avatar{border:1px solid rgba(255,255,255,.2) !important; box-shadow:0 0 18px rgba(103,232,249,.25) !important;}
+.wake{background:rgba(255,255,255,.07) !important; border:1px solid var(--holo-edge) !important;}
+.wake.armed i{color:#7dd3fc;}
+#wave.on{background:linear-gradient(90deg,transparent,rgba(103,232,249,.35),rgba(168,85,247,.35),transparent) !important;}
+
+/* ---- text & type ---- */
+.brand .title, .viewtitle, .cws-title{color:#eef3ff;}
+.grad, .gradient{
+  background:linear-gradient(115deg,#7dd3fc,#a78bfa,#f0abfc,#fcd34d,#7dd3fc) !important;
+  background-size:230% 230% !important;
+  -webkit-background-clip:text !important; background-clip:text !important;
+  color:transparent !important;
+  animation:holoSweep 10s ease infinite !important;
+  text-shadow:none !important;
+}
+h1, h2, h3{color:#eef3ff;}
+a{color:#8fdcff;}
+b{color:#eef3ff;}
+code, .md-code, .md-pre{background:rgba(255,255,255,.06) !important; border-color:rgba(255,255,255,.12) !important;}
+.md-pre{border-radius:14px; border:1px solid rgba(255,255,255,.12) !important;}
+.md-table th{background:rgba(103,232,249,.10) !important;}
+.md-table tbody tr:nth-child(even) td{background:rgba(255,255,255,.035) !important;}
+::selection{background:rgba(103,232,249,.32) !important; color:#fff;}
+
+/* ---- scrollbars ---- */
+::-webkit-scrollbar{width:8px; height:8px;}
+::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(103,232,249,.55),rgba(168,85,247,.55)) !important; border-radius:8px;}
+::-webkit-scrollbar-track{background:rgba(255,255,255,.03) !important;}
+.sidebar-scroll::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(103,232,249,.5),rgba(168,85,247,.5)) !important;}
+
+/* ---- motion guard ---- */
+@media (prefers-reduced-motion:reduce){
+  #holoBg .blob, .grad, .gradient, .gpt-send, .sendbtn, .wa-send, .side-new, .jumpbtn,
+  .mi-upbtn, .button.primary, .tier.pro, .reactorhead .orbcore, .chatgreet .cg-orb,
+  .gpt-input.big:focus-within, .settings-sheet[open], .voicebar, .holo-live{animation:none !important;}
+}
+
+</style>
 </head>
 <body>
+<div id="holoBg" aria-hidden="true"><i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i><i class="blob b4"></i></div>
 <div class="scanline"></div>
 
 <div id="boot">

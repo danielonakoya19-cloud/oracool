@@ -4,6 +4,8 @@ set -e
 cd "$(dirname "$0")"
 
 # ensure cloudflared binary is executable (bit can drop across restarts)
+# cloudflared is a public 38 MB binary — fetched on demand instead of being stored in the workspace
+[ -x bin/cloudflared ] || { mkdir -p bin && curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o bin/cloudflared; }
 chmod +x bin/cloudflared 2>/dev/null || true
 
 # start the app server on 0.0.0.0:8000
