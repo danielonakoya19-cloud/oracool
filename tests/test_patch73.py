@@ -10,7 +10,7 @@ os.chdir(ROOT)
 import server as s  # noqa: E402
 
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
-MARK = "patch90-call-vision-fit"
+MARK = "patch91-media-links"
 
 
 class Marker(unittest.TestCase):

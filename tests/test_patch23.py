@@ -31,7 +31,7 @@ def read(name):
 
 def test_build_marker_patch23():
     src = read("server.py")
-    assert src.count('"build": "patch90-call-vision-fit"') == 2
+    assert src.count('"build": "patch91-media-links"') == 2
 
 
 # ---------------------------------------------------------------- media persistence
