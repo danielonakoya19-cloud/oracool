@@ -18,7 +18,7 @@ LAND = open(ROOT / 'landing.html', encoding='utf-8').read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch94-conn-ux"'), 2)
+        self.assertEqual(SRV.count('"patch95-conn-login"'), 2)
         self.assertNotIn('patch38-direct', SRV)
 
 

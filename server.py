@@ -3644,6 +3644,52 @@ def _conn_key(email):
     return "connectors:" + (email or "").strip().lower()
 
 
+def google_oauth_cfg():
+    """App-level Google login client: operator-supplied via the panel, keys.json as fallback."""
+    st = supabase_kv_get("connectors:google_oauth") or {}
+    return {"client_id": (st.get("client_id") or key("GOOGLE_CLIENT_ID") or "").strip(),
+            "client_secret": (st.get("client_secret") or key("GOOGLE_CLIENT_SECRET") or "").strip(),
+            "from_kv": bool(st.get("client_id"))}
+
+
+def google_oauth_ready():
+    c = google_oauth_cfg()
+    return bool(c["client_id"] and c["client_secret"]
+                and c["client_id"].endswith(".apps.googleusercontent.com"))
+
+
+def google_oauth_save_cfg(email, cid, csec):
+    """Validate the client live (Google says if it is deleted/invalid) before storing."""
+    if not (email and is_admin(email)):
+        return False, "Only the workspace admin can set the Google login client."
+    cid = (cid or "").strip()
+    csec = (csec or "").strip()
+    if not cid.endswith(".apps.googleusercontent.com") or len(csec) < 8:
+        return False, ("That does not look like a Google OAuth client. The Client ID ends with "
+                       ".apps.googleusercontent.com and the secret starts with GOCSPX-.")
+    probe = ("https://accounts.google.com/o/oauth2/v2/auth?client_id=" + urllib.parse.quote(cid) +
+             "&redirect_uri=" + urllib.parse.quote("https://oracoolai.com/api/connectors/google/callback") +
+             "&response_type=code&scope=" + urllib.parse.quote("openid email") + "&state=probe")
+    final, body = "", ""
+    try:
+        req = urllib.request.Request(probe, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            final = resp.geturl() or ""
+            body = (resp.read() or b"")[:4000].decode("utf-8", "ignore")
+    except Exception as e:
+        final, body = "", str(e)
+    low = (final + " " + body).lower()
+    if any(k in low for k in ("autherror", "invalid_client", "deleted_client", "disabled_client", "was not found")):
+        return False, ("Google rejected that Client ID (invalid or deleted). Check you copied the full "
+                       "Client ID from Google Cloud → Credentials.")
+    supabase_kv_put("connectors:google_oauth", {"client_id": cid, "secret": csec, "by": email, "at": time.time()})
+    if "redirect_uri_mismatch" in low:
+        return True, ("Client ID saved and valid. ONE step left in Google Cloud → Credentials → your client "
+                      "→ Authorized redirect URIs: add https://oracoolai.com/api/connectors/google/callback "
+                      "and save — then tap Open window again.")
+    return True, "Google login is set up. One-tap Google login is now live for everyone."
+
+
 def connectors_state(email):
     return supabase_kv_get(_conn_key(email)) or {}
 
@@ -3683,7 +3729,13 @@ def _connector_verify(name, cred):
         if name == "github":
             st, d = _conn_http("https://api.github.com/user", headers={"Authorization": "Bearer " + tok,
                                                                       "Accept": "application/vnd.github+json"})
-            return (True, {"login": d.get("login")}, None) if st == 200 and isinstance(d, dict) else (False, {}, "GitHub rejected that token (" + str(st) + ").")
+            if st == 200 and isinstance(d, dict):
+                meta = {"login": d.get("login")}
+                st2, _ = _conn_http("https://api.github.com/user/repos?per_page=1",
+                                    headers={"Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json"})
+                meta["access"] = "full access" if st2 == 200 else "profile only \u2014 add a personal access token (repo scope) for repos and issues"
+                return (True, meta, None)
+            return (False, {}, "GitHub rejected that token (" + str(st) + ").")
         if name == "notion":
             st, d = _conn_http("https://api.notion.com/v1/users/me", headers={"Authorization": "Bearer " + tok,
                                                                              "Notion-Version": "2022-06-28"})
@@ -3742,8 +3794,9 @@ def google_access(st):
 
 
 def connectors_google_url(email):
-    cid = key("GOOGLE_CLIENT_ID")
-    if not cid:
+    _gcfg = google_oauth_cfg()
+    cid = _gcfg.get("client_id")
+    if not cid or not _gcfg.get("client_secret"):
         return {"error": "Google OAuth is not configured on the server (GOOGLE_CLIENT_ID missing). "
                          "For now paste an access token instead."}
     redir = "https://" + "oracoolai.com" + "/api/connectors/google/callback"
@@ -3770,7 +3823,7 @@ def connectors_google_callback(q):
             return "<html><body>Google did not return a code (usually: this redirect URL is not in the OAuth client's allowed list). Close this tab — or paste an access token in Settings → Connectors.</body></html>"
         redir = "https://" + "oracoolai.com" + "/api/connectors/google/callback"
         stt, d = _conn_http("https://oauth2.googleapis.com/token", method="POST", json_body={
-            "client_id": key("GOOGLE_CLIENT_ID"), "client_secret": key("GOOGLE_CLIENT_SECRET"),
+            "client_id": google_oauth_cfg().get("client_id"), "client_secret": google_oauth_cfg().get("client_secret"),
             "code": code, "redirect_uri": redir, "grant_type": "authorization_code"})
         if stt != 200 or not d.get("access_token"):
             return "<html><body>Google token exchange failed (" + str(stt) + "). Close this tab and paste an access token in Settings → Connectors instead.</body></html>"
@@ -9984,7 +10037,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch94-conn-ux",
+        "build": "patch95-conn-login",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -12773,7 +12826,7 @@ def _app_origin(handler=None, body=None):
     scheme = "http" if host.startswith("localhost") or host.startswith("127.") else "https"
     return scheme + "://" + host
 
-def oauth_url(provider, redirect_to=""):
+def oauth_url(provider, redirect_to="", scopes=""):
     url = key("SUPABASE_URL")
     if not url:
         return {"error": "Supabase is not configured."}
@@ -12798,7 +12851,8 @@ def oauth_url(provider, redirect_to=""):
         return {"error": fix, "provider_disabled": True, "provider": provider}
     target = (redirect_to or "").strip() or (url.rstrip("/") + "/oauth")
     return {"url": (url.rstrip("/") + "/auth/v1/authorize?provider=" + provider
-                    + "&redirect_to=" + urllib.parse.quote(target)),
+                    + "&redirect_to=" + urllib.parse.quote(target)
+                    + (("&scopes=" + urllib.parse.quote(scopes)) if scopes else "")),
             "provider": provider,
             "note": "Enable this provider in Supabase dashboard (Authentication → Providers) "
                     "and add the redirect URL there, or the sign-in will fail."}
@@ -13623,6 +13677,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/connectors/google/callback":
             qq = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             html_out = connectors_google_callback(qq) or "<html><body>Failed - close this tab and try again from OraCool.</body></html>"
+            html_out = html_out.replace("<script>try{location.replace(\"/app\");}catch(e){}</script>", "")
+            _okf = "true" if "Google connected" in html_out else "false"
+            html_out = html_out.replace("</body></html>",
+                "<script>try{if(window.opener&&!window.opener.closed){window.opener.postMessage({oracool_conn:'google',ok:" + _okf + "},location.origin);window.close();}else{location.replace('/app');}}catch(e){try{location.replace('/app');}catch(e2){}}</script></body></html>")
             bb = html_out.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -13634,7 +13692,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch94-conn-ux", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch95-conn-login", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -14347,7 +14405,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self._send_json({"status": 401, "error": "Incorrect 2FA code."})
             elif path == "/api/auth/oauth/url":
-                self._send_json(oauth_url(body.get("provider"), body.get("redirect_to")))
+                self._send_json(oauth_url(body.get("provider"), body.get("redirect_to"), body.get("scopes") or ""))
             elif path == "/api/auth/oauth/exchange":
                 self._send_json(oauth_exchange(body.get("access_token"), body.get("refresh_token")))
             elif path == "/api/auth/passkey/register":
@@ -14564,7 +14622,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/media/delete":
                 self._send_json(media_delete(_body_email(self, body), str(body.get("id") or "")))
             elif path == "/api/connectors":
-                self._send_json({"connectors": connectors_public((body.get("email") or "").strip().lower())})
+                self._send_json({"connectors": connectors_public((body.get("email") or "").strip().lower()), "google_ready": google_oauth_ready()})
             elif path == "/api/connectors/save":
                 _cn = str(body.get("name") or "").strip().lower()
                 _spec = CONNECTOR_SPECS.get(_cn)
@@ -14581,13 +14639,15 @@ class Handler(BaseHTTPRequestHandler):
                                 _cred["expires_at"] = float(body.get("expires_at") or 0)
                             except Exception:
                                 _cred["expires_at"] = 0
-                    _okv, _msg = _connector_verify(_cn, _cred)
+                    _okv, _vmeta, _verr = _connector_verify(_cn, _cred)
+                    _msg = _verr if not _okv else ("connected as " + str(_vmeta.get("login") or _vmeta.get("who") or _vmeta.get("email") or "ok")[:60]
+                                                   + ((" · " + str(_vmeta.get("access"))) if _vmeta.get("access") else ""))
                     if not _okv:
                         self._send_json({"ok": False, "error": _msg}, 400)
                     else:
                         _em2 = (body.get("email") or "").strip().lower()
                         _stv = connectors_state(_em2)
-                        _entry = {"meta": {"verified": _msg, "at": time.time()}, "_email": _em2}
+                        _entry = {"meta": {"verified": _msg, "info": _vmeta, "at": time.time()}, "_email": _em2}
                         if _spec["auth"] == "pair":
                             _entry["url"] = _cred["url"]
                             _entry["key"] = _cred["key"]
@@ -14609,6 +14669,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True, "connectors": connectors_public(_em3)})
             elif path == "/api/connectors/google/url":
                 self._send_json(connectors_google_url((body.get("email") or "").strip().lower()))
+            elif path == "/api/connectors/google/config":
+                _okc, _msgc = google_oauth_save_cfg((body.get("email") or "").strip().lower(),
+                                                    body.get("client_id") or "", body.get("client_secret") or "")
+                self._send_json({"ok": _okc, "message": _msgc, "google_ready": google_oauth_ready()},
+                                200 if _okc else 400)
             elif path.startswith("/api/admin/brand/"):
                 actor = request_identity(self, body, require_supabase=True)
                 if not actor or not is_admin(actor) or is_blocked(actor):

@@ -15,7 +15,7 @@ MD = open(os.path.join(ROOT, "md.js"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch94-conn-ux"'), 2)
+        self.assertEqual(SRV.count('"patch95-conn-login"'), 2)
         self.assertNotIn("patch40-studio", SRV)
         self.assertIn('/md.js?v=42', APP)
 

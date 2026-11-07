@@ -47,7 +47,7 @@ class FakeSSE:
 class BuildMarkerTests(unittest.TestCase):
     def test_patch21_marker(self):
         src = (ROOT / "server.py").read_text(errors="ignore")
-        self.assertIn('"build": "patch94-conn-ux"', src)
+        self.assertIn('"build": "patch95-conn-login"', src)
 
 
 class CascadeOrderTests(unittest.TestCase):

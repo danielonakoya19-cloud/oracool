@@ -58,16 +58,19 @@ def test_google_oauth_button_removed_from_client():
     assert 'conngo' not in INDEX_SRC
     assert 'Connect Google' not in INDEX_SRC
     assert 'oracool_conn_intent' not in INDEX_SRC
-    assert '/api/connectors/google/url' not in INDEX_SRC
     assert 'connector OAuth return' not in INDEX_SRC
+    # patch95: google/url is back as a REAL popup flow (window.open), never a dead button
+    assert '/api/connectors/google/url' in INDEX_SRC
+    assert 'window.open(' in INDEX_SRC
 
 
 def test_google_rows_use_token_paste_now():
     i = INDEX_SRC.find('function connRow(')
     seg = INDEX_SRC[i:INDEX_SRC.find('function connRefresh', i)]
-    assert "c.auth==='pair'" in seg            # supabase keeps its two inputs
-    assert 'placeholder="paste token"' in seg  # everything else (incl. google) = token paste
+    assert "connLogin(" in seg                 # every row opens the login modal
     assert "c.auth==='google'" not in seg      # no special-case dead button
+    # token paste is the modal fallback, not the front face
+    assert 'Use a token instead' in INDEX_SRC
 
 
 # ---------------------------------------------------------------- hints
@@ -92,7 +95,7 @@ def test_hint_url_reaches_the_public_payload(monkeypatch):
 def test_hints_are_shown_as_real_links_in_the_panel():
     assert 'hint_url' in INDEX_SRC
     assert 'rel="noopener noreferrer"' in INDEX_SRC
-    assert 'get one</a>' in INDEX_SRC
+    assert 'Get one at <a href=' in INDEX_SRC
 
 
 # ---------------------------------------------------------------- wording + marker
@@ -112,4 +115,4 @@ def test_prompt_points_to_links_button():
 
 
 def test_marker():
-    assert SERVER_SRC.count("patch94-conn-ux") == 2
+    assert SERVER_SRC.count("patch95-conn-login") == 2

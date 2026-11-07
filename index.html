@@ -1648,6 +1648,28 @@ html[data-theme="light"] .callbtn.end{color:#fff;}
   .connsave,.conndisc{border-radius:10px;padding:8px 12px;font-size:12.5px;font-weight:600;cursor:pointer;min-height:34px}
   .connsave{background:linear-gradient(135deg,#2f6bff,#7a3cff);color:#fff;border:none}
   .conndisc{background:rgba(255,90,90,.12);color:#ff9d9d;border:1px solid rgba(255,120,120,.35)}
+  .cmov{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(4,8,20,.55);z-index:2300;display:flex;align-items:center;justify-content:center;padding:18px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .cmoxed{width:min(380px,94vw);margin:auto;background:#fff;color:#1b2440;border-radius:18px;padding:26px 22px 22px;box-shadow:0 30px 80px rgba(0,0,0,.45);text-align:center;position:relative}
+  .cmx{position:absolute;top:10px;right:12px;font-size:22px;line-height:1;background:none;border:none;cursor:pointer;color:#5b6a8e}
+  .cmicons{display:flex;align-items:center;justify-content:center;gap:12px;margin:6px 0 14px}
+  .cmic{width:52px;height:52px;border-radius:13px;background:#fff;border:1px solid rgba(28,48,96,.14);box-shadow:0 6px 18px rgba(28,48,96,.12);display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .cmic svg{width:30px;height:30px;display:block}
+  .cmic img{width:34px;height:34px;display:block;border-radius:8px}
+  .cmdots{letter-spacing:3px;color:#8b9ac2;font-size:15px}
+  .cmtitle{font-size:20px;font-weight:700;margin:0 0 8px}
+  .cmsub{font-size:13.5px;color:#5b6a8e;line-height:1.55;margin:0 0 18px}
+  .cmgo{width:100%;padding:13px 16px;font-size:15px;font-weight:600;border-radius:12px;border:none;cursor:pointer;color:#fff;background:linear-gradient(135deg,#2f6bff,#7a3cff)}
+  .cmgo:disabled{opacity:.55}
+  .cmalt{margin-top:14px;font-size:12px;color:#5b6a8e}
+  .cmalt summary{cursor:pointer;list-style:none}
+  .cmalt summary::-webkit-details-marker{display:none}
+  .cmform{display:flex;flex-direction:column;gap:8px;margin-top:10px;text-align:left}
+  .cmin{width:100%;box-sizing:border-box;border:1px solid rgba(28,48,96,.22);border-radius:10px;padding:10px 12px;font-size:13px;color:#1b2440}
+  .cmnote{margin-top:12px;font-size:12px;line-height:1.55;color:#8a5a00;background:#fff7e0;border:1px solid #f0d896;border-radius:10px;padding:10px 12px;text-align:left}
+  .cmnote b{color:#6b4700}
+  .cmnote code{background:rgba(0,0,0,.06);padding:1px 5px;border-radius:5px;font-size:11px;word-break:break-all}
+  .cmstatus{margin-top:12px;font-size:12.5px;font-weight:600;min-height:16px}
+  .cmstatus.ok{color:#0d7a43}.cmstatus.bad{color:#c0392b}
   .connov .connbox button, .connov .connbox input{font-family:inherit}
 /* ---- patch90: small screens (iPhone 7 portrait / iOS 15) — compact, never cramped ---- */
 @media (max-width: 560px){
@@ -8332,25 +8354,27 @@ function connOpen(){
 function connRow(c){
   var form='';
   if(!c.connected){
-    if(c.auth==='pair'){
-      form='<div class="connform"><input class="connin" data-f="url" placeholder="https://YOUR-PROJECT.supabase.co"><input class="connin" data-f="token" placeholder="service key"><button class="connsave" data-n="'+c.name+'">Save</button></div>';
+    if(c.name==='google' && !window._connGReady){
+      form='<button class="cmgo" style="padding:9px 12px;font-size:12.5px" onclick="connLogin(\''+c.name+'\')">Set up login</button>';
     } else {
-      form='<div class="connform"><input class="connin" data-f="token" placeholder="paste token"><button class="connsave" data-n="'+c.name+'">Save</button></div>';
+      form='<button class="cmgo" style="padding:9px 12px;font-size:12.5px" onclick="connLogin(\''+c.name+'\')">'+(c.auth==='pair'?'Connect':'Log in')+'</button>';
     }
   }
   var hint='';
   if(c.hint && !c.connected){
-    hint='<div class="conndesc">'+c.hint+((c.hint_url)?(' - <a href="'+c.hint_url+'" target="_blank" rel="noopener noreferrer">get one</a>'):'')+'</div>';
+    hint='<div class="conndesc">'+c.hint+'</div>';
   }
   return '<div class="connrow" data-n="'+c.name+'">'+
     '<div class="connic">'+connIcon(c.name)+'</div>'+
     '<div class="conninfo"><div class="connname">'+c.label+(c.connected?' <span class="connok">✓</span>':'')+'</div>'+
-    '<div class="conndesc">'+(c.connected? ('connected'+(c.meta&&c.meta.email?(' as '+c.meta.email):'')) : (c.desc||''))+'</div>'+hint+'</div>'+
+    '<div class="conndesc">'+(c.connected? ('connected'+(c.meta&&c.meta.email?(' as '+c.meta.email):'')+(c.meta&&c.meta.info&&c.meta.info.access?(' - '+c.meta.info.access):'')) : (c.desc||''))+'</div>'+hint+'</div>'+
     '<div class="connact">'+form+(c.connected?'<button class="conndisc" data-n="'+c.name+'">Disconnect</button>':'')+'</div>'+
     '</div>';
 }
 function connRefresh(){
   post('/api/connectors',{}).then(function(r){
+    window._connGReady = !!(r && r.google_ready);
+    window._connState = (r && r.connectors) || [];
     var list=document.getElementById('connList'); if(!list) return;
     if(r && r.connectors){ list.innerHTML=r.connectors.map(connRow).join(''); }
     else { list.innerHTML='<div class="connrow">'+((r&&r.error)||'Could not load connectors - sign in and try again.')+'</div>'; }
@@ -8375,6 +8399,161 @@ function connWire(){
     post('/api/connectors/remove',{name:this.getAttribute('data-n')}).then(function(){ connRefresh(); }).catch(function(){});
   }; }
 }
+/* ---- image-style "Log in to X" modal + real popup flows ---- */
+function connModClose(){ var m=document.getElementById('cmov'); if(m){ m.style.display='none'; } }
+function connFind(name){
+  var st = window._connState || [];
+  for(var i=0;i<st.length;i++){ if(st[i].name===name) return st[i]; }
+  return {name:name, label:name, auth:'token', desc:'', hint:'', hint_url:''};
+}
+function connLogin(name){
+  var c = connFind(name);
+  var m = document.getElementById('cmov');
+  if(!m){
+    m = document.createElement('div'); m.id='cmov'; m.className='cmov';
+    document.body.appendChild(m);
+    m.addEventListener('click',function(e){ if(e.target===m) connModClose(); });
+  }
+  var body='';
+  var icons = '<div class="cmicons"><div class="cmic"><img src="/logo.png" alt="" onerror="this.parentNode.innerHTML=\'&#9889;\'"></div>'+
+              '<div class="cmdots">· · ·</div><div class="cmic">'+connIcon(c.name)+'</div></div>';
+  if(c.name==='google' && !window._connGReady){
+    body = '<h3 class="cmtitle">Set up Google login</h3>'+
+      '<div class="cmsub">One-time, 2 minutes. This creates the "Log in with Google" window for Drive, Docs, Gmail, Calendar, Sheets and Slides.</div>'+
+      '<div class="cmnote"><b>1.</b> Open <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer">Google Cloud &#8594; Credentials</a> and click <b>Create credentials &#8594; OAuth client ID &#8594; Web application</b>.<br>'+
+      '<b>2.</b> Under <b>Authorized redirect URIs</b> add exactly:<br><code>https://oracoolai.com/api/connectors/google/callback</code><br>'+
+      '<b>3.</b> Copy the <b>Client ID</b> and <b>Client secret</b> below and save.</div>'+
+      '<div class="cmform"><input class="cmin" id="cmgId" placeholder="Client ID (...apps.googleusercontent.com)">'+
+      '<input class="cmin" id="cmgSec" type="password" placeholder="Client secret (GOCSPX-...)">'+
+      '<button class="cmgo" id="cmgSave">Save &amp; check</button></div>'+
+      '<div class="cmstatus" id="cmStat"></div>';
+  } else {
+    var go='';
+    if(c.auth==='pair'){
+      go = '<div class="cmform"><input class="cmin" data-f="url" placeholder="https://YOUR-PROJECT.supabase.co">'+
+           '<input class="cmin" data-f="token" placeholder="service key">'+
+           '<button class="cmgo" id="cmGo">Connect</button></div>';
+    } else {
+      go = '<button class="cmgo" id="cmGo">Open window</button>';
+    }
+    var alt='';
+    if(c.auth!=='pair'){
+      alt = '<details class="cmalt"><summary>Use a token instead</summary>'+
+        '<div class="cmform"><input class="cmin" data-f="token" placeholder="'+(c.hint||'paste token')+'">'+
+        '<button class="cmgo" id="cmSaveTok" style="background:linear-gradient(135deg,#5b6a8e,#3b4a6b)">Save token</button>'+
+        ((c.hint_url)?('<div style="font-size:11px">Get one at <a href="'+c.hint_url+'" target="_blank" rel="noopener noreferrer">'+c.hint_url.replace(/^https?:\/\//,'')+'</a></div>'):'')+
+        '</div></details>';
+    }
+    body = '<h3 class="cmtitle">Log in to '+c.label+'</h3>'+
+      '<div class="cmsub">You will be prompted to log in and connect your account</div>'+go+
+      '<div class="cmstatus" id="cmStat"></div>'+alt;
+  }
+  m.innerHTML = '<div class="cmbox">'+icons+body+'<button class="cmx" title="Close">&#10005;</button></div>';
+  m.style.display='flex';
+  var x = m.querySelector('.cmx'); if(x) x.onclick = connModClose;
+  var stat = document.getElementById('cmStat');
+  function say(t, ok){ if(stat){ stat.textContent = t; stat.className = 'cmstatus ' + (ok?'ok':'bad'); } }
+  var gsave = document.getElementById('cmgSave');
+  if(gsave) gsave.onclick = function(){
+    var cid = document.getElementById('cmgId').value.trim();
+    var csec = document.getElementById('cmgSec').value.trim();
+    if(!cid || !csec){ say('Paste both the Client ID and the secret.', false); return; }
+    gsave.disabled = true; say('Checking with Google...', true);
+    post('/api/connectors/google/config',{client_id:cid, client_secret:csec}).then(function(r){
+      if(r && r.ok){ say(r.message||'Saved.', true); window._connGReady = !!r.google_ready; setTimeout(function(){ connLogin('google'); connRefresh(); }, 900); }
+      else { say((r&&r.error)||'Could not save that client.', false); gsave.disabled=false; }
+    }).catch(function(){ say('Network error - try again.', false); gsave.disabled=false; });
+  };
+  var go2 = document.getElementById('cmGo');
+  if(go2) go2.onclick = function(){
+    go2.disabled = true; say('Opening window...', true);
+    if(c.name==='github'){
+      post('/api/auth/oauth/url',{provider:'github', redirect_to: location.origin + '/oauth', scopes:'repo read:org'}).then(function(r){
+        if(r && r.url){
+          try{ localStorage.setItem('oc_conn_wait','github'); }catch(e){}
+          var w = window.open(r.url,'occonn','width=520,height=640');
+          if(!w){ say('Allow pop-ups for this site, then tap Open window again.', false); }
+          else { say('Finish the login in the new window.', true); }
+        } else { say((r&&r.error)||('GitHub login is not enabled yet - use a token below.'), false); }
+        go2.disabled=false;
+      }).catch(function(){ say('Network error - try again.', false); go2.disabled=false; });
+    } else if(c.name==='google'){
+      post('/api/connectors/google/url',{}).then(function(r){
+        if(r && r.url){
+          try{ localStorage.setItem('oc_conn_wait','google'); }catch(e){}
+          var w = window.open(r.url,'occonn','width=520,height=640');
+          if(!w){ say('Allow pop-ups for this site, then tap Open window again.', false); }
+          else { say('Sign in with Google in the new window.', true); }
+        } else { say((r&&r.error)||('Google login is not set up yet.'), false); }
+        go2.disabled=false;
+      }).catch(function(){ say('Network error - try again.', false); go2.disabled=false; });
+    } else {
+      var w = c.hint_url ? window.open(c.hint_url,'octoken','width=520,height=640') : null;
+      go2.disabled=false;
+      say('Create a token in the new window, then paste it under "Use a token instead" below.', true);
+    }
+  };
+  var stok = document.getElementById('cmSaveTok');
+  if(stok) stok.onclick = function(){
+    var ins = stok.parentNode.querySelectorAll('.cmin');
+    var body2 = {name:c.name};
+    for(var j=0;j<ins.length;j++){ body2[ins[j].getAttribute('data-f')]=ins[j].value; }
+    if(!body2.token){ say('Paste the token first.', false); return; }
+    stok.disabled=true; say('Checking...', true);
+    post('/api/connectors/save',body2).then(function(r){
+      if(r && r.ok){ say(r.message||'Connected.', true); connRefresh(); setTimeout(connModClose, 900); }
+      else { say((r&&r.error)||'That token was not accepted.', false); stok.disabled=false; }
+    }).catch(function(){ say('Network error - try again.', false); stok.disabled=false; });
+  };
+  if(c.auth==='pair'){
+    var pairBtn = document.getElementById('cmGo');
+    if(pairBtn) pairBtn.onclick = function(){
+      var ins = m.querySelectorAll('.cmin');
+      var body3 = {name:c.name};
+      for(var j2=0;j2<ins.length;j2++){ body3[ins[j2].getAttribute('data-f')]=ins[j2].value; }
+      if(!body3.url || !body3.token){ say('Fill in both fields.', false); return; }
+      pairBtn.disabled=true; say('Checking...', true);
+      post('/api/connectors/save',body3).then(function(r){
+        if(r && r.ok){ say(r.message||'Connected.', true); connRefresh(); setTimeout(connModClose, 900); }
+        else { say((r&&r.error)||'Could not verify those values.', false); pairBtn.disabled=false; }
+      }).catch(function(){ say('Network error - try again.', false); pairBtn.disabled=false; });
+    };
+  }
+}
+/* popup returns (github provider token / google callback) */
+window.addEventListener('message', function(ev){
+  if(!ev.data || ev.origin !== location.origin) return;
+  try{
+    if(ev.data.oracool_oauth){
+      var o = ev.data.oracool_oauth;
+      var wait = ''; try{ wait = localStorage.getItem('oc_conn_wait')||''; localStorage.removeItem('oc_conn_wait'); }catch(e){}
+      var st2 = document.getElementById('cmStat');
+      if(o.provider_token && (wait==='github' || o.provider==='github')){
+        post('/api/connectors/save',{name:'github', token:o.provider_token}).then(function(r){
+          if(r && r.ok){
+            if(st2){ st2.textContent = (r.message||'GitHub connected.'); st2.className='cmstatus ok'; }
+            connRefresh(); setTimeout(connModClose, 1100);
+          } else {
+            if(st2){ st2.textContent = ((r&&r.error)||'Could not save the GitHub login.'); st2.className='cmstatus bad'; }
+          }
+        }).catch(function(){});
+      } else if(wait==='github'){
+        if(st2){ st2.textContent='GitHub did not return a token - use a token instead below.'; st2.className='cmstatus bad'; }
+      }
+    }
+    if(ev.data.oracool_conn === 'google'){
+      try{ localStorage.removeItem('oc_conn_wait'); }catch(e){}
+      var st4 = document.getElementById('cmStat');
+      if(ev.data.ok){
+        if(st4){ st4.textContent='Google connected - Drive, Docs, Sheets, Slides, Gmail and Calendar are linked.'; st4.className='cmstatus ok'; }
+        connRefresh(); setTimeout(connModClose, 1400);
+      } else {
+        if(st4){ st4.textContent=(ev.data.error||'Google sign-in failed.'); st4.className='cmstatus bad'; }
+      }
+    }
+  }catch(e){}
+});
+
 try{ var _cb=document.getElementById('connBtn'); if(_cb) _cb.onclick=connOpen; }catch(e){}
 document.addEventListener('DOMContentLoaded',function(){ try{ var _cb=document.getElementById('connBtn'); if(_cb) _cb.onclick=connOpen; }catch(e){} });
 

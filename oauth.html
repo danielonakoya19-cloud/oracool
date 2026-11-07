@@ -278,12 +278,22 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
   var p = new URLSearchParams(h);
   var tok = p.get('access_token');
   var ref = p.get('refresh_token');
+  var ptok = p.get('provider_token');
+  var prov = p.get('provider');
   if(!tok){
-    try{ localStorage.setItem('oracool_oauth', JSON.stringify({error: p.get('error_description')||'OAuth failed — provider not configured or declined.'})); }catch(e){}
+    var errPay = {error: p.get('error_description')||'OAuth failed — provider not configured or declined.'};
+    try{
+      if(window.opener && !window.opener.closed){ window.opener.postMessage({oracool_oauth: errPay}, location.origin); window.close(); return; }
+    }catch(e){}
+    try{ localStorage.setItem('oracool_oauth', JSON.stringify(errPay)); }catch(e){}
     location.replace('/app');
     return;
   }
-  try{ localStorage.setItem('oracool_oauth', JSON.stringify({access_token:tok, refresh_token:ref})); }catch(e){}
+  var pay = {access_token:tok, refresh_token:ref, provider_token:ptok||'', provider:prov||''};
+  try{
+    if(window.opener && !window.opener.closed){ window.opener.postMessage({oracool_oauth: pay}, location.origin); window.close(); return; }
+  }catch(e){}
+  try{ localStorage.setItem('oracool_oauth', JSON.stringify(pay)); }catch(e){}
   location.replace('/app');
 })();
 </script></body></html>
