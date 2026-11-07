@@ -10,7 +10,7 @@ os.chdir(ROOT)
 import server as s  # noqa: E402
 
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
-MARK = "patch91-media-links"
+MARK = "patch92-community-write"
 
 
 class Marker(unittest.TestCase):

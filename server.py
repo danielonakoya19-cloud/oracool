@@ -3480,6 +3480,105 @@ def trade_signal(symbol):
     return out
 
 
+def _community_channel_names(email):
+    try:
+        rooms = community_service().rooms(email) or []
+        out = []
+        for r in rooms:
+            if isinstance(r, dict):
+                nm = str(r.get("name") or "").strip()
+                sl = str(r.get("slug") or "").strip()
+                if sl or nm:
+                    out.append({"name": nm, "slug": sl, "kind": str(r.get("kind") or "group")})
+        return out
+    except Exception:
+        return []
+
+
+def community_action(email, text):
+    """patch92 — the community tool can ACT, not just read: post to the member's own
+    channels/groups or DMs and check their inbox. Every send runs the same permission
+    rules as a real tap in the app (channel admins only, locked groups, bans)."""
+    svc = community_service()
+    t = " ".join((text or "").split())
+    low = t.lower()
+    is_dm = bool(re.search(r"\b(dm|direct message)\b", low))
+    # command form (exact draft from the model's tool call): verb :: target :: message
+    mcmd = re.search(r"^(?:community\s+)?(post|send|dm)\s*(?:to\s+)?::\s*([^:]{1,60}?)\s*::\s*([\s\S]{2,1900})$", t, re.I)
+    if mcmd:
+        target, msg = mcmd.group(2).strip(), mcmd.group(3).strip()
+    else:
+        # natural form: "<verb> ... to <target> ... saying|: <message>"
+        if not re.search(r"\b(post|share|send|publish|drop|write|announce)\b", low):
+            return None
+        if not re.search(r"\b(community|channel|group|room|lounge|dm|direct message)\b", low):
+            return None
+        msg = ""
+        m2 = re.search(r"\b(?:saying|say|that says|message|caption|text|body)\s*[:>]\s*([\s\S]{2,1900})", t, re.I)
+        if m2:
+            msg = m2.group(1).strip()
+        else:
+            m3 = re.search(r"[:]\s*([\s\S]{2,1900})$", t)
+            if m3:
+                msg = m3.group(1).strip()
+        # strip leading command phrasing from the draft
+        msg = re.sub(r"^(?:please\s+)?(?:can you\s+)?(?:post|share|send|publish|drop|write|announce)\b[^:]{0,80}[:]?\s*", "", msg, flags=re.I).strip()
+        if len(msg) < 2:
+            return ("ask", "What exactly should I post? Give me the message text and the target "
+                           "(channel name, group, or @username for a DM).")
+        target = ""
+        mdm = re.search(r"\b(?:dm|direct message)\s+(?:to\s+)?@?([a-z0-9_.-]{2,30})\b", low) \
+            or re.search(r"@([a-z0-9_.-]{2,30})\b", t)
+        if is_dm and mdm:
+            target = mdm.group(1)
+        else:
+            chans = _community_channel_names(email)
+            best = ""
+            for c in chans:
+                nm = (c["name"] or c["slug"]).lower()
+                if nm and nm in low and len(nm) > len(best):
+                    best = c["slug"] or c["name"]
+            target = best
+    # ---- execute ----
+    if not is_dm and re.search(r"\ball (?:the |my )?(?:community )?(?:channels|groups|rooms)\b", low):
+        chans = _community_channel_names(email)
+        posted, failed = [], []
+        for c in chans:
+            if c["kind"] == "dm":
+                continue
+            r = svc.room_send(email, c["slug"] or c["name"], msg)
+            if isinstance(r, dict) and r.get("error"):
+                failed.append((c["slug"] or c["name"], str(r["error"])[:60]))
+            else:
+                posted.append(c["slug"] or c["name"])
+        bits = "Posted to " + (", ".join("#" + x for x in posted[:12]) if posted else "nothing") + " ✓"
+        if failed:
+            bits += " · skipped " + ", ".join(n + " (" + e + ")" for n, e in failed[:6])
+        return ("done", bits + " — message: " + msg[:160])
+    if is_dm:
+        who = (target or "").lstrip("@").strip()
+        if not who:
+            return ("ask", "Who should I DM? Give me their @username.")
+        r = svc.dm_send(email, who, msg)
+    else:
+        slug = (target or "").strip()
+        chans = _community_channel_names(email)
+        if slug:
+            match = next((c for c in chans if c["slug"].lower() == slug.lower() or c["name"].lower() == slug.lower()), None)
+            if not match:
+                match = next((c for c in chans if slug.lower() in (c["slug"] + " " + c["name"]).lower()), None)
+            if match:
+                slug = match["slug"] or match["name"]
+        if not slug:
+            names = ", ".join((c["slug"] or c["name"]) for c in chans[:12]) or "(none yet)"
+            return ("ask", "Which channel should I post to? Your channels: " + names)
+        r = svc.room_send(email, slug, msg)
+    if isinstance(r, dict) and r.get("error"):
+        return ("done", "Could not post: " + str(r["error"]))
+    where = ("@" + target.lstrip("@")) if is_dm else ("#" + (target or ""))
+    return ("done", "Posted to " + where + " ✓ : " + msg[:220])
+
+
 def market_movers():
     """patch88 — live market-movers basket (the thing 'morning briefing' promises):
     price + change% for the flagship instruments straight from the signal feed."""
@@ -9511,7 +9610,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch91-media-links",
+        "build": "patch92-community-write",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -10625,18 +10724,38 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     # patch41: "generate a video" must never be treated as an IMAGE of "a video"
     _video_words = bool(re.search(r"\b(?:videos?|clips?|animations?|films?|movies?|reels?|footage)\b", low))
     _image_words = bool(re.search(r"\b(?:images?|pictures?|photos?|art|artwork|logos?|wallpapers?|posters?|banners?|illustrations?|drawings?)\b", low))
-    # community chat access (every tier — the AI reads THIS user's own community)
-    if any(k in low for k in ("community", "my chats", "my chat", "my messages", "my message",
-                              "my dms", "my dm", "direct messages", "check my chat", "check my community",
-                              "any new messages", "any messages", "who messaged", "who wrote",
-                              "unread messages", "group chat", "channel message", "lounge")) \
-            and any(k in low for k in ("check", "read", "see", "show", "any", "who", "what",
-                                       "new", "message", "chat", "unread", "community")):
+    # community (every tier) — patch92: READ chats + inbox AND POST to the member's own
+    # channels/groups/DMs (same permissions as a real tap). The model can draft exact text
+    # via the command form: "community post :: channel-or-user :: message".
+    if email and any(k in low for k in ("community", "my chats", "my chat", "my messages", "my message",
+                                        "my dms", "my dm", "direct messages", "inbox", "check my chat",
+                                        "check my community", "any new messages", "any messages",
+                                        "who messaged", "who wrote", "unread messages", "group chat",
+                                        "channel message", "lounge")) or (
+            email and re.search(r"\b(post|share|send|publish|drop|write|announce)\b", low)
+            and re.search(r"\b(community|channel|group|lounge|dm|direct message)\b", low)):
         if email:
             try:
-                cb = community_service().chat_brief(email)
-                out.append({"tool": "community", "label": "community chat",
-                            "result": _shrink(cb, 2600)})
+                _act = community_action(email, t) if re.search(
+                    r"\b(post|share|send|publish|drop|write|announce|::)\b", low) else None
+                if _act and _act[0] == "done":
+                    out.append({"tool": "community", "label": "community post",
+                                "result": _act[1]})
+                elif _act and _act[0] == "ask":
+                    out.append({"tool": "community", "label": "community post",
+                                "result": _act[1]})
+                else:
+                    cb = community_service().chat_brief(email)
+                    _payload = cb
+                    if re.search(r"\b(inbox|dm|dms|direct messages|unread|messaged|who wrote)\b", low):
+                        try:
+                            _threads = community_service().dm_threads(email) or []
+                            _payload = {"brief": cb, "dm_inbox": _threads[:12]}
+                        except Exception:
+                            _payload = cb
+                    out.append({"tool": "community",
+                                "label": "community inbox" if re.search(r"\b(inbox|unread|messaged)\b", low) else "community chat",
+                                "result": _shrink(_payload, 3200)})
             except Exception as e:
                 out.append({"tool": "community", "label": "community chat",
                             "result": "community unavailable: " + str(e)[:160]})
@@ -13112,7 +13231,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch91-media-links", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch92-community-write", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -14516,11 +14635,14 @@ class Handler(BaseHTTPRequestHandler):
             "CREATED MEDIA PERSISTS: images and videos the user creates are saved to their media gallery and "
             "kept durably across server redeploys — tell them their creations live in the gallery and survive "
             "updates. "
-            "COMMUNITY ACCESS: you have LIVE READ access to this user's own OraCool community — their chats, DMs, "
-            "groups, channels, reactions, games and OraCool number — through the community tool; when they ask you "
-            "to check, read or summarize their community chat, answer from that real data and NEVER say you lack "
-            "access. You only read their own data; you cannot post on their behalf and you never reveal other "
-            "members' private DMs to anyone. "
+            "COMMUNITY ACCESS: you have LIVE access to this user's own OraCool community — their chats, DMs, "
+            "inbox, groups, channels, reactions, games and OraCool number — through the community tool. "
+            "You can READ their chats and inbox, and you CAN post or send messages for them to their own "
+            "channels, groups and DMs (the send runs the community's normal rules: only channel admins post "
+            "in channels, locked groups refuse, bans hold). To post, ask the tool with the exact words and "
+            "target (form: community post :: channel-or-user :: message). If the target or the message is "
+            "unclear, ask ONE short question. NEVER say you cannot post and never claim to lack access; "
+            "answer from the real data and never reveal other members' private DMs to anyone. "
             "APP LAUNCHING (HONESTY RULE): you cannot open, launch or install apps on the user's device by "
             "yourself — the operating system only allows a launch from a real user tap. When the user asks to open "
             "an app, the server has prepared a tappable 'Open <app>' launch card in the chat; tell them to tap that "

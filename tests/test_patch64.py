@@ -17,7 +17,7 @@ SQL = open(os.path.join(ROOT, "supabase_patch64_bots.sql"), encoding="utf-8").re
 
 class Marker(unittest.TestCase):
     def test_build(self):
-        self.assertEqual(SRV.count('"patch91-media-links"'), 2)
+        self.assertEqual(SRV.count('"patch92-community-write"'), 2)
 
     def test_wallet_gone(self):
         for needle in ("/api/wallet", "wallet_withdraw", "referral_mark_used",
