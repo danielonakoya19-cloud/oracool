@@ -17,6 +17,7 @@ import base64
 import hashlib
 import html
 import hmac as hmac_mod
+import hmac
 import ipaddress
 import json
 import os
@@ -3511,7 +3512,7 @@ def community_action(email, text):
         # natural form: "<verb> ... to <target> ... saying|: <message>"
         if not re.search(r"\b(post|share|send|publish|drop|write|announce)\b", low):
             return None
-        if not re.search(r"\b(community|channel|group|room|lounge|dm|direct message)\b", low):
+        if not re.search(r"\b(community|channels?|groups?|rooms?|lounge|dm|direct message)\b", low):
             return None
         msg = ""
         m2 = re.search(r"\b(?:saying|say|that says|message|caption|text|body)\s*[:>]\s*([\s\S]{2,1900})", t, re.I)
@@ -3524,8 +3525,8 @@ def community_action(email, text):
         # strip leading command phrasing from the draft
         msg = re.sub(r"^(?:please\s+)?(?:can you\s+)?(?:post|share|send|publish|drop|write|announce)\b[^:]{0,80}[:]?\s*", "", msg, flags=re.I).strip()
         if len(msg) < 2:
-            return ("ask", "What exactly should I post? Give me the message text and the target "
-                           "(channel name, group, or @username for a DM).")
+            return ("ask", "QUESTION FOR THE USER (ask this exact question, then stop): "
+                           "What exactly should I post? Give me the message and the target (channel name, or @username for a DM).")
         target = ""
         mdm = re.search(r"\b(?:dm|direct message)\s+(?:to\s+)?@?([a-z0-9_.-]{2,30})\b", low) \
             or re.search(r"@([a-z0-9_.-]{2,30})\b", t)
@@ -3558,7 +3559,7 @@ def community_action(email, text):
     if is_dm:
         who = (target or "").lstrip("@").strip()
         if not who:
-            return ("ask", "Who should I DM? Give me their @username.")
+            return ("ask", "QUESTION FOR THE USER (ask this exact question, then stop): Who should I DM? Give me their @username.")
         r = svc.dm_send(email, who, msg)
     else:
         slug = (target or "").strip()
@@ -3570,13 +3571,368 @@ def community_action(email, text):
             if match:
                 slug = match["slug"] or match["name"]
         if not slug:
+            if re.search(r"\bchannels\b", low):
+                posted, failed = [], []
+                for c in chans:
+                    if c["kind"] == "dm":
+                        continue
+                    r = svc.room_send(email, c["slug"] or c["name"], msg)
+                    if isinstance(r, dict) and r.get("error"):
+                        failed.append((c["slug"] or c["name"], str(r["error"])[:60]))
+                    else:
+                        posted.append(c["slug"] or c["name"])
+                bits = "Posted to " + (", ".join("#" + x for x in posted[:12]) if posted else "nothing") + " \u2713"
+                if failed:
+                    bits += " \u00b7 skipped " + ", ".join(n + " (" + e + ")" for n, e in failed[:6])
+                return ("done", bits + " \u2014 message: " + msg[:160])
             names = ", ".join((c["slug"] or c["name"]) for c in chans[:12]) or "(none yet)"
-            return ("ask", "Which channel should I post to? Your channels: " + names)
+            return ("ask", "QUESTION FOR THE USER (ask this exact question, then stop): Which channel should I post to? Your channels: " + names)
         r = svc.room_send(email, slug, msg)
     if isinstance(r, dict) and r.get("error"):
         return ("done", "Could not post: " + str(r["error"]))
     where = ("@" + target.lstrip("@")) if is_dm else ("#" + (target or ""))
     return ("done", "Posted to " + where + " ✓ : " + msg[:220])
+
+
+
+# ================================================================ patch93: connectors
+CONNECTOR_SPECS = {
+    "github": {"label": "GitHub", "desc": "Work with repos, issues, and pull requests.", "auth": "token",
+               "hint": "Personal access token from github.com/settings/tokens (repo + read:org scopes)"},
+    "drive": {"label": "Drive", "desc": "Find and manage files in Google Drive.", "auth": "google"},
+    "docs": {"label": "Docs", "desc": "Create, read, and edit Google Docs.", "auth": "google"},
+    "gmail": {"label": "Gmail", "desc": "Connect your email account.", "auth": "google"},
+    "calendar": {"label": "Calendar", "desc": "Connect your Google Calendar.", "auth": "google"},
+    "slides": {"label": "Slides", "desc": "Read and edit slides in your presentations.", "auth": "google"},
+    "sheets": {"label": "Sheets", "desc": "Read, edit, and format your spreadsheets.", "auth": "google"},
+    "notion": {"label": "Notion", "desc": "Look up your documents.", "auth": "token",
+               "hint": "Internal integration token from notion.so/my-integrations"},
+    "linear": {"label": "Linear", "desc": "Track issues, and cycles.", "auth": "token",
+               "hint": "Personal API key from linear.app/settings/api"},
+    "dropbox": {"label": "Dropbox", "desc": "Browse, read, and organize your Dropbox files.", "auth": "token",
+                "hint": "Access token from dropbox.com/developers/apps"},
+    "vercel": {"label": "Vercel", "desc": "Manage deployments and projects.", "auth": "token",
+               "hint": "Token from vercel.com/account/tokens"},
+    "supabase": {"label": "Supabase", "desc": "Manage your Postgres database and auth.", "auth": "pair",
+                 "hint": "Project URL + service key"},
+}
+_GOOGLE_SCOPES = ("https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents "
+                  "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/presentations.readonly "
+                  "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar "
+                  "openid email")
+
+
+def _conn_key(email):
+    return "connectors:" + (email or "").strip().lower()
+
+
+def connectors_state(email):
+    return supabase_kv_get(_conn_key(email)) or {}
+
+
+def connectors_save(email, data):
+    supabase_kv_put(_conn_key(email), data)
+
+
+def connectors_public(email):
+    st = connectors_state(email)
+    out = []
+    for name, spec in CONNECTOR_SPECS.items():
+        c = (st.get("google") if spec["auth"] == "google" else st.get(name)) or {}
+        out.append({"name": name, "label": spec["label"], "desc": spec["desc"], "auth": spec["auth"],
+                    "hint": spec.get("hint", ""),
+                    "connected": bool(c.get("token") or c.get("access_token") or c.get("url")),
+                    "meta": c.get("meta") or {}})
+    return out
+
+
+def _conn_http(url, method="GET", headers=None, json_body=None, timeout=25):
+    try:
+        st, raw, _ = http_fetch(url, method=method, headers=headers or {}, json_body=json_body, timeout=timeout)
+        try:
+            data = json.loads(raw) if raw else {}
+        except Exception:
+            data = {"raw": str(raw)[:400]}
+        return st, data
+    except Exception as e:
+        return 599, {"message": str(e)[:160]}
+
+
+def _connector_verify(name, cred):
+    """Live-check a credential before it is saved. Returns (ok, meta, error)."""
+    tok = (cred.get("access_token") or cred.get("token") or "").strip()
+    try:
+        if name == "github":
+            st, d = _conn_http("https://api.github.com/user", headers={"Authorization": "Bearer " + tok,
+                                                                      "Accept": "application/vnd.github+json"})
+            return (True, {"login": d.get("login")}, None) if st == 200 and isinstance(d, dict) else (False, {}, "GitHub rejected that token (" + str(st) + ").")
+        if name == "notion":
+            st, d = _conn_http("https://api.notion.com/v1/users/me", headers={"Authorization": "Bearer " + tok,
+                                                                             "Notion-Version": "2022-06-28"})
+            who = (d.get("name") or d.get("bot", {}).get("workspace_name") or "ok") if isinstance(d, dict) else ""
+            return (True, {"who": str(who)[:60]}, None) if st == 200 else (False, {}, "Notion rejected that token (" + str(st) + ").")
+        if name == "linear":
+            st, d = _conn_http("https://api.linear.app/api/graphql", method="POST",
+                               headers={"Authorization": tok}, json_body={"query": "{ viewer { name } }"})
+            nm = (((d.get("data") or {}).get("viewer") or {}).get("name") or "ok") if isinstance(d, dict) else ""
+            return (True, {"who": str(nm)[:60]}, None) if st == 200 and not d.get("errors") else (False, {}, "Linear rejected that key (" + str(st) + ").")
+        if name == "dropbox":
+            st, d = _conn_http("https://api.dropboxapi.com/2/users/get_current_account", method="POST",
+                               headers={"Authorization": "Bearer " + tok})
+            nm = (d.get("email") or d.get("name", {}).get("display_name") or "ok") if isinstance(d, dict) else ""
+            return (True, {"who": str(nm)[:60]}, None) if st == 200 else (False, {}, "Dropbox rejected that token (" + str(st) + ").")
+        if name == "vercel":
+            st, d = _conn_http("https://api.vercel.com/user", headers={"Authorization": "Bearer " + tok})
+            nm = (d.get("user", {}).get("username") or d.get("username") or "ok") if isinstance(d, dict) else ""
+            return (True, {"who": str(nm)[:60]}, None) if st == 200 else (False, {}, "Vercel rejected that token (" + str(st) + ").")
+        if name == "supabase":
+            url = (cred.get("url") or "").strip().rstrip("/")
+            if not url.startswith("http"):
+                return False, {}, "Give the project URL (https://xxxx.supabase.co) and the service key."
+            st, d = _conn_http(url + "/rest/v1/", headers={"apikey": tok, "Authorization": "Bearer " + tok})
+            return (True, {"who": url}, None) if st in (200, 404) else (False, {}, "Supabase rejected that URL/key (" + str(st) + ").")
+        if spec_auth(name) == "google":
+            st, d = _conn_http("https://www.googleapis.com/oauth2/v2/userinfo", headers={"Authorization": "Bearer " + tok})
+            return (True, {"email": d.get("email")}, None) if st == 200 and d.get("email") else (False, {}, "Google rejected that access token (" + str(st) + ").")
+    except Exception as e:
+        return False, {}, str(e)[:120]
+    return False, {}, "Unknown connector."
+
+
+def spec_auth(name):
+    return (CONNECTOR_SPECS.get(name) or {}).get("auth") or ""
+
+
+def google_access(st):
+    """A usable Google access token, refreshing with the stored refresh token when needed."""
+    g = st.get("google") or {}
+    tok = g.get("access_token") or ""
+    cid, csec = key("GOOGLE_CLIENT_ID"), key("GOOGLE_CLIENT_SECRET")
+    if g.get("refresh_token") and cid and csec:
+        stt, d = _conn_http("https://oauth2.googleapis.com/token", method="POST",
+                            json_body={"client_id": cid, "client_secret": csec,
+                                       "refresh_token": g.get("refresh_token"), "grant_type": "refresh_token"})
+        if stt == 200 and d.get("access_token"):
+            tok = d["access_token"]
+            g["access_token"] = tok
+            st["google"] = g
+            try:
+                connectors_save(g.get("_email") or "", st)
+            except Exception:
+                pass
+    return tok
+
+
+def connectors_google_url(email):
+    cid = key("GOOGLE_CLIENT_ID")
+    if not cid:
+        return {"error": "Google OAuth is not configured on the server (GOOGLE_CLIENT_ID missing). "
+                         "For now paste an access token instead."}
+    redir = "https://" + "oracoolai.com" + "/api/connectors/google/callback"
+    state = base64.urlsafe_b64encode(email.encode()).decode().rstrip("=") + "." + \
+        hmac.new((key("JWT_SECRET") or "dev-secret").encode(), email.encode(), hashlib.sha256).hexdigest()[:16]
+    return {"url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=" + urllib.parse.quote(cid) +
+            "&redirect_uri=" + urllib.parse.quote(redir) +
+            "&response_type=code&access_type=offline&prompt=consent&scope=" + urllib.parse.quote(_GOOGLE_SCOPES) +
+            "&state=" + urllib.parse.quote(state)}
+
+
+def connectors_google_callback(q):
+    """Google redirects the browser here with ?code=&state= — trade the code for tokens and store them."""
+    try:
+        raw_state = (q.get("state") or [""])[0]
+        pad = "=" * (-len(raw_state.split(".")[0]) % 4)
+        email = base64.urlsafe_b64decode(raw_state.split(".")[0] + pad).decode()
+        sig = raw_state.split(".")[1] if "." in raw_state else ""
+        want = hmac.new((key("JWT_SECRET") or "dev-secret").encode(), email.encode(), hashlib.sha256).hexdigest()[:16]
+        if sig != want:
+            return "<html><body>State check failed — close this tab and try again from OraCool.</body></html>"
+        code = (q.get("code") or [""])[0]
+        if not code:
+            return "<html><body>Google did not return a code (usually: this redirect URL is not in the OAuth client's allowed list). Close this tab — or paste an access token in Settings → Connectors.</body></html>"
+        redir = "https://" + "oracoolai.com" + "/api/connectors/google/callback"
+        stt, d = _conn_http("https://oauth2.googleapis.com/token", method="POST", json_body={
+            "client_id": key("GOOGLE_CLIENT_ID"), "client_secret": key("GOOGLE_CLIENT_SECRET"),
+            "code": code, "redirect_uri": redir, "grant_type": "authorization_code"})
+        if stt != 200 or not d.get("access_token"):
+            return "<html><body>Google token exchange failed (" + str(stt) + "). Close this tab and paste an access token in Settings → Connectors instead.</body></html>"
+        st = connectors_state(email)
+        meta = {}
+        st2, u = _conn_http("https://www.googleapis.com/oauth2/v2/userinfo", headers={"Authorization": "Bearer " + d["access_token"]})
+        if st2 == 200:
+            meta = {"email": u.get("email")}
+        st["google"] = {"access_token": d.get("access_token"), "refresh_token": d.get("refresh_token") or "",
+                        "meta": meta, "connected_at": time.time(), "_email": email}
+        connectors_save(email, st)
+        return ('<html><body style="font-family:system-ui;background:#0b1020;color:#e8f2ff;padding:40px">'
+                '<h2>Google connected \u2713</h2><p>Drive, Docs, Sheets, Slides, Gmail and Calendar are now linked. '
+                'You can close this tab and return to OraCool.</p>'
+                '<script>try{location.replace("/app");}catch(e){}</script></body></html>')
+    except Exception as e:
+        return "<html><body>Connect failed: " + str(e)[:160] + "</body></html>"
+
+
+def _conn_find_id(text):
+    m = re.search(r"/d/([a-zA-Z0-9_-]{10,80})", text or "") or re.search(r"[?&]id=([a-zA-Z0-9_-]{10,80})", text or "")
+    return m.group(1) if m else ""
+
+
+def _connector_do(name, c, low, text):
+    """Run one real request against the member's linked account and return readable output."""
+    tok = (c.get("access_token") or c.get("token") or "").strip()
+    if spec_auth(name) == "google":
+        tok = tok or ""
+    if name == "gmail":
+        q = ""
+        mq = re.search(r'(?:search|find|look for)[^a-z0-9]{0,20}(?:email|gmail|mail|inbox)?[^a-z0-9]{0,10}([a-z0-9 @._-]{2,60})', low)
+        if mq:
+            q = "&q=" + urllib.parse.quote(mq.group(1).strip())
+        st, d = _conn_http("https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=6" + q,
+                           headers={"Authorization": "Bearer " + tok})
+        ids = [m.get("id") for m in (d.get("messages") or []) if isinstance(m, dict)]
+        lines = []
+        for mid in ids[:6]:
+            st2, m2 = _conn_http("https://gmail.googleapis.com/gmail/v1/users/me/messages/" + str(mid) + "?format=metadata&metadataHeaders=From&metadataHeaders=Subject",
+                                 headers={"Authorization": "Bearer " + tok})
+            hdrs = {h.get("name"): h.get("value") for h in (m2.get("payload", {}).get("headers") or [])}
+            lines.append("- " + str(hdrs.get("From", ""))[:60] + " | " + str(hdrs.get("Subject", ""))[:70] + " | " + str(m2.get("snippet", ""))[:80])
+        return "Gmail inbox" + ("" if not q else " (search)") + ":\n" + ("\n".join(lines) or "(no messages)")
+    if name == "calendar":
+        st, d = _conn_http("https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=6&singleEvents=true&orderBy=startTime&timeMin=" + urllib.parse.quote(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+                           headers={"Authorization": "Bearer " + tok})
+        evs = [("- " + str(e.get("summary", "(no title)"))[:70] + " @ " + str(e.get("start", {}).get("dateTime") or e.get("start", {}).get("date") or "")[:16]) for e in (d.get("items") or [])]
+        return "Calendar next events:\n" + ("\n".join(evs) or "(none)")
+    if name == "github":
+        if re.search(r"\b(open|create|file|new)\b", low) and re.search(r"\bissue\b", low):
+            m = re.search(r"\b([a-z0-9_.-]+/[a-z0-9_.-]+)\b", text or "")
+            body_txt = re.sub(r"^.*?\bissue\b[^:]{0,60}[:]?\s*", "", text or "", flags=re.I).strip()
+            if m and len(body_txt) > 2:
+                st, d = _conn_http("https://api.github.com/repos/" + m.group(1) + "/issues", method="POST",
+                                   headers={"Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json"},
+                                   json_body={"title": body_txt[:90], "body": body_txt})
+                return "GitHub issue created: " + str((d.get("html_url") if isinstance(d, dict) else d))[:140]
+            return "To open a GitHub issue give me: owner/repo and the issue text (e.g. 'open github issue in me/app: login crashes')."
+        if re.search(r"\bissue", low):
+            st, d = _conn_http("https://api.github.com/user/issues?per_page=8&sort=updated",
+                               headers={"Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json"})
+            rows = [("- " + str(i.get("repository", {}).get("full_name", "")) + " #" + str(i.get("number")) + " " + str(i.get("title", ""))[:70]) for i in (d if isinstance(d, list) else [])]
+            return "Your GitHub issues:\n" + ("\n".join(rows) or "(none)")
+        st, d = _conn_http("https://api.github.com/user/repos?sort=updated&per_page=8",
+                           headers={"Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json"})
+        rows = [("- " + str(r.get("full_name", "")) + (" ⭐" + str(r.get("stargazers_count")) if r.get("stargazers_count") else "") + " · " + str(r.get("description") or "")[:60]) for r in (d if isinstance(d, list) else [])]
+        return "Your GitHub repos (recent):\n" + ("\n".join(rows) or "(none)")
+    if name == "drive":
+        q = ""
+        mq = re.search(r'(?:search|find|look for|named?)\W{0,3}([a-z0-9 ._-]{2,40})', low)
+        if mq:
+            q = "&q=" + urllib.parse.quote("name contains '" + mq.group(1).strip().replace("'", "") + "'")
+        st, d = _conn_http("https://www.googleapis.com/drive/v3/files?pageSize=8&fields=files(id,name,mimeType,modifiedTime)" + q,
+                           headers={"Authorization": "Bearer " + tok})
+        rows = [("- " + str(f.get("name", ""))[:70] + " (" + str(f.get("mimeType", ""))[:28] + ")") for f in (d.get("files") or [])]
+        return "Drive files:\n" + ("\n".join(rows) or "(none)")
+    if name == "docs":
+        did = _conn_find_id(text)
+        if not did:
+            return "Send me the Google Doc link or ID and I'll read it."
+        st, d = _conn_http("https://docs.googleapis.com/v1/documents/" + did, headers={"Authorization": "Bearer " + tok})
+        txt = " ".join(b.get("textRun", {}).get("content", "") for b in _walk_get(d, "content"))
+        return "Doc text:\n" + (txt[:1500] or str(d)[:400])
+    if name == "sheets":
+        did = _conn_find_id(text)
+        if not did:
+            return "Send me the Google Sheet link or ID and I'll read it."
+        st, d = _conn_http("https://sheets.googleapis.com/v4/spreadsheets/" + did + "/values/A1:Z40", headers={"Authorization": "Bearer " + tok})
+        rows = [" | ".join(str(c)[:22] for c in (r or [])) for r in (d.get("values") or [])[:15]]
+        return "Sheet rows:\n" + ("\n".join(rows) or str(d)[:300])
+    if name == "slides":
+        did = _conn_find_id(text)
+        if not did:
+            return "Send me the Google Slides link or ID and I'll read it."
+        st, d = _conn_http("https://slides.googleapis.com/v1/presentations/" + did, headers={"Authorization": "Bearer " + tok})
+        n = len(d.get("slides") or []) if isinstance(d, dict) else 0
+        return "Presentation has " + str(n) + " slides. " + str(d.get("title", ""))[:80] if isinstance(d, dict) else str(d)[:300]
+    if name == "notion":
+        mq = re.search(r'(?:search|find|look for|named?)\W{0,3}([a-z0-9 _-]{2,50})', low)
+        st, d = _conn_http("https://api.notion.com/v1/search", method="POST",
+                           headers={"Authorization": "Bearer " + tok, "Notion-Version": "2022-06-28"},
+                           json_body={"query": (mq.group(1).strip() if mq else ""), "page_size": 6})
+        rows = []
+        for r in (d.get("results") or []):
+            title = " ".join(x.get("plain_text", "") for x in (r.get("properties", {}).get("title", {}).get("title") or r.get("properties", {}).get("Name", {}).get("title") or []))[:70]
+            rows.append("- " + (title or r.get("url", "")[:70]))
+        return "Notion results:\n" + ("\n".join(rows) or "(none)")
+    if name == "linear":
+        st, d = _conn_http("https://api.linear.app/api/graphql", method="POST", headers={"Authorization": tok},
+                           json_body={"query": "{ issues(first: 8) { nodes { title url state { name } } } }"})
+        nodes = (((d.get("data") or {}).get("issues") or {}).get("nodes") or []) if isinstance(d, dict) else []
+        rows = ["- " + str(i.get("title", ""))[:70] + " (" + str((i.get("state") or {}).get("name", "")) + ")" for i in nodes]
+        return "Linear issues:\n" + ("\n".join(rows) or "(none)")
+    if name == "dropbox":
+        st, d = _conn_http("https://api.dropboxapi.com/2/files/list_folder", method="POST",
+                           headers={"Authorization": "Bearer " + tok}, json_body={"path": "", "limit": 10})
+        rows = ["- " + str(e.get("name", ""))[:60] + ("/" if e.get(".tag") == "folder" else "") for e in (d.get("entries") or [])]
+        return "Dropbox files:\n" + ("\n".join(rows) or str(d)[:200])
+    if name == "vercel":
+        st, d = _conn_http("https://api.vercel.com/v6/deployments?limit=6", headers={"Authorization": "Bearer " + tok})
+        rows = ["- " + str(x.get("name", ""))[:40] + " · " + str(x.get("state") or x.get("readyState") or "") + " · " + str(x.get("url", ""))[:50] for x in (d.get("deployments") or [])]
+        return "Vercel deployments:\n" + ("\n".join(rows) or str(d)[:200])
+    if name == "supabase":
+        url = (c.get("url") or "").strip().rstrip("/")
+        mt = re.search(r'\btable\W{0,3}([a-z0-9_]{2,40})', low)
+        keyv = c.get("token") or ""
+        if mt:
+            st, d = _conn_http(url + "/rest/v1/" + mt.group(1) + "?limit=8",
+                               headers={"apikey": keyv, "Authorization": "Bearer " + keyv})
+            return "Table " + mt.group(1) + " rows:\n" + (json.dumps(d, ensure_ascii=False)[:1200] if not isinstance(d, dict) or d.get("message") is None else json.dumps(d, ensure_ascii=False)[:1200])
+        st, d = _conn_http(url + "/rest/v1/", headers={"apikey": keyv, "Authorization": "Bearer key " + keyv})
+        defs = list((d.get("definitions") or {}).keys())[:20] if isinstance(d, dict) else []
+        return "Supabase tables: " + ", ".join(defs) + "  (ask: 'read supabase table <name>')"
+    return ""
+
+
+def _walk_get(obj, keyname):
+    out = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == keyname and isinstance(v, list):
+                out.extend(v)
+            else:
+                out.extend(_walk_get(v, keyname))
+    elif isinstance(obj, list):
+        for x in obj:
+            out.extend(_walk_get(x, keyname))
+    return out
+
+
+def _connector_call(email, text):
+    low = (text or "").lower()
+    st = connectors_state(email)
+    order = [("gmail", ("gmail", "email", "inbox", "mail"), "Gmail"),
+             ("calendar", ("calendar", "schedule", "events on my"), "Calendar"),
+             ("github", ("github", "repo", "pull request", "commits"), "GitHub"),
+             ("drive", ("google drive", "gdrive", "my drive", "drive file", "drive for"), "Google Drive"),
+             ("docs", ("google doc", "google docs", "doc file"), "Google Docs"),
+             ("sheets", ("spreadsheet", "google sheet", "my sheet"), "Google Sheets"),
+             ("slides", ("google slides", "presentation", "slide deck"), "Google Slides"),
+             ("notion", ("notion",), "Notion"),
+             ("linear", ("linear",), "Linear"),
+             ("dropbox", ("dropbox",), "Dropbox"),
+             ("vercel", ("vercel", "deployment"), "Vercel"),
+             ("supabase", ("supabase",), "Supabase")]
+    for name, kws, label in order:
+        if not any(k in low for k in kws):
+            continue
+        c = (st.get("google") if spec_auth(name) == "google" else st.get(name)) or {}
+        if spec_auth(name) == "google":
+            c = dict(c)
+            c["access_token"] = google_access(st) or c.get("access_token") or ""
+        if not (c.get("token") or c.get("access_token") or c.get("url")):
+            return ("done", "The " + label + " connector is not linked yet. Tell the user: open Settings \u2192 Connectors and tap + on " + label + ", then ask again.")
+        try:
+            return ("done", _connector_do(name, c, low, text) or ("(" + label + " connector ran, nothing to show.)"))
+        except Exception as e:
+            return ("done", label + " connector error: " + str(e)[:160])
+    return None
 
 
 def market_movers():
@@ -8871,7 +9227,7 @@ def security_login_audit(url, authorized=False):
     add((not cookies) or ("secure" in cookies.lower()), "Secure cookies", "present on Set-Cookie" if "secure" in cookies.lower() else ("no cookies set" if not cookies else "missing on observed cookies"))
     add((not cookies) or ("samesite" in cookies.lower()), "SameSite cookies", "present on Set-Cookie" if "samesite" in cookies.lower() else ("no cookies set" if not cookies else "missing on observed cookies"))
     add("type=\"password\"" in low or "type='password'" in low, "login form", "password input detected" if ("type=\"password\"" in low or "type='password'" in low) else "no password field in fetched HTML")
-    add(bool(re.search(r"name=['\"](?:csrf|_csrf|csrf_token|authenticity_token|token)['\"]", low)), "CSRF token hint", "hidden token field detected" if re.search(r"name=['\"](?:csrf|_csrf|csrf_token|authenticity_token|token)['\"]", low) else "no obvious CSRF token field in HTML")
+    add(bool(re.search(r'''name=['\"](?:csrf|_csrf|csrf_token|authenticity_token|token)['\"]''', low)), "CSRF token hint", "hidden token field detected" if re.search(r'''name=['\"](?:csrf|_csrf|csrf_token|authenticity_token|token)['\"]''', low) else "no obvious CSRF token field in HTML")
     add(any(k in low for k in ("captcha", "recaptcha", "hcaptcha", "turnstile")), "bot friction", "CAPTCHA/turnstile hint detected" if any(k in low for k in ("captcha", "recaptcha", "hcaptcha", "turnstile")) else "no CAPTCHA hint in static HTML")
     add(any(k in low for k in ("mfa", "multi-factor", "two-factor", "2fa", "authenticator")), "MFA hint", "MFA/2FA copy detected" if any(k in low for k in ("mfa", "multi-factor", "two-factor", "2fa", "authenticator")) else "no MFA hint in static HTML")
     score = sum(1 for f in findings if f["ok"])
@@ -9610,7 +9966,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch92-community-write",
+        "build": "patch93-connectors",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -10724,6 +11080,22 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     # patch41: "generate a video" must never be treated as an IMAGE of "a video"
     _video_words = bool(re.search(r"\b(?:videos?|clips?|animations?|films?|movies?|reels?|footage)\b", low))
     _image_words = bool(re.search(r"\b(?:images?|pictures?|photos?|art|artwork|logos?|wallpapers?|posters?|banners?|illustrations?|drawings?)\b", low))
+    # linked connectors (GitHub, Drive, Gmail, ...) - patch93: real reads/writes in the member's accounts
+    if email and any(k in low for k in ('github', 'google drive', 'gdrive', 'my drive', 'gmail',
+                                        'google calendar', 'google doc', 'google sheet', 'google slide',
+                                        'notion', 'linear', 'dropbox', 'vercel', 'supabase',
+                                        'connector', 'connected account')):
+        if any(v in low for v in ('check', 'read', 'list', 'find', 'search', 'show', 'get', 'open',
+                                  'create', 'inbox', 'repo', 'issue', 'meeting', 'event', 'file',
+                                  'deploy', 'pull request', 'schedule', 'table', 'drive', 'email',
+                                  'summar', 'any new', 'latest')):
+            try:
+                _cres = _connector_call(email, t)
+                if _cres and _cres[1]:
+                    out.append({'tool': 'connector', 'label': 'connected account',
+                                'result': _shrink(_cres[1], 2400)})
+            except Exception:
+                pass
     # community (every tier) — patch92: READ chats + inbox AND POST to the member's own
     # channels/groups/DMs (same permissions as a real tap). The model can draft exact text
     # via the command form: "community post :: channel-or-user :: message".
@@ -13230,8 +13602,21 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_error(404)
             else:
                 self.send_error(404)
+        elif path == "/api/connectors/google/callback":
+            qq = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            html_out = connectors_google_callback(qq) or "<html><body>Failed - close this tab and try again from OraCool.</body></html>"
+            bb = html_out.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(bb)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                self.wfile.write(bb)
+            except Exception:
+                pass
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch92-community-write", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch93-connectors", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -13259,7 +13644,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "This account is suspended by an administrator. Access is locked until an administrator lifts the block.",
                                  "suspended": True, "blocked": True}, 403)
                 return
-        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/comms/", "/api/community/", "/api/builds", "/api/sites", "/api/domains", "/api/coins", "/api/github", "/api/security/")) or path in ("/api/image", "/api/video")
+        protected = path.startswith(("/api/chat", "/api/alerts/", "/api/media/", "/api/voice/", "/api/comms/", "/api/community/", "/api/builds", "/api/sites", "/api/domains", "/api/coins", "/api/github", "/api/connectors", "/api/security/")) or path in ("/api/image", "/api/video")
         if protected:
             em = request_identity(self, body, require_supabase=path.startswith(("/api/voice/", "/api/comms/")))
             if not em:
@@ -14160,6 +14545,52 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"items": _mi, "count": len(_mi)})
             elif path == "/api/media/delete":
                 self._send_json(media_delete(_body_email(self, body), str(body.get("id") or "")))
+            elif path == "/api/connectors":
+                self._send_json({"connectors": connectors_public((body.get("email") or "").strip().lower())})
+            elif path == "/api/connectors/save":
+                _cn = str(body.get("name") or "").strip().lower()
+                _spec = CONNECTOR_SPECS.get(_cn)
+                if not _spec:
+                    self._send_json({"ok": False, "error": "unknown connector"}, 404)
+                else:
+                    if _spec["auth"] == "pair":
+                        _cred = {"url": str(body.get("url") or "").rstrip("/"), "key": str(body.get("token") or "")}
+                    else:
+                        _cred = {"token": str(body.get("token") or body.get("access_token") or "")}
+                        if _spec["auth"] == "google":
+                            _cred["refresh_token"] = str(body.get("refresh_token") or "")
+                            try:
+                                _cred["expires_at"] = float(body.get("expires_at") or 0)
+                            except Exception:
+                                _cred["expires_at"] = 0
+                    _okv, _msg = _connector_verify(_cn, _cred)
+                    if not _okv:
+                        self._send_json({"ok": False, "error": _msg}, 400)
+                    else:
+                        _em2 = (body.get("email") or "").strip().lower()
+                        _stv = connectors_state(_em2)
+                        _entry = {"meta": {"verified": _msg, "at": time.time()}, "_email": _em2}
+                        if _spec["auth"] == "pair":
+                            _entry["url"] = _cred["url"]
+                            _entry["key"] = _cred["key"]
+                        elif _spec["auth"] == "google":
+                            _entry["access_token"] = _cred["token"]
+                            _entry["refresh_token"] = _cred.get("refresh_token") or ""
+                            _entry["expires_at"] = _cred.get("expires_at") or 0
+                        else:
+                            _entry["token"] = _cred["token"]
+                        _stv["google" if _spec["auth"] == "google" else _cn] = _entry
+                        connectors_save(_em2, _stv)
+                        self._send_json({"ok": True, "message": _msg, "connectors": connectors_public(_em2)})
+            elif path == "/api/connectors/remove":
+                _cn = str(body.get("name") or "").strip().lower()
+                _em3 = (body.get("email") or "").strip().lower()
+                _stv = connectors_state(_em3)
+                _stv.pop("google" if (_cn in CONNECTOR_SPECS and CONNECTOR_SPECS[_cn]["auth"] == "google") else _cn, None)
+                connectors_save(_em3, _stv)
+                self._send_json({"ok": True, "connectors": connectors_public(_em3)})
+            elif path == "/api/connectors/google/url":
+                self._send_json(connectors_google_url((body.get("email") or "").strip().lower()))
             elif path.startswith("/api/admin/brand/"):
                 actor = request_identity(self, body, require_supabase=True)
                 if not actor or not is_admin(actor) or is_blocked(actor):
@@ -14643,6 +15074,15 @@ class Handler(BaseHTTPRequestHandler):
             "target (form: community post :: channel-or-user :: message). If the target or the message is "
             "unclear, ask ONE short question. NEVER say you cannot post and never claim to lack access; "
             "answer from the real data and never reveal other members' private DMs to anyone. "
+            "If a tool result begins with QUESTION FOR THE USER, ask that exact question and stop. "
+            "If the member asks to share something already discussed (an agenda, a summary, an "
+            "announcement), draft it from the conversation and post it through the tool right away \u2014 "
+            "never tell them to copy-paste it, and never send them to the Community tab instead of posting. "
+            "CONNECTORS: the member can link accounts (GitHub, Google Drive/Docs/Sheets/Slides/Gmail/Calendar, "
+            "Notion, Linear, Dropbox, Vercel, Supabase) in Settings \u2192 Connectors. When they ask to check, "
+            "search or work in one of those, the connector tool runs the real request against their linked "
+            "account \u2014 answer from what it returns. If it is not connected, say plainly: open Settings \u2192 "
+            "Connectors and tap + on that service. Never pretend to have access that is not connected. "
             "APP LAUNCHING (HONESTY RULE): you cannot open, launch or install apps on the user's device by "
             "yourself — the operating system only allows a launch from a real user tap. When the user asks to open "
             "an app, the server has prepared a tappable 'Open <app>' launch card in the chat; tell them to tap that "

@@ -1634,6 +1634,22 @@ html[data-theme="light"] .callbtn.end{color:#fff;}
   .gpt-hint{display:none !important;}
   .gpt-actions{flex-wrap:nowrap !important; overflow-x:auto !important; -webkit-overflow-scrolling:touch; gap:6px !important; padding:6px 8px !important;}
   .gpt-actions::-webkit-scrollbar{display:none;}
+  .connov{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(4,8,20,.62);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:2200;display:flex;align-items:center;justify-content:center;padding:16px}
+  .connbox{width:min(560px,96vw);max-height:82vh;overflow:auto;background:linear-gradient(160deg,rgba(18,26,48,.96),rgba(10,16,34,.98));border:1px solid rgba(130,170,255,.28);border-radius:18px;padding:16px;color:#eaf1ff;box-shadow:0 24px 70px rgba(0,0,0,.5)}
+  .connhead{display:flex;align-items:center;gap:8px;font-size:17px;margin-bottom:6px}
+  .connsub{font-size:12.5px;opacity:.75;line-height:1.5;margin-bottom:12px}
+  .connrow{display:flex;gap:10px;align-items:flex-start;padding:11px 4px;border-top:1px solid rgba(140,170,255,.14);flex-wrap:wrap}
+  .conninfo{flex:1;min-width:180px}
+  .connname{font-weight:600;font-size:14.5px}
+  .connok{color:#4fd48a}
+  .conndesc{font-size:11.8px;opacity:.72;line-height:1.45;margin-top:2px}
+  .connact{display:flex;flex-direction:column;gap:6px;min-width:150px}
+  .connform{display:flex;flex-direction:column;gap:6px}
+  .connin{background:rgba(255,255,255,.07);border:1px solid rgba(140,170,255,.25);border-radius:10px;padding:8px 10px;color:#eaf1ff;font-size:12px}
+  .connsave,.conndisc,.conngo{border-radius:10px;padding:8px 12px;font-size:12.5px;font-weight:600;cursor:pointer;border:1px solid rgba(140,170,255,.3)}
+  .connsave{background:linear-gradient(135deg,#2f6bff,#7a3cff);color:#fff;border:none}
+  .conngo{background:linear-gradient(135deg,#1c8a4c,#28b463);color:#fff;border:none}
+  .conndisc{background:rgba(255,90,90,.12);color:#ff9d9d;border-color:rgba(255,120,120,.35)}
   .modebtn{height:32px !important; padding:0 9px 0 8px !important; font-size:11.5px !important; margin-left:2px !important;}
   .modebtn .mi-ic{font-size:13px;}
   .gpt-send{width:40px !important; height:40px !important; font-size:18px !important;}
@@ -1788,6 +1804,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
             <button class="modebtn" id="mmBtn" title="Models — Agent, Direct, Side by Side or Battle" aria-haspopup="menu" aria-expanded="false"><span class="mi-ic">⇄</span><span class="mi-l" id="mmLab">Agent</span><span class="mi-ch">▾</span></button>
             <button class="modebtn privbtn" id="privBtn" title="Private chat — this conversation is never saved to your history" aria-pressed="false"><span class="mi-ic">🔒</span><span class="mi-l">Private</span></button>
             <button class="modebtn" id="callBtn" title="Voice or video call with OraCool"><span class="mi-ic">📞</span><span class="mi-l">Call</span></button>
+            <button class="modebtn" id="connBtn" title="Connectors — link GitHub, Google Drive, Gmail, Notion… so the AI can work inside them"><span class="mi-ic">⚙️</span><span class="mi-l">Links</span></button>
             <div id="privBanner">🔒 <b>Private chat</b> — messages are never saved to your history or this browser</div>
             <span class="gpt-spacer"></span>
             <span class="gpt-hint">Enter ↵ to send · Shift+Enter = new line · Ctrl+V = paste screenshot</span>
@@ -3217,7 +3234,7 @@ function systemPrompt(){
     `TOOL-FIRST RULE: live tools (weather, markets, OSINT, dark-web intel, image/video creation, smart-home, space) run automatically with each message and their results are pasted into your context. Base every factual answer on those results when present, and act on them — do not claim you cannot check something a tool already checked. If a tool result says a provider is out of credit or not configured, say so plainly and name the fix. `+
     `IMAGE/VIDEO: generated media renders INLINE in the chat automatically — still restate each images[]/videos[] URL as markdown ('![result](url)' for images, '[▶ video](url)' for videos) so it stays in the saved record. When the user asks for a video WITH SOUND/VOICE, the picture is generated (Wan 2.2) and a narrated voice track is added to the clip for free; If the tool says it upgraded to Veo 3.1, the clip has NATIVE synchronized audio. Say which one the clip carries — never pretend a silent clip has sound. Every image/video the user creates is saved to their media gallery and kept across server updates. Members can also PASTE screenshots anywhere with Ctrl+V and attach their own video or audio files — attached AUDIO arrives transcribed whenever possible, so answer from the transcript; you cannot watch attached VIDEO, so acknowledge it by name and ask what to do with it. `+
     `BUILDING & PUBLISHING: a website/app/landing-page request runs ONLY the builder (never images alongside it). Builds cost 10,000 coins from the wallet (Free: a ONE-TIME 1,000,000 coins that never refill until the user pays for a plan; Starter 3M/week, Pro 8M/week, Professional 25M/week, Enterprise unlimited); quote the template family named in the build result. PREVIEW: every finished build renders as a live preview card in the chat automatically, and 'show me the preview' re-opens the newest build card — never speculate about why a preview "isn't loading" and never describe a preview you cannot see; if the build tool returned an error, quote that error. If a tool result says coins are out, relay its cooldown days and upgrade options verbatim and NEVER pretend a site was built. Publishing is FREE and instant via the PUBLISH button on the build card or 'publish my site' (the publish tool); its 'url' field is the live link — report exactly that url (oracoolai.com/sites/<sub>/) as the site address, never claim the subdomain form works before DNS. Owners can later attach their own domain from the same panel. Builds are auto-saved: previews never expire. EDITS: when the user asks to change something on an existing site (color, text, price, phone, section), the app runs the edit tool automatically — never propose a full rebuild for small changes, and never paste tool JSON. After any build or edit, remind the user they can preview, edit and publish any time from the Websites panel (🌐 in the menu). Never claim a site is live unless the publish tool returned ok with a URL — and then quote exactly that url. NEVER paste or repeat raw tool JSON in your reply: the app already renders the preview card; just describe the result in 2-4 warm sentences. `+
-    `TRADE SIGNALS: when the member asks for a trade signal or asks "should I buy or sell [market]" (any horizon — "in the next 4 mins", "1 hour", "today", "this week"), the signal tool runs automatically and hands you BUY / SELL / WAIT, a CONFIDENCE %, entry/stop/target levels for that horizon, and the reasons why. Present the SIGNAL first, then the confidence %, then the levels, then the reasons as short bullets. Fold in whatever information the trader gives (the pattern they see, their entry price, their risk limits) — if it conflicts with the computed data, say so plainly. Be honest by construction: a signal is a probability computed from live market data — never present it as certain, never call it financial advice, never guarantee it, and a WAIT is a complete, valid answer when the edge is weak (forcing a call would be a false prediction). On very short horizons say plainly that noise dominates. Never invent numbers that are not in the tool result. The signal tool runs on a LIVE, timestamped price feed for EVERY market — crypto, forex, gold/silver and stocks. If the tool returned a result, NEVER claim you lack access to real-time or live data, and never call the prices 'approximate', 'unconfirmed' or 'not for live trading' — quote the exact price, the as-of timestamp and the source straight from the tool. If the tool errored, quote the error and offer to retry — never substitute prices from memory and never describe the feed as missing when it worked. Asking for the word movers, what is moving, or a morning briefing runs the live market-movers basket automatically (crypto, forex, gold, stocks with prices and change %) — never tell the member to ask again or claim the data was not attached; the tools run server-side before you answer, so use whatever they returned. When a tool returns an image or video, the app displays it automatically — never paste tool JSON, file links or URLs into your reply; describe the result in one friendly line instead. The community tool can read the member's chats and inbox AND post or send messages for them to their own channels, groups and DMs — when they ask to post or share in the community, actually do it through the tool and report exactly where it went; if the target is unclear, ask one short question. Never say posting is impossible. `+
+    `TRADE SIGNALS: when the member asks for a trade signal or asks "should I buy or sell [market]" (any horizon — "in the next 4 mins", "1 hour", "today", "this week"), the signal tool runs automatically and hands you BUY / SELL / WAIT, a CONFIDENCE %, entry/stop/target levels for that horizon, and the reasons why. Present the SIGNAL first, then the confidence %, then the levels, then the reasons as short bullets. Fold in whatever information the trader gives (the pattern they see, their entry price, their risk limits) — if it conflicts with the computed data, say so plainly. Be honest by construction: a signal is a probability computed from live market data — never present it as certain, never call it financial advice, never guarantee it, and a WAIT is a complete, valid answer when the edge is weak (forcing a call would be a false prediction). On very short horizons say plainly that noise dominates. Never invent numbers that are not in the tool result. The signal tool runs on a LIVE, timestamped price feed for EVERY market — crypto, forex, gold/silver and stocks. If the tool returned a result, NEVER claim you lack access to real-time or live data, and never call the prices 'approximate', 'unconfirmed' or 'not for live trading' — quote the exact price, the as-of timestamp and the source straight from the tool. If the tool errored, quote the error and offer to retry — never substitute prices from memory and never describe the feed as missing when it worked. Asking for the word movers, what is moving, or a morning briefing runs the live market-movers basket automatically (crypto, forex, gold, stocks with prices and change %) — never tell the member to ask again or claim the data was not attached; the tools run server-side before you answer, so use whatever they returned. When a tool returns an image or video, the app displays it automatically — never paste tool JSON, file links or URLs into your reply; describe the result in one friendly line instead. The community tool can read the member's chats and inbox AND post or send messages for them to their own channels, groups and DMs — when they ask to post or share in the community, actually do it through the tool and report exactly where it went; if the target is unclear, ask one short question. Never say posting is impossible. If a tool result begins with QUESTION FOR THE USER, ask that exact question and stop. If they ask to share something from earlier in the conversation, draft it and post it — never say to copy-paste or to use the Community tab. Connectors (GitHub, Drive, Gmail, Notion, Linear, Dropbox, Vercel, Supabase and more) are linked in Settings → Connectors; when one is connected the connector tool really runs against their account — if not connected, point them to Settings → Connectors. `+
     `MARKETS & FORECASTS: when the member asks to analyze, predict or forecast ANY market — crypto (BTC, ETH…), forex (EUR/USD, USD/NGN…), gold/silver, or stocks ($AAPL…) — the forecast tool runs automatically and hands you trend, momentum (RSI, SMA crosses), support/resistance, a 7-day direction with confidence and EXPECTED RANGE plus the REASONS WHY. Present it warmly: state the direction, the range, then the reasons as short bullets — always keep its disclaimer (educational, never a guarantee). The feed is LIVE and timestamped for every market — quote the tool's exact prices with their as-of time, and never say you lack market access or real-time data when the tool just gave it to you. If the tool returned an error, quote it honestly (e.g. unknown symbol) and ask which market they meant. `+
     `DEVICE POWERS: you can open apps & platforms on the user's device (say the word "open youtube" and the interface fires a native intent — installed app first, website fallback); when the user asks you to TAKE A PICTURE/PHOTO/SELFIE, the chat fires a tappable 'Take photo' camera card — tell them to tap it and allow the camera permission (browsers only allow camera access from a real tap; never say you cannot take photos, and never claim a photo was taken without their tap); a 24/7 ALERTS PLATFORM lives in Devices → Connectors & Alerts: the user connects Telegram / WhatsApp / Discord / Slack / any webhook / email, plus browser push and a personal API key + inbound hook URL (GET /hook/<their-token> or POST /api/gateway/v1/ingest with X-OraCool-Key) so ANY external app can feed OraCool events and OraCool feeds them anywhere; the background engine fires on logins, payments, security, watchlist hits and daily digests. You can test alerts, toggle event types, show gateway status and read connector state straight from chat (tools: alerts / gateway) — secrets are only entered in the panel and are AES-sealed at rest; never ask the user to paste tokens into chat if the panel is one click away. A Nearby Devices radar scans Bluetooth-LE for device names when the browser allows it. If asked for something the browser sandbox forbids (read Wi-Fi password, install APKs, control another PC), say exactly what is and isn't possible and offer the closest legal path. When you write a document/report it downloads to the device — and say "want me to alert your connected apps when this finishes?" if they use the alerts platform. `+
     `PROFESSIONAL MODE: act as a court-aware OSINT & cybersecurity analyst — you assist lawful investigators, detectives, security teams and government units with crime analysis, fraud/leak investigation, and remediation of online and physical security problems. GROUNDED SOURCING: every factual claim must name its source inline (e.g. [Source: LeakCheck] or [Source: osint_ip]) when tool results support it; anything without a source is labelled 'assessment, unverified'. Verification/lookup outputs are indicators requiring further review — never definitive verdicts about people or documents (a record existing in a registry ≠ a genuine physical card). Steer users to preserve key findings in the Cases tab (SHA-256 + chain of custody) and to lawful reporting (police, cybercrime units, banks) when a case warrants escalation. You never help with purchases of illicit data, stolen credentials, hacking accounts, or unlawful surveillance. `+
@@ -8245,6 +8262,21 @@ async function init(){
   renderAccount();
   renderSettings();
   updateWakeUI();
+  // connector OAuth return: a Google account being LINKED to the signed-in member (not a sign-in)
+  try{
+    if(localStorage.getItem('oracool_conn_intent')==='google'){
+      localStorage.removeItem('oracool_conn_intent');
+      let oq=null; try{ oq=JSON.parse(localStorage.getItem('oracool_oauth')||'null'); }catch(e){}
+      if(oq){ localStorage.removeItem('oracool_oauth'); }
+      if(oq && oq.access_token){
+        post('/api/connectors/save',{name:'google', access_token:oq.access_token, refresh_token:oq.refresh_token||'', expires_at:oq.expires_at||0}).then(function(r){
+          if(r && r.ok){ addSystemNote('Google connected - Drive, Docs, Sheets, Slides, Gmail and Calendar are linked.'); }
+          else { addErr('⚠️ Google connect failed: '+((r&&r.error)||'try again from the Links panel')); }
+          try{ connRefresh(); }catch(e){}
+        }).catch(function(){});
+      } else if(oq && oq.error){ addErr('⚠️ '+oq.error); }
+    }
+  }catch(e){}
   // restore Supabase session + PRO status, else show mandatory gate
   if(session && session.access_token){
     post('/api/auth/me',{access_token:session.access_token}).then(r=>{
@@ -8270,6 +8302,80 @@ async function init(){
     }
   }
 }
+
+/* ---------- Connectors (linked accounts) ---------- */
+function connClose(){ const o=document.getElementById('connOv'); if(o){ o.style.display='none'; } }
+function connOpen(){
+  let o=document.getElementById('connOv');
+  if(!o){
+    o=document.createElement('div'); o.id='connOv'; o.className='connov';
+    o.innerHTML='<div class="connbox">'+
+      '<div class="connhead"><b>⚙️ Connectors</b><span style="flex:1"></span>'+
+      '<button class="iconbtn" id="connX" title="Close">✕</button></div>'+
+      '<div class="connsub">Link an account once - OraCool AI then really works inside it (read email, list files, open issues, check deploys). Credentials are stored on the server and never shown in the chat.</div>'+
+      '<div id="connList"><div class="connrow">Loading...</div></div>'+
+      '</div>';
+    document.body.appendChild(o);
+    o.addEventListener('click',function(e){ if(e.target===o) connClose(); });
+    const x=document.getElementById('connX'); if(x) x.onclick=connClose;
+  }
+  o.style.display='flex';
+  connRefresh();
+}
+function connRow(c){
+  let form='';
+  if(!c.connected){
+    if(c.auth==='google'){
+      form='<button class="conngo">🔗 Connect Google</button>';
+    } else if(c.auth==='pair'){
+      form='<div class="connform"><input class="connin" data-f="url" placeholder="https://YOUR-PROJECT.supabase.co"><input class="connin" data-f="token" placeholder="service_role key"><button class="connsave" data-n="'+c.name+'">Save</button></div>';
+    } else {
+      form='<div class="connform"><input class="connin" data-f="token" placeholder="'+(c.hint||'token')+'"><button class="connsave" data-n="'+c.name+'">Save</button></div>';
+    }
+  }
+  return '<div class="connrow" data-n="'+c.name+'">'+
+    '<div class="conninfo"><div class="connname">'+c.label+(c.connected?' <span class="connok">✓</span>':'')+'</div>'+
+    '<div class="conndesc">'+(c.connected? ('connected'+(c.meta&&c.meta.email?(' as '+c.meta.email):'')) : (c.desc||''))+'</div>'+
+    ((c.hint&&!c.connected)?('<div class="conndesc">'+c.hint+'</div>'):'')+'</div>'+
+    '<div class="connact">'+form+(c.connected?'<button class="conndisc" data-n="'+c.name+'">Disconnect</button>':'')+'</div>'+
+    '</div>';
+}
+function connRefresh(){
+  post('/api/connectors',{}).then(function(r){
+    const list=document.getElementById('connList'); if(!list) return;
+    if(r && r.connectors){ list.innerHTML=r.connectors.map(connRow).join(''); }
+    else { list.innerHTML='<div class="connrow">'+((r&&r.error)||'Could not load connectors - sign in and try again.')+'</div>'; }
+    connWire();
+  }).catch(function(){});
+}
+function connWire(){
+  const o=document.getElementById('connOv'); if(!o) return;
+  const saves=o.querySelectorAll('.connsave');
+  for(let i=0;i<saves.length;i++){ saves[i].onclick=function(){
+    const row=this.closest('.connrow'); const n=this.getAttribute('data-n');
+    const ins=row.querySelectorAll('.connin'); const body={name:n};
+    for(let j=0;j<ins.length;j++){ body[ins[j].getAttribute('data-f')]=ins[j].value; }
+    const btn=this; btn.textContent='Checking...';
+    post('/api/connectors/save',body).then(function(r){
+      if(r && r.ok){ connRefresh(); }
+      else { alert((r&&r.error)||'Could not verify - check the value and try again.'); connRefresh(); }
+    }).catch(function(){ alert('Network error - try again.'); });
+  }; }
+  const discs=o.querySelectorAll('.conndisc');
+  for(let i=0;i<discs.length;i++){ discs[i].onclick=function(){
+    post('/api/connectors/remove',{name:this.getAttribute('data-n')}).then(function(){ connRefresh(); }).catch(function(){});
+  }; }
+  const gos=o.querySelectorAll('.conngo');
+  for(let i=0;i<gos.length;i++){ gos[i].onclick=function(){
+    localStorage.setItem('oracool_conn_intent','google');
+    post('/api/connectors/google/url',{}).then(function(r){
+      if(r && r.url){ location.href=r.url; }
+      else { localStorage.removeItem('oracool_conn_intent'); alert((r&&r.error)||'Google sign-in is not configured yet - paste an access token instead.'); }
+    }).catch(function(){});
+  }; }
+}
+try{ const _cb=document.getElementById('connBtn'); if(_cb) _cb.onclick=connOpen; }catch(e){}
+document.addEventListener('DOMContentLoaded',function(){ try{ const _cb=document.getElementById('connBtn'); if(_cb) _cb.onclick=connOpen; }catch(e){} });
 
 /* ---------- PWA: service worker + install button (phones, tablets, desktop) ---------- */
 if('serviceWorker' in navigator){ try{ navigator.serviceWorker.register('/sw.js'); }catch(e){} }
