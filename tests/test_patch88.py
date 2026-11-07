@@ -13,7 +13,7 @@ LAND = Path("landing.html").read_text(encoding="utf-8")
 
 class TestPatch88Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch93-connectors"'), 2)
+        self.assertEqual(SRV.count('"patch94-conn-ux"'), 2)
 
 
 class TestPatch88BriefingTools(unittest.TestCase):
