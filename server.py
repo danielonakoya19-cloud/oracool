@@ -3598,23 +3598,41 @@ def community_action(email, text):
 # ================================================================ patch93: connectors
 CONNECTOR_SPECS = {
     "github": {"label": "GitHub", "desc": "Work with repos, issues, and pull requests.", "auth": "token",
-               "hint": "Personal access token from github.com/settings/tokens (repo + read:org scopes)"},
-    "drive": {"label": "Drive", "desc": "Find and manage files in Google Drive.", "auth": "google"},
-    "docs": {"label": "Docs", "desc": "Create, read, and edit Google Docs.", "auth": "google"},
-    "gmail": {"label": "Gmail", "desc": "Connect your email account.", "auth": "google"},
-    "calendar": {"label": "Calendar", "desc": "Connect your Google Calendar.", "auth": "google"},
-    "slides": {"label": "Slides", "desc": "Read and edit slides in your presentations.", "auth": "google"},
-    "sheets": {"label": "Sheets", "desc": "Read, edit, and format your spreadsheets.", "auth": "google"},
+               "hint": "Personal access token (repo + read:org scopes)",
+               "hint_url": "https://github.com/settings/tokens"},
+    "drive": {"label": "Drive", "desc": "Find and manage files in Google Drive.", "auth": "google",
+              "hint": "Google access token with the Drive scope",
+              "hint_url": "https://developers.google.com/oauthplayground"},
+    "docs": {"label": "Docs", "desc": "Create, read, and edit Google Docs.", "auth": "google",
+             "hint": "Google access token with the Docs scope",
+             "hint_url": "https://developers.google.com/oauthplayground"},
+    "gmail": {"label": "Gmail", "desc": "Check and search your email inbox.", "auth": "google",
+              "hint": "Google access token with the Gmail scope",
+              "hint_url": "https://developers.google.com/oauthplayground"},
+    "calendar": {"label": "Calendar", "desc": "See and manage your Google Calendar.", "auth": "google",
+                 "hint": "Google access token with the Calendar scope",
+                 "hint_url": "https://developers.google.com/oauthplayground"},
+    "slides": {"label": "Slides", "desc": "Read and edit slides in your presentations.", "auth": "google",
+               "hint": "Google access token with the Slides scope",
+               "hint_url": "https://developers.google.com/oauthplayground"},
+    "sheets": {"label": "Sheets", "desc": "Read, edit, and format your spreadsheets.", "auth": "google",
+               "hint": "Google access token with the Sheets scope",
+               "hint_url": "https://developers.google.com/oauthplayground"},
     "notion": {"label": "Notion", "desc": "Look up your documents.", "auth": "token",
-               "hint": "Internal integration token from notion.so/my-integrations"},
-    "linear": {"label": "Linear", "desc": "Track issues, and cycles.", "auth": "token",
-               "hint": "Personal API key from linear.app/settings/api"},
+               "hint": "Internal integration token",
+               "hint_url": "https://www.notion.so/my-integrations"},
+    "linear": {"label": "Linear", "desc": "Track issues and cycles.", "auth": "token",
+               "hint": "Personal API key",
+               "hint_url": "https://linear.app/settings/api"},
     "dropbox": {"label": "Dropbox", "desc": "Browse, read, and organize your Dropbox files.", "auth": "token",
-                "hint": "Access token from dropbox.com/developers/apps"},
+                "hint": "Access token",
+                "hint_url": "https://www.dropbox.com/developers/apps"},
     "vercel": {"label": "Vercel", "desc": "Manage deployments and projects.", "auth": "token",
-               "hint": "Token from vercel.com/account/tokens"},
+               "hint": "Access token",
+               "hint_url": "https://vercel.com/account/tokens"},
     "supabase": {"label": "Supabase", "desc": "Manage your Postgres database and auth.", "auth": "pair",
-                 "hint": "Project URL + service key"},
+                 "hint": "Project URL + service key",
+                 "hint_url": "https://supabase.com/dashboard/project/_/settings/api"},
 }
 _GOOGLE_SCOPES = ("https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents "
                   "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/presentations.readonly "
@@ -3640,7 +3658,7 @@ def connectors_public(email):
     for name, spec in CONNECTOR_SPECS.items():
         c = (st.get("google") if spec["auth"] == "google" else st.get(name)) or {}
         out.append({"name": name, "label": spec["label"], "desc": spec["desc"], "auth": spec["auth"],
-                    "hint": spec.get("hint", ""),
+                    "hint": spec.get("hint", ""), "hint_url": spec.get("hint_url", ""),
                     "connected": bool(c.get("token") or c.get("access_token") or c.get("url")),
                     "meta": c.get("meta") or {}})
     return out
@@ -3927,7 +3945,7 @@ def _connector_call(email, text):
             c = dict(c)
             c["access_token"] = google_access(st) or c.get("access_token") or ""
         if not (c.get("token") or c.get("access_token") or c.get("url")):
-            return ("done", "The " + label + " connector is not linked yet. Tell the user: open Settings \u2192 Connectors and tap + on " + label + ", then ask again.")
+            return ("done", "The " + label + " connector is not linked yet. Tell the user: tap the \u2699\ufe0f Links button next to the message box and add " + label + " there, then ask again.")
         try:
             return ("done", _connector_do(name, c, low, text) or ("(" + label + " connector ran, nothing to show.)"))
         except Exception as e:
@@ -9966,7 +9984,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch93-connectors",
+        "build": "patch94-conn-ux",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -13616,7 +13634,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch93-connectors", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch94-conn-ux", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -15079,10 +15097,11 @@ class Handler(BaseHTTPRequestHandler):
             "announcement), draft it from the conversation and post it through the tool right away \u2014 "
             "never tell them to copy-paste it, and never send them to the Community tab instead of posting. "
             "CONNECTORS: the member can link accounts (GitHub, Google Drive/Docs/Sheets/Slides/Gmail/Calendar, "
-            "Notion, Linear, Dropbox, Vercel, Supabase) in Settings \u2192 Connectors. When they ask to check, "
-            "search or work in one of those, the connector tool runs the real request against their linked "
-            "account \u2014 answer from what it returns. If it is not connected, say plainly: open Settings \u2192 "
-            "Connectors and tap + on that service. Never pretend to have access that is not connected. "
+            "Notion, Linear, Dropbox, Vercel, Supabase) with the \u2699\ufe0f Links button next to the message box. "
+            "When they ask to check, search or work in one of those, the connector tool runs the real request "
+            "against their linked account \u2014 answer from what it returns. If it is not connected, say plainly: "
+            "tap the \u2699\ufe0f Links button next to the message box and add that service there. "
+            "Never pretend to have access that is not connected. "
             "APP LAUNCHING (HONESTY RULE): you cannot open, launch or install apps on the user's device by "
             "yourself — the operating system only allows a launch from a real user tap. When the user asks to open "
             "an app, the server has prepared a tappable 'Open <app>' launch card in the chat; tell them to tap that "
