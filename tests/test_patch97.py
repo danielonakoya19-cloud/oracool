@@ -142,4 +142,4 @@ def test_client_has_link_cards():
 # ---------------------------------------------------------------- marker
 
 def test_marker():
-    assert SERVER_SRC.count("patch97-easy-link") == 2
+    assert SERVER_SRC.count("patch98-qr-certs") == 2

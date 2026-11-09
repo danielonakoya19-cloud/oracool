@@ -115,4 +115,4 @@ def test_prompt_points_to_links_button():
 
 
 def test_marker():
-    assert SERVER_SRC.count("patch97-easy-link") == 2
+    assert SERVER_SRC.count("patch98-qr-certs") == 2

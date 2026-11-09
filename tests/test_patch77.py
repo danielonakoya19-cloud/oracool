@@ -15,7 +15,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count("patch97-easy-link"), 2)
+        self.assertEqual(SRV.count("patch98-qr-certs"), 2)
 
 
 class HoloBoot(unittest.TestCase):

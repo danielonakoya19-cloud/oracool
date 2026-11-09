@@ -10,7 +10,7 @@ os.chdir(ROOT)
 import server as s  # noqa: E402
 
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
-MARK = "patch97-easy-link"
+MARK = "patch98-qr-certs"
 
 
 class Marker(unittest.TestCase):
@@ -52,7 +52,12 @@ class ReviewerEnforcement(unittest.TestCase):
         self.assertEqual(issues, [])
 
     def test_non_game_pages_not_flagged(self):
-        tool = ('<html><body><div id="app">budget tool</div><script>'
+        tool = ('<html><head><style>.a{background:linear-gradient(#111,#222)}'
+                '.b{background:radial-gradient(#333,#444)}.c{background:linear-gradient(#555,#666)}'
+                '.d{background:linear-gradient(#777,#888)}.g{backdrop-filter:blur(9px)}'
+                '@keyframes k1{from{opacity:0}to{opacity:1}}'
+                '@keyframes k2{from{transform:none}to{transform:translateY(4px)}}</style></head>'
+                '<body><div id="app">budget tool</div><script>'
                 'localStorage.setItem("x",1);addEventListener("click",()=>{});'
                 'addEventListener("input",()=>{});addEventListener("submit",()=>{});</script></body></html>' + " " * 20000)
         issues = [i for i in s._app_quality_issues(tool) if "flat" in i]

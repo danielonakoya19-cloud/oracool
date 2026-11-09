@@ -18,7 +18,7 @@ LAND = open(ROOT / 'landing.html', encoding='utf-8').read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch97-easy-link"'), 2)
+        self.assertEqual(SRV.count('"patch98-qr-certs"'), 2)
         self.assertNotIn('patch38-direct', SRV)
 
 
@@ -150,8 +150,17 @@ class BuilderQuality(unittest.TestCase):
     def test_quality_issues(self):
         thin = '<html><head></head><body><section>x</section></body></html>'
         self.assertGreaterEqual(len(s._site_quality_issues(thin)), 5)
-        good = ('<!DOCTYPE html><html><head><meta name="viewport" content="w"><style>@media(max-width:600px){}.a{transition:all .3s}</style></head><body><header><nav></nav></header>'
-                + ''.join('<section><h2>%d</h2>%s</section>' % (i, 'x' * 3000) for i in range(6)) + '<form></form><footer></footer></body></html>')
+        good = ('<!DOCTYPE html><html><head><meta name="viewport" content="w"><style>@media(max-width:600px){}.a{transition:all .3s}'
+                '.g1{background:linear-gradient(120deg,#111,#222)}.g2{background:radial-gradient(#333,#444)}'
+                '.g3{background:linear-gradient(45deg,#555,#666)}'
+                '.glass{backdrop-filter:blur(12px) saturate(160%)}'
+                '@keyframes floaty{from{transform:none}to{transform:translateY(-8px)}}'
+                '@keyframes sheen{from{opacity:.4}to{opacity:1}}</style></head><body><header><nav></nav></header>'
+                '<svg width="10" height="10"></svg><svg width="10" height="10"></svg>'
+                + ''.join('<section><h2>%d</h2>%s</section>' % (i, 'x' * 3000) for i in range(6))
+                + '<section><h2>Testimonials</h2><p>what people say about us</p></section>'
+                + '<section><h2>FAQ</h2><p>frequently asked questions</p></section>'
+                + '<form></form><footer></footer></body></html>')
         self.assertEqual(s._site_quality_issues(good), [])
         self.assertTrue(any("lorem" in i for i in s._site_quality_issues(good.replace("x" * 10, "lorem ipsum", 1))))
 

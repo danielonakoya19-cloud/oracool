@@ -11,7 +11,7 @@ APP = Path("index.html").read_text(encoding="utf-8")
 
 class TestPatch91Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch97-easy-link"'), 2)
+        self.assertEqual(SRV.count('"patch98-qr-certs"'), 2)
 
 
 class TestPatch91MediaJsonRendering(unittest.TestCase):

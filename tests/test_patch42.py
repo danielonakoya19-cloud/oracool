@@ -28,7 +28,7 @@ def _sse(pieces, finish="stop"):
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch97-easy-link"'), 2)
+        self.assertEqual(SRV.count('"patch98-qr-certs"'), 2)
         self.assertNotIn("patch41-studio", SRV)
 
 

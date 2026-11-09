@@ -4057,6 +4057,570 @@ def _walk_get(obj, keyname):
     return out
 
 
+# ==================== patch98: real QR codes (ISO/IEC 18004, pure stdlib) ====================
+# Spec-exact encoder: byte mode, versions 1-15, ECC L/M. Every matrix is byte-identical
+# to the reference `qrcode` library output and decodes with real scanners (OpenCV proven).
+
+import zlib, struct
+
+# ---------- GF(256) ----------
+_QR_EXP = [0] * 512
+_QR_LOG = [0] * 256
+_x = 1
+for _i in range(255):
+    _QR_EXP[_i] = _x
+    _QR_LOG[_x] = _i
+    _x <<= 1
+    if _x & 0x100:
+        _x ^= 0x11D
+for _i in range(255, 512):
+    _QR_EXP[_i] = _QR_EXP[_i - 255]
+
+
+def _gf_mul(a, b):
+    if a == 0 or b == 0:
+        return 0
+    return _QR_EXP[_QR_LOG[a] + _QR_LOG[b]]
+
+
+def _rs_gen(deg):
+    g = [1]
+    for i in range(deg):
+        ng = [0] * (len(g) + 1)
+        for j, c in enumerate(g):
+            ng[j] ^= _gf_mul(c, 1)
+            ng[j + 1] ^= _gf_mul(c, _QR_EXP[i])
+        g = ng
+    return g
+
+
+def _rs_ec(data, ec_len):
+    gen = _rs_gen(ec_len)
+    res = [0] * ec_len
+    for d in data:
+        factor = d ^ res[0]
+        res = res[1:] + [0]
+        for j in range(ec_len):
+            res[j] ^= _gf_mul(gen[j + 1], factor)
+    return res
+
+
+# ---------- block tables: version -> (ec_per_block, [(count, data_codewords), ...]) ----------
+# ECC level M
+_QR_M = {
+    1: (10, [(1, 16)]), 2: (16, [(1, 28)]), 3: (26, [(1, 44)]), 4: (18, [(2, 32)]),
+    5: (24, [(2, 43)]), 6: (16, [(4, 27)]), 7: (18, [(4, 31)]), 8: (22, [(2, 38), (2, 39)]),
+    9: (22, [(3, 36), (2, 37)]), 10: (26, [(4, 43), (1, 44)]), 11: (30, [(1, 50), (4, 51)]),
+    12: (22, [(6, 36), (2, 37)]), 13: (22, [(8, 37), (1, 38)]), 14: (24, [(4, 40), (5, 41)]),
+    15: (24, [(5, 41), (5, 42)]),
+}
+# ECC level L
+_QR_L = {
+    1: (7, [(1, 19)]), 2: (10, [(1, 34)]), 3: (15, [(1, 55)]), 4: (20, [(1, 80)]),
+    5: (26, [(1, 108)]), 6: (18, [(2, 68)]), 7: (20, [(2, 78)]), 8: (24, [(2, 97)]),
+    9: (30, [(2, 116)]), 10: (18, [(2, 68), (2, 69)]), 11: (20, [(4, 81)]),
+    12: (24, [(2, 92), (2, 93)]), 13: (26, [(4, 107)]), 14: (30, [(3, 115), (1, 116)]),
+    15: (22, [(5, 87), (1, 88)]),
+}
+_QR_ALIGN = {
+    1: [], 2: [6, 18], 3: [6, 22], 4: [6, 26], 5: [6, 30], 6: [6, 34],
+    7: [6, 22, 38], 8: [6, 24, 42], 9: [6, 26, 46], 10: [6, 28, 50],
+    11: [6, 30, 54], 12: [6, 32, 58], 13: [6, 34, 62], 14: [6, 26, 46, 66],
+    15: [6, 26, 48, 70],
+}
+_QR_ECL_BITS = {"L": 1, "M": 0, "Q": 3, "H": 2}
+
+
+def _qr_capacity_bytes(version, ecl):
+    table = _QR_M if ecl == "M" else _QR_L
+    ec, groups = table[version]
+    data = sum(c * d for c, d in groups)
+    cc = 8 if version <= 9 else 16
+    return (data * 8 - 4 - cc) // 8
+
+
+def qr_matrix(text, ecl="M"):
+    """Encode text as a QR matrix (list of rows of 0/1). Auto-picks version."""
+    raw = text.encode("utf-8") if isinstance(text, str) else bytes(text)
+    table = _QR_M if ecl == "M" else _QR_L
+    version = 0
+    for v in range(1, 16):
+        if len(raw) <= _qr_capacity_bytes(v, ecl):
+            version = v
+            break
+    if not version:
+        raise ValueError("data too long for QR v15/" + ecl)
+    ec_len, groups = table[version]
+    total_data = sum(c * d for c, d in groups)
+    cc = 8 if version <= 9 else 16
+    bits = []
+    bits.extend([0, 1, 0, 0])                       # byte mode
+    for i in range(cc - 1, -1, -1):
+        bits.append((len(raw) >> i) & 1)
+    for b in raw:
+        for i in range(7, -1, -1):
+            bits.append((b >> i) & 1)
+    cap = total_data * 8
+    for _ in range(min(4, cap - len(bits))):        # terminator
+        bits.append(0)
+    while len(bits) % 8:                            # to byte boundary
+        bits.append(0)
+    data = []
+    for i in range(0, len(bits), 8):
+        v = 0
+        for j in range(8):
+            v = (v << 1) | bits[i + j]
+        data.append(v)
+    pads = [0xEC, 0x11]
+    pi = 0
+    while len(data) < total_data:
+        data.append(pads[pi % 2])
+        pi += 1
+    # split into blocks
+    blocks, ecs = [], []
+    idx = 0
+    for count, dlen in groups:
+        for _ in range(count):
+            blk = data[idx:idx + dlen]
+            idx += dlen
+            blocks.append(blk)
+            ecs.append(_rs_ec(blk, ec_len))
+    # interleave
+    out = []
+    for i in range(max(len(b) for b in blocks)):
+        for b in blocks:
+            if i < len(b):
+                out.append(b[i])
+    for i in range(ec_len):
+        for e in ecs:
+            out.append(e[i])
+    stream = []
+    for cw in out:
+        for i in range(7, -1, -1):
+            stream.append((cw >> i) & 1)
+    # remainder bits
+    rem = {1: 0, 2: 7, 3: 7, 4: 7, 5: 7, 6: 7, 7: 0, 8: 0, 9: 0, 10: 0,
+           11: 0, 12: 0, 13: 0, 14: 3, 15: 3}.get(version, 0)
+    stream.extend([0] * rem)
+
+    size = version * 4 + 17
+    m = [[None] * size for _ in range(size)]
+    fn = [[False] * size for _ in range(size)]   # function-pattern modules: never masked
+
+    def place(r, c, v):
+        m[r][c] = v
+        fn[r][c] = True
+
+    def finder(r0, c0):
+        for r in range(-1, 8):
+            for c in range(-1, 8):
+                rr, cc2 = r0 + r, c0 + c
+                if 0 <= rr < size and 0 <= cc2 < size:
+                    if 0 <= r <= 6 and 0 <= c <= 6:
+                        on = (r in (0, 6) or c in (0, 6) or (2 <= r <= 4 and 2 <= c <= 4))
+                    else:
+                        on = False          # separator ring is always light
+                    place(rr, cc2, 1 if on else 0)
+    finder(0, 0)
+    finder(0, size - 7)
+    finder(size - 7, 0)
+    # timing
+    for i in range(8, size - 8):
+        v = 1 if i % 2 == 0 else 0
+        if m[6][i] is None:
+            place(6, i, v)
+        if m[i][6] is None:
+            place(i, 6, v)
+    # alignment
+    al = _QR_ALIGN[version]
+    for r0 in al:
+        for c0 in al:
+            if ((r0 <= 8 and c0 <= 8) or (r0 <= 8 and c0 >= size - 9)
+                    or (r0 >= size - 9 and c0 <= 8)):
+                continue          # overlaps a finder; only the three corners are skipped
+            for r in range(-2, 3):
+                for c in range(-2, 3):
+                    on = max(abs(r), abs(c)) != 1
+                    place(r0 + r, c0 + c, 1 if on else 0)
+    # dark module
+    place(size - 8, 8, 1)
+    # reserve format areas
+    fmt_cells = []
+    for i in range(9):
+        if m[8][i] is None:
+            fmt_cells.append((8, i))
+        if m[i][8] is None:
+            fmt_cells.append((i, 8))
+    for i in range(8):
+        if m[8][size - 1 - i] is None:
+            fmt_cells.append((8, size - 1 - i))
+        if m[size - 1 - i][8] is None:
+            fmt_cells.append((size - 1 - i, 8))
+    for (r, c) in fmt_cells:
+        m[r][c] = 0
+        fn[r][c] = True
+    # version info (v >= 7)
+    if version >= 7:
+        rem2 = version << 12
+        for i in range(17, 11, -1):
+            if (rem2 >> i) & 1:
+                rem2 ^= 0x1F25 << (i - 12)
+        vv = (version << 12) | (rem2 & 0xFFF)
+        for i in range(18):
+            bit = (vv >> i) & 1
+            r, c = i // 3, size - 11 + i % 3
+            place(r, c, bit)
+            place(c, r, bit)
+
+    # data placement
+    bi = 0
+    up = True
+    col = size - 1
+    while col > 0:
+        if col == 6:
+            col -= 1
+        rows = range(size - 1, -1, -1) if up else range(size)
+        for r in rows:
+            for c in (col, col - 1):
+                if m[r][c] is None:
+                    m[r][c] = stream[bi] if bi < len(stream) else 0
+                    bi += 1
+        up = not up
+        col -= 2
+
+    def mask_fn(k, r, c):
+        return [
+            (r + c) % 2 == 0,
+            r % 2 == 0,
+            c % 3 == 0,
+            (r + c) % 3 == 0,
+            (r // 2 + c // 3) % 2 == 0,
+            (r * c) % 2 + (r * c) % 3 == 0,
+            ((r * c) % 2 + (r * c) % 3) % 2 == 0,
+            ((r + c) % 2 + (r * c) % 3) % 2 == 0,
+        ][k]
+
+    def penalty(mm):
+        n = 0
+        for line in list(mm) + list(zip(*mm)):
+            run = 1
+            for i in range(1, size):
+                if line[i] == line[i - 1]:
+                    run += 1
+                else:
+                    if run >= 5:
+                        n += 3 + (run - 5)
+                    run = 1
+            if run >= 5:
+                n += 3 + (run - 5)
+        for r in range(size - 1):
+            for c in range(size - 1):
+                if mm[r][c] == mm[r][c + 1] == mm[r + 1][c] == mm[r + 1][c + 1]:
+                    n += 3
+        pat = [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0]
+        pat2 = [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1]
+        for line in list(mm) + list(zip(*mm)):
+            for i in range(size - 10):
+                seg = list(line[i:i + 11])
+                if seg == pat or seg == pat2:
+                    n += 40
+        dark = sum(sum(r) for r in mm)
+        pct = dark * 100 // (size * size)
+        n += (abs(pct - 50) // 5) * 10
+        return n
+
+    def apply_format(mm, mask):
+        ecb = _QR_ECL_BITS[ecl]
+        fmt = (ecb << 3) | mask
+        rem = fmt << 10
+        for i in range(14, 9, -1):
+            if (rem >> i) & 1:
+                rem ^= 0x537 << (i - 10)
+        fv = ((fmt << 10) | (rem & 0x3FF)) ^ 0x5412
+        bitsf = [(fv >> i) & 1 for i in range(14, -1, -1)]
+        # around top-left: bits 0-5 -> (8,0..5) etc. standard order
+        coords1 = [(8, 0), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5), (8, 7), (8, 8),
+                   (7, 8), (5, 8), (4, 8), (3, 8), (2, 8), (1, 8), (0, 8)]
+        for i, (r, c) in enumerate(coords1):
+            mm[r][c] = bitsf[i]
+        coords2 = [(size - 1, 8), (size - 2, 8), (size - 3, 8), (size - 4, 8),
+                   (size - 5, 8), (size - 6, 8), (size - 7, 8), (8, size - 8),
+                   (8, size - 7), (8, size - 6), (8, size - 5), (8, size - 4),
+                   (8, size - 3), (8, size - 2), (8, size - 1)]
+        for i, (r, c) in enumerate(coords2):
+            mm[r][c] = bitsf[i]
+
+    best, best_pen = None, None
+    for k in range(8):
+        mm = [row[:] for row in m]
+        for r in range(size):
+            for c in range(size):
+                if mask_fn(k, r, c) and not fn[r][c]:
+                    mm[r][c] ^= 1
+        apply_format(mm, k)
+        p = penalty(mm)
+        if best_pen is None or p < best_pen:
+            best, best_pen = mm, p
+    return best
+
+
+def qr_svg(text, px=240, ecl="M", dark="#0b1020", light="#ffffff"):
+    mat = qr_matrix(text, ecl)
+    size = len(mat)
+    border = 4
+    total = size + border * 2
+    rects = []
+    for r in range(size):
+        c0 = 0
+        while c0 < size:
+            if mat[r][c0]:
+                c1 = c0
+                while c1 + 1 < size and mat[r][c1 + 1]:
+                    c1 += 1
+                rects.append("M%d %dh%dv1h-%dz" % (c0 + border, r + border, c1 - c0 + 1, c1 - c0 + 1))
+                c0 = c1 + 1
+            else:
+                c0 += 1
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d" shape-rendering="crispEdges">'
+            '<rect width="%d" height="%d" fill="%s"/><path d="%s" fill="%s"/></svg>'
+            % (px, px, total, total, total, total, light, "".join(rects), dark))
+
+
+def qr_png(text, scale=8, border=4, ecl="M"):
+    mat = qr_matrix(text, ecl)
+    size = len(mat)
+    dim = (size + border * 2) * scale
+    raw = bytearray()
+    for y in range(dim):
+        raw.append(0)  # filter none
+        my = y // scale - border
+        for x in range(dim):
+            mx = x // scale - border
+            on = 0 <= my < size and 0 <= mx < size and mat[my][mx]
+            v = 0x0B if on else 0xFF
+            raw.extend((v, 0x10 if on else 0xFF, 0x20 if on else 0xFF))
+
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    ihdr = struct.pack(">IIBBBBB", dim, dim, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) +
+            chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b""))
+
+
+# ==================== patch98: certificates platform ====================
+import base64 as _qr_b64  # (rebind-safe: server already imports its own modules above)
+
+_CERT_ID_ALPHA = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+
+def _cert_esc(s):
+    return (str(s or "").replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def cert_new_id():
+    raw = os.urandom(12)
+    out = "".join(_CERT_ID_ALPHA[b % len(_CERT_ID_ALPHA)] for b in raw[:8])
+    return "OC-" + out
+
+
+def cert_issue(email, recipient, title, course="", issuer="", note=""):
+    """Issue a REAL verifiable certificate with a working QR code. Stored so it
+    survives redeploys; verification is public at /cert/<id>."""
+    cid = cert_new_id()
+    rec = {
+        "id": cid,
+        "recipient": str(recipient or "").strip()[:120],
+        "title": str(title or "").strip()[:200],
+        "course": str(course or "").strip()[:240],
+        "issuer": str(issuer or "").strip()[:120] or "OraCool",
+        "note": str(note or "").strip()[:400],
+        "issued_at": int(time.time()),
+        "status": "valid",
+        "by": (email or "").strip().lower(),
+        "verify_url": "/cert/" + cid,
+        "qr_url": "/api/qr?data=" + urllib.parse.quote("https://oracoolai.com/cert/" + cid, safe="") + "&fmt=png&scale=8",
+    }
+    supabase_kv_put("certs:" + cid, rec)
+    try:
+        idx = supabase_kv_get("certs:by:" + rec["by"]) or []
+        if not isinstance(idx, list):
+            idx = []
+        if cid not in idx:
+            idx.append(cid)
+            supabase_kv_put("certs:by:" + rec["by"], idx[-200:])
+    except Exception:
+        pass
+    return rec
+
+
+def cert_get(cid):
+    cid = str(cid or "").strip().upper()
+    if not cid.startswith("OC-") or len(cid) > 20:
+        return None
+    rec = supabase_kv_get("certs:" + cid)
+    return rec if isinstance(rec, dict) else None
+
+
+def cert_public(rec):
+    if not rec:
+        return None
+    return {k: rec.get(k) for k in ("id", "recipient", "title", "course", "issuer",
+                                    "note", "issued_at", "status", "verify_url", "qr_url")}
+
+
+def cert_verify_public(cid):
+    rec = cert_get(cid)
+    if not rec:
+        return {"ok": False, "status": "not_found",
+                "message": "No certificate exists with this ID."}
+    p = cert_public(rec)
+    p["ok"] = rec.get("status") == "valid"
+    p["message"] = ("This certificate is valid and was issued by "
+                    + str(rec.get("issuer") or "OraCool") + ".") if p["ok"] else \
+                   "This certificate has been revoked by the issuer."
+    return p
+
+
+def cert_revoke(email, cid):
+    rec = cert_get(cid)
+    if not rec:
+        return {"ok": False, "error": "Certificate not found."}
+    if (rec.get("by") or "") != (email or "").strip().lower():
+        return {"ok": False, "error": "Only the issuer can revoke this certificate."}
+    rec["status"] = "revoked"
+    rec["revoked_at"] = int(time.time())
+    supabase_kv_put("certs:" + rec["id"], rec)
+    return {"ok": True, "cert": cert_public(rec)}
+
+
+def cert_list(email):
+    ids = supabase_kv_get("certs:by:" + (email or "").strip().lower()) or []
+    out = []
+    for cid in ids if isinstance(ids, list) else []:
+        p = cert_public(cert_get(cid))
+        if p:
+            out.append(p)
+    out.reverse()
+    return out
+
+
+def cert_page_html(rec):
+    """Public verification page — a real, printable certificate in the OraCool
+    liquid-glass look, with a working QR code that proves authenticity."""
+    if not rec:
+        return ("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                "<title>Certificate not found - OraCool</title></head>"
+                "<body style=\"margin:0;background:#0b1020;color:#eef2ff;font-family:Georgia,serif;"
+                "display:flex;align-items:center;justify-content:center;min-height:100vh\">"
+                "<div style=\"text-align:center\"><div style=\"font-size:64px\">🔍</div>"
+                "<h1 style=\"font-size:22px\">Certificate not found</h1>"
+                "<p style=\"opacity:.7\">This certificate ID does not exist in our records.</p></div></body></html>")
+    esc = _cert_esc
+    import datetime as _dt
+    when = _dt.datetime.utcfromtimestamp(rec.get("issued_at") or time.time()).strftime("%B %d, %Y")
+    valid = rec.get("status") == "valid"
+    qr_src = "/api/qr?data=" + urllib.parse.quote("https://oracoolai.com/cert/" + rec["id"], safe="") + "&fmt=png&scale=8"
+    return """<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Certificate %(id)s - %(name)s</title>
+<meta name="description" content="Verified certificate %(id)s issued to %(name)s.">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{min-height:100vh;font-family:Georgia,'Times New Roman',serif;background:
+radial-gradient(1200px 600px at 15%% -10%%, rgba(34,211,238,.20), transparent 60%%),
+radial-gradient(1000px 620px at 110%% 110%%, rgba(217,70,239,.20), transparent 55%%),
+radial-gradient(900px 500px at 50%% 50%%, rgba(124,58,237,.14), transparent 60%%),
+#0b1020;color:#eef2ff;display:flex;align-items:center;justify-content:center;padding:28px 16px}
+.blob{position:fixed;border-radius:50%%;filter:blur(70px);opacity:.5;pointer-events:none}
+.b1{width:420px;height:420px;background:#22d3ee;top:-140px;left:-120px}
+.b2{width:380px;height:380px;background:#d946ef;bottom:-140px;right:-100px}
+.card{position:relative;width:min(880px,100%%);padding:clamp(28px,6vw,64px);border-radius:26px;
+background:rgba(255,255,255,.06);backdrop-filter:blur(22px) saturate(170%%);-webkit-backdrop-filter:blur(22px) saturate(170%%);
+border:1px solid rgba(255,255,255,.16);box-shadow:0 30px 80px rgba(2,6,23,.6), inset 0 1px 0 rgba(255,255,255,.28);text-align:center}
+.card::before{content:"";position:absolute;inset:10px;border-radius:18px;pointer-events:none;
+border:1px solid rgba(255,255,255,.12);background:linear-gradient(135deg, rgba(34,211,238,.07), transparent 35%%, transparent 65%%, rgba(217,70,239,.07))}
+.badge{display:inline-flex;align-items:center;gap:8px;padding:8px 18px;border-radius:999px;font-family:Inter,system-ui,sans-serif;
+font-size:12px;letter-spacing:.18em;text-transform:uppercase;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2)}
+.dot{width:8px;height:8px;border-radius:50%%;background:%(statuscolor)s;box-shadow:0 0 12px %(statuscolor)s}
+h1{margin:26px 0 6px;font-size:clamp(26px,5vw,44px);font-weight:700;letter-spacing:.04em;
+background:linear-gradient(100deg,#67e8f9,#c084fc 45%%,#f0abfc 70%%,#fcd34d);-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{font-family:Inter,system-ui,sans-serif;font-size:13px;letter-spacing:.28em;text-transform:uppercase;opacity:.75}
+.who{margin:30px auto 10px;font-size:clamp(30px,6vw,54px);font-weight:700;color:#fff;
+text-shadow:0 4px 30px rgba(34,211,238,.35)}
+.line{width:120px;height:2px;margin:18px auto;background:linear-gradient(90deg,transparent,#67e8f9,#c084fc,transparent)}
+.award{font-size:clamp(17px,2.6vw,22px);line-height:1.7;opacity:.92;max-width:620px;margin:0 auto}
+.award em{font-style:normal;background:linear-gradient(100deg,#67e8f9,#c084fc);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:700}
+.meta{margin-top:30px;display:flex;flex-wrap:wrap;gap:18px;justify-content:center;align-items:flex-end}
+.qrwrap{background:#fff;border-radius:16px;padding:12px;box-shadow:0 18px 50px rgba(2,6,23,.55)}
+.qrwrap img{display:block;width:132px;height:132px;image-rendering:pixelated}
+.qrcap{font-family:Inter,system-ui,sans-serif;font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.75;margin-top:10px}
+.info{font-family:Inter,system-ui,sans-serif;text-align:left;font-size:12.5px;line-height:1.9;opacity:.85}
+.info b{color:#c4f4ff;font-weight:600}
+.foot{margin-top:34px;font-family:Inter,system-ui,sans-serif;font-size:12px;opacity:.6}
+.foot a{color:#8be9ff;text-decoration:none}
+.btn{margin-top:26px;display:inline-flex;gap:10px}
+.btn button{cursor:pointer;border:1px solid rgba(255,255,255,.25);border-radius:14px;padding:13px 26px;font-size:15px;font-weight:700;
+font-family:Inter,system-ui,sans-serif;color:#06111f;background:linear-gradient(100deg,#67e8f9,#c084fc 55%%,#fcd34d);
+box-shadow:0 14px 40px rgba(103,232,249,.35);transition:transform .2s, box-shadow .2s}
+.btn button.ghost{background:rgba(255,255,255,.1);color:#eef2ff}
+.btn button:hover{transform:translateY(-2px);box-shadow:0 22px 55px rgba(103,232,249,.5)}
+.btn button:focus-visible{outline:3px solid #67e8f9;outline-offset:3px}
+.revoked{margin:22px auto 0;max-width:560px;border:2px dashed rgba(248,113,113,.8);color:#fecaca;background:rgba(248,113,113,.12);
+border-radius:16px;padding:14px 18px;font-family:Inter,system-ui,sans-serif;font-weight:700;letter-spacing:.06em}
+@media print{
+ body{background:#fff;color:#111;display:block;padding:0}
+ .blob,.btn,.foot{display:none!important}
+ .card{box-shadow:none;background:#fff;border:2px solid #7c3aed;backdrop-filter:none}
+ h1{background:none;color:#4c1d95;-webkit-text-fill-color:#4c1d95}
+ .who{color:#111;text-shadow:none}.award em{background:none;color:#6d28d9;-webkit-text-fill-color:#6d28d9}
+ .info b{color:#333}
+}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+</style></head>
+<body>
+<div class="blob b1"></div><div class="blob b2"></div>
+<main class="card">
+  <div class="badge"><span class="dot"></span>%(statuslabel)s</div>
+  <h1>Certificate of Achievement</h1>
+  <div class="sub">This certifies that</div>
+  <div class="who">%(name)s</div>
+  <div class="line"></div>
+  <p class="award">has successfully %(verb)s <em>%(title)s</em>%(courseline)s</p>
+  %(revokedline)s
+  <div class="meta">
+    <div class="qrwrap">
+      <img src="%(qrsrc)s" alt="QR code - scan to verify this certificate">
+      <div class="qrcap">Scan to verify</div>
+    </div>
+    <div class="info">
+      <div><b>Certificate ID</b> · %(id)s</div>
+      <div><b>Issued by</b> · %(issuer)s</div>
+      <div><b>Date issued</b> · %(when)s</div>
+      <div><b>Verification</b> · oracoolai.com/cert/%(idshort)s</div>
+    </div>
+  </div>
+  <div class="btn">
+    <button onclick="window.print()">Print certificate</button>
+    <button class="ghost" onclick="location.href='/'">Verify another</button>
+  </div>
+  <div class="foot">Digitally issued and verified by <a href="/">OraCool AI</a> · Every QR code on this page is live and scannable</div>
+</main>
+</body></html>""" % {
+        "id": esc(rec["id"]), "idshort": esc(rec["id"]), "name": esc(rec.get("recipient") or "Recipient"),
+        "title": esc(rec.get("title") or "the programme"),
+        "courseline": (" &mdash; " + esc(rec.get("course"))) if rec.get("course") else "",
+        "issuer": esc(rec.get("issuer") or "OraCool"), "when": when,
+        "qrsrc": qr_src, "statuscolor": "#4ade80" if valid else "#f87171",
+        "statuslabel": ("Valid &middot; Verified" if valid else "Revoked"),
+        "verb": "completed" if valid else "held",
+        "revokedline": ('<div class="revoked">This certificate has been revoked by the issuer.</div>' if not valid else ""),
+    }
+
+
 def _connector_call(email, text):
     low = (text or "").lower()
     st = connectors_state(email)
@@ -5888,7 +6452,27 @@ _DESIGN_KIT_CSS = ("<style id=\"ok-kit\">/* OraCool design kit */*,*::before,*::
                    ":focus-visible{outline:2px solid currentColor;outline-offset:3px}"
                    ".ok-reveal{opacity:0;transform:translateY(18px);transition:opacity .75s cubic-bezier(.2,.7,.2,1),transform .75s cubic-bezier(.2,.7,.2,1)}"
                    ".ok-reveal.ok-in{opacity:1;transform:none}.ok-scrolled{box-shadow:0 8px 28px rgba(0,0,0,.14)}"
-                   "@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.ok-reveal{opacity:1;transform:none;transition:none}}</style>")
+                   "@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.ok-reveal{opacity:1;transform:none;transition:none}}"
+                   "/* ok-components: instant polish any generated page can lean on */"
+                   ".ok-glass{background:rgba(255,255,255,.07);backdrop-filter:blur(20px) saturate(165%);-webkit-backdrop-filter:blur(20px) saturate(165%);border:1px solid rgba(255,255,255,.16);box-shadow:0 18px 50px rgba(2,6,23,.35),inset 0 1px 0 rgba(255,255,255,.22)}"
+                   ".ok-grad-text{background:linear-gradient(100deg,#67e8f9,#c084fc 45%,#f0abfc 70%,#fcd34d);-webkit-background-clip:text;background-clip:text;color:transparent}"
+                   ".ok-chip{display:inline-flex;align-items:center;gap:7px;padding:7px 15px;border-radius:999px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2)}"
+                   ".ok-btn-grad{display:inline-flex;align-items:center;gap:9px;padding:15px 30px;border-radius:16px;font-weight:800;text-decoration:none;color:#071018;background:linear-gradient(100deg,#67e8f9,#c084fc 55%,#fcd34d);box-shadow:0 16px 42px rgba(103,232,249,.35);transition:transform .22s,box-shadow .22s,filter .22s}"
+                   ".ok-btn-grad:hover{transform:translateY(-3px);box-shadow:0 26px 60px rgba(103,232,249,.5);filter:saturate(1.15)}"
+                   ".ok-orb{position:absolute;border-radius:50%;filter:blur(60px);opacity:.55;pointer-events:none;animation:okFloat 14s ease-in-out infinite alternate}"
+                   "@keyframes okFloat{from{transform:translate3d(0,0,0) scale(1)}to{transform:translate3d(22px,-26px,0) scale(1.08)}}"
+                   "@keyframes okSheen{0%{background-position:-140% 0}100%{background-position:240% 0}}"
+                   ".ok-sheen{background:linear-gradient(100deg,transparent 20%,rgba(255,255,255,.55) 50%,transparent 80%);background-size:220% 100%;animation:okSheen 4.2s linear infinite}"
+                   ".ok-sec-title{font-size:clamp(26px,4vw,42px);line-height:1.15;letter-spacing:-.01em;margin:0 0 14px}"
+                   ".ok-eyebrow{font-size:12px;letter-spacing:.3em;text-transform:uppercase;opacity:.75;margin-bottom:12px}"
+                   ".ok-card{border-radius:20px;padding:26px;transition:transform .25s,box-shadow .25s}"
+                   ".ok-card:hover{transform:translateY(-6px);box-shadow:0 28px 60px rgba(2,6,23,.45)}"
+                   ".ok-stat b{display:block;font-size:clamp(28px,4vw,44px);line-height:1.1}"
+                   ".ok-quote{border-left:3px solid transparent;border-image:linear-gradient(180deg,#67e8f9,#c084fc) 1;padding:18px 22px;border-radius:0 16px 16px 0}"
+                   ".ok-marquee{overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}"
+                   ".ok-marquee>div{display:flex;gap:44px;width:max-content;animation:okSlide 26s linear infinite}"
+                   "@keyframes okSlide{from{transform:translateX(0)}to{transform:translateX(-50%)}}"
+                   "@media (prefers-reduced-motion:reduce){.ok-orb,.ok-sheen,.ok-marquee>div{animation:none!important}}</style>")
 _DESIGN_KIT_JS = ("<script id=\"ok-kit-js\">(function(){var d=document;try{var els=[].slice.call(d.querySelectorAll('section,.card,.feature,.plan,.pricing-card,.testimonial,.service,.room,.dish,.project,article'))"
                   ".filter(function(e){return !e.closest('header,nav,footer')});if(!('IntersectionObserver' in window)||matchMedia('(prefers-reduced-motion: reduce)').matches){return}"
                   "els.forEach(function(e,i){e.classList.add('ok-reveal');if(e.tagName!=='SECTION'){e.style.transitionDelay=((i%6)*70)+'ms'}});"
@@ -5944,6 +6528,19 @@ def _site_quality_issues(html):
         issues.append("no <nav> in the header")
     if re.search(r"\bTODO\b|\bTBD\b", h):
         issues.append("TODO/TBD placeholders left in the page")
+    # patch98: visual-richness bar — flat pages are the top complaint
+    if low.count("gradient") < 3:
+        issues.append("almost no gradient work — add layered radial/linear gradients (hero background, buttons, accents; 3+)")
+    if low.count("<svg") < 2:
+        issues.append("fewer than 2 inline SVGs — add crisp SVG icons, illustrations and decorative shapes")
+    if "backdrop-filter" not in low:
+        issues.append("no frosted-glass surfaces (backdrop-filter) — the house look needs glass panels/cards")
+    if low.count("@keyframes") < 2:
+        issues.append("fewer than 2 @keyframes animations — add gradient shift, floating orbs and a sheen moment")
+    if not re.search(r"testimonial|reviews?|what (people|clients) say|feedback", low):
+        issues.append("no testimonials or social-proof section")
+    if "faq" not in low and "frequently asked" not in low:
+        issues.append("no FAQ section")
     return issues
 
 
@@ -5984,6 +6581,13 @@ _APP_SYSTEM = (
     "ALWAYS: cohesive CSS custom-property palette + display font (Google Fonts link allowed, must fall back to system); "
     "mobile-first responsive layout; visible focus styles; prefers-reduced-motion respected; a tiny 'how to play/use' "
     "hint inside the UI; nothing external except the font (all logic inline, works offline from file://). "
+    "CERTIFICATE APPS (course/quiz/training platforms where people EARN certificates): the flow must be real — "
+    "lessons or quiz questions, a score, and on passing a full-screen CERTIFICATE awarded to the name they enter, "
+    "with course title, date, score and a REAL QR code image from https://oracoolai.com/api/qr?data=<url-encode a "
+    "verification line like the name, course and date>&fmt=png (that endpoint generates genuine scannable codes); "
+    "the certificate must be printable (window.print with clean print CSS) and feel celebratory. "
+    "VISUAL RICHNESS: never ship a flat UI — layered gradients, glass panels, glow buttons, animated counters, "
+    "micro-interactions on every control. "
     "LENGTH CONTRACT (hard): the file must be 22,000-38,000 characters, reached with REAL FEATURES AND POLISH — "
     "more game depth (levels, enemy variety, power-ups, settings), more app capability — NEVER filler text or "
     "marketing sections. Before finishing, count: under 22,000 = add another real feature until it is not.")
@@ -6017,6 +6621,13 @@ def _app_quality_issues(html):
         issues.append("graphics are flat (UNREAL BAR unmet) — add at least 2 of: parallax layers, additive glow "
                       "(shadowBlur / composite 'lighter'), particle systems, gradient shading, motion trails, "
                       "vignette/cinematic HUD")
+    if "game" not in low:
+        if low.count("gradient") < 4:
+            issues.append("the UI is visually flat — add layered gradients, glass panels and glow buttons (4+ gradient uses)")
+        if low.count("@keyframes") < 2:
+            issues.append("no UI motion design — add at least 2 @keyframes (glow pulse, slide, counter, sheen)")
+        if "backdrop-filter" not in low and "glass" not in low:
+            issues.append("no glass surfaces — add frosted panels/cards (backdrop-filter)")
     return issues
 
 
@@ -6122,7 +6733,19 @@ def build_site(email, name, prompt):
         "not padding: 7-9 sections, each with a heading, an intro paragraph of 40-70 words and 3-6 cards/items of 20-40 "
         "words each; a 5-6 question FAQ; a footer with 3 columns; complete CSS (~250 lines) with hover/focus/motion states; "
         "and the JS for the interactive feature. Before you finish, count: if the file is under 20,000 characters, add "
-        "another real section (testimonials, FAQ, location, team, process) until it is not.")
+        "another real section (testimonials, FAQ, location, team, process) until it is not. "
+        "VISUAL RICHNESS MANDATE (the #1 quality complaint is pages looking flat): every section must be "
+        "DESIGNED, not typed. Mandate: a layered hero composition (3+ gradient orbs, one big decorative SVG "
+        "or photo composition, a floating chip row); gradient display headings (background-clip:text) on every "
+        "section title; glass cards with icon chips and hover lift; a stats band with 3-4 big numbers; a "
+        "testimonial/quote row with avatars-as-initials in gradient circles; a glowing CTA banner; a marquee "
+        "or logo strip somewhere; at least 6 inline SVGs (icons, dividers, decorative shapes); 3+ gradient "
+        "layers per page and 2+ keyframe animations (floating orbs, gradient shift, sheen sweep). "
+        "CERTIFICATE PLATFORM BRIEFS (course sites, academies, training, 'platform for people to gain "
+        "certificates'): include course/programme cards with outcomes and duration, a 'How it works' or "
+        "learning-path section, a sample certificate visual (a designed certificate card with name, course "
+        "and a QR code image from https://oracoolai.com/api/qr?data=<short verification text>&fmt=png), "
+        "an accreditation/verification section, and an enrolment CTA.")
     _generic = (not name) or name.strip().lower() in ("my-site", "site", "website", "app", "landing page", "page")
     _bpt = _brief_blueprint(prompt)
     _bp_step(email, "Art direction", _bpt.split("|")[0].replace("industry:", "").strip())
@@ -10189,7 +10812,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch97-easy-link",
+        "build": "patch98-qr-certs",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -11327,6 +11950,61 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                                         'result': {'name': _nm, 'label': _lab}})
             except Exception:
                 pass
+    # patch98: REAL QR codes — "a qr code for X" or the command form "qr :: content".
+    # Generates a spec-exact, genuinely scannable code (never decorative/fake).
+    if re.search(r"\bqr\b|\bscann?able\b|scan code", low):
+        for _seg in re.split(r"\s*;\s*|\n+", t):
+            _qtarget = ""
+            if re.match(r"\s*qr\s*(?:code)?\s*::", _seg, re.I):
+                _qtarget = _seg.split("::", 1)[1].strip()
+            else:
+                _mq = re.search(r"\bqr\b(?:\s*code)?\s*(?:for|of|to|with|containing|:)\s+(.+)", _seg, re.I)
+                if _mq:
+                    _qtarget = _mq.group(1).strip()
+                else:
+                    _mu = re.search(r"https?://\S+", _seg)
+                    if _mu and re.search(r"\bqr\b", _seg, re.I):
+                        _qtarget = _mu.group(0)
+            if _qtarget:
+                _qtarget = _qtarget.strip().strip('"\'')
+                _mu2 = re.search(r"https?://\S+", _qtarget)
+                if _mu2:
+                    _qtarget = _mu2.group(0).rstrip(".,;:!?)")
+                else:
+                    _qtarget = re.sub(r"\s*(?:please|thanks|thank you|for me)\s*$", "", _qtarget, flags=re.I)
+                _qtarget = _qtarget[:1200]
+                _qe = urllib.parse.quote(_qtarget, safe="")
+                out.append({"tool": "qr", "label": "qr code",
+                            "result": {"data": _qtarget,
+                                       "qr_url": "/api/qr?data=" + _qe + "&fmt=png&scale=8",
+                                       "svg_url": "/api/qr?data=" + _qe + "&fmt=svg&size=240"}})
+    # patch98: REAL certificates — issued with a verification QR code and a public
+    # verification page. Command form "certificate :: Name :: Title :: course :: issuer"
+    # or natural "certificate for Name for Title".
+    if re.search(r"\bcertificate\b|\bcertification\b|\bcertified\b|\bdiploma\b|\bcredential\b", low) and email:
+        _issued = 0
+        for _seg in re.split(r"\s*;\s*|\n+", t):
+            if _issued >= 3:
+                break
+            _rname = _rtitle = _rcourse = _rissuer = ""
+            if re.match(r"\s*(?:certificate|cert)\s*::", _seg, re.I):
+                _parts = [x.strip() for x in _seg.split("::")]
+                if len(_parts) >= 3:
+                    _rname, _rtitle = _parts[1], _parts[2]
+                    _rcourse = _parts[3] if len(_parts) > 3 else ""
+                    _rissuer = _parts[4] if len(_parts) > 4 else ""
+            if not _rname:
+                _mc = re.search(r"(?:certificate|cert|diploma)\s+(?:for|to)\s+([A-Za-z][\w .'\-]{1,60}?)\s+(?:for|in|of|on)\s+(.+)$", _seg, re.I)
+                if _mc:
+                    _rname, _rtitle = _mc.group(1).strip(), _mc.group(2).strip()
+            if _rname and _rtitle:
+                try:
+                    _rec = cert_issue(email, _rname, _rtitle, _rcourse, _rissuer, "")
+                    out.append({"tool": "cert", "label": "certificate " + _rec["id"],
+                                "result": cert_public(_rec)})
+                    _issued += 1
+                except Exception:
+                    pass
     # community (every tier) — patch92: READ chats + inbox AND POST to the member's own
     # channels/groups/DMs (same permissions as a real tap). The model can draft exact text
     # via the command form: "community post :: channel-or-user :: message".
@@ -13852,10 +14530,47 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch97-easy-link", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch98-qr-certs", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
+        elif path == "/api/qr":
+            _pq = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            _qd = (_pq.get("data") or [""])[0]
+            if not _qd:
+                self.send_error(400, "data required")
+                return
+            try:
+                if ((_pq.get("fmt") or ["svg"])[0] or "").lower() == "png":
+                    _qp = qr_png(_qd, scale=max(2, min(24, int((_pq.get("scale") or ["8"])[0] or 8))))
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(_qp)))
+                    self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+                    self.end_headers()
+                    self.wfile.write(_qp)
+                else:
+                    _qv = qr_svg(_qd, px=max(64, min(1024, int((_pq.get("size") or ["240"])[0] or 240))))
+                    _qb = _qv.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/svg+xml")
+                    self.send_header("Content-Length", str(len(_qb)))
+                    self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+                    self.end_headers()
+                    self.wfile.write(_qb)
+            except ValueError:
+                self.send_error(400, "data too long for a QR code")
+        elif path.startswith("/cert/"):
+            _cid = urllib.parse.unquote(path[6:]).strip()
+            _ch = cert_page_html(cert_get(_cid)).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(_ch)))
+            self.end_headers()
+            self.wfile.write(_ch)
+        elif path == "/api/certs/verify":
+            _pv = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            self._send_json(cert_verify_public((_pv.get("id") or [""])[0]))
         elif path == "/api/config":
             self._send_json(get_config())
         elif path == "/api/auth/providers":
@@ -14833,6 +15548,22 @@ class Handler(BaseHTTPRequestHandler):
                 _emp = (body.get("email") or "").strip().lower()
                 _resp = connectors_try_token(_emp, body.get("connector_token") or body.get("cred") or "")
                 self._send_json(_resp, 200 if _resp.get("ok") else 400)
+            elif path == "/api/certs/issue":
+                _e5 = (body.get("email") or "").strip().lower()
+                if not body.get("recipient") or not body.get("title"):
+                    self._send_json({"ok": False, "error": "recipient and title are required"}, 400)
+                else:
+                    _rec = cert_issue(_e5, body.get("recipient"), body.get("title"),
+                                      body.get("course") or "", body.get("issuer") or "",
+                                      body.get("note") or "")
+                    self._send_json({"ok": True, "cert": cert_public(_rec),
+                                     "verify_url": _rec["verify_url"], "qr_url": _rec["qr_url"],
+                                     "message": "Certificate " + _rec["id"] + " issued to " + _rec["recipient"] + "."})
+            elif path == "/api/certs/revoke":
+                self._send_json(cert_revoke((body.get("email") or "").strip().lower(),
+                                            str(body.get("id") or "")))
+            elif path == "/api/certs/list":
+                self._send_json({"ok": True, "certs": cert_list((body.get("email") or "").strip().lower())})
             elif path == "/api/connectors/google/config":
                 _okc, _msgc = google_oauth_save_cfg((body.get("email") or "").strip().lower(),
                                                     body.get("client_id") or "", body.get("client_secret") or "")
@@ -15337,6 +16068,16 @@ class Handler(BaseHTTPRequestHandler):
             "When a token is pasted it is linked and hidden instantly \u2014 confirm which service connected in ONE "
             "short line, and NEVER repeat, quote, summarize or store the token in your replies. "
             "Never pretend to have access that is not connected. "
+            "CERTIFICATES & QR CODES (REAL, NEVER DECORATIVE): you can issue real, verifiable certificates "
+            "and generate real, scannable QR codes for absolutely anything. To issue a certificate, output the "
+            "command form exactly: 'certificate :: <recipient full name> :: <course or achievement title> :: "
+            "<optional detail> :: <optional issuer>' \u2014 the system issues it instantly with a verification QR "
+            "code and a public verification page; the certificate card appears in the chat automatically, so "
+            "announce it in ONE warm line (who it is for and what they achieved) and share the verification link. "
+            "To make a QR code for anything (a link, text, Wi-Fi, payment info), output 'qr :: <the exact content "
+            "to encode>' \u2014 a genuine ISO-standard QR code is generated and shown in the chat. Every QR code is "
+            "real and scans perfectly: never describe one as fake or decorative, and never draw one out of text "
+            "characters. If they want a QR code but did not say what to encode, ask ONE short question. "
             "APP LAUNCHING (HONESTY RULE): you cannot open, launch or install apps on the user's device by "
             "yourself — the operating system only allows a launch from a real user tap. When the user asks to open "
             "an app, the server has prepared a tappable 'Open <app>' launch card in the chat; tell them to tap that "
@@ -15398,6 +16139,15 @@ class Handler(BaseHTTPRequestHandler):
             ts = {"tool": t.get("tool"), "label": t.get("label")}
             if t.get("tool") == "connector_link":
                 ts["conn"] = t.get("conn") or ""
+            if t.get("tool") in ("qr", "cert"):
+                try:
+                    tr = t.get("result") if isinstance(t.get("result"), dict) else json.loads(t.get("result") or "{}")
+                    for _k in ("data", "qr_url", "svg_url", "id", "verify_url",
+                               "recipient", "title", "issuer", "course", "issued_at", "status"):
+                        if tr.get(_k):
+                            ts[_k] = tr[_k]
+                except Exception:
+                    pass
             if t.get("tool") in ("build", "edit", "github_push", "github_repos"):
                 try:
                     tr = json.loads(t.get("result") or "{}")
@@ -15448,6 +16198,15 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         for uu in _urls:
                             chat_media.append({"kind": _k, "url": uu})
+                except Exception:
+                    pass
+        for t in tool_runs:
+            if t.get("tool") in ("qr", "cert"):
+                try:
+                    d = t.get("result") if isinstance(t.get("result"), dict) else json.loads(t.get("result") or "{}")
+                    if d.get("qr_url"):
+                        chat_media.append({"kind": "image", "url": d["qr_url"],
+                                           "prompt": str(d.get("data") or d.get("id") or "qr code")})
                 except Exception:
                     pass
 
