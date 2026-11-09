@@ -51,7 +51,7 @@ def test_connector_call_unconnected_points_to_settings(monkeypatch):
     st, res = server._connector_call("nobody@x.y", "check my gmail inbox please")
     assert st == "done"
     assert "not linked" in res
-    assert "Links" in res and "button" in res
+    assert "Link" in res and "card" in res and "paste" in res
 
 
 def test_connector_call_runs_when_linked(monkeypatch):
@@ -152,7 +152,7 @@ def test_server_prompt_community_rules():
 
 def test_server_prompt_connector_rules():
     assert "CONNECTORS: the member can link accounts" in SERVER_SRC
-    assert "\\u2699\\ufe0f Links button" in SERVER_SRC   # source-level escape of the gear emoji
+    assert "\\ud83d\\udd17 Link card" in SERVER_SRC   # source-level escape of the link emoji
     assert "Never pretend to have access that is not connected" in SERVER_SRC
 
 
@@ -199,4 +199,4 @@ def test_client_ios15_safe_and_marker_intact():
     seg = INDEX_SRC.split("function connOpen()")[1][:2400]
     assert "??" not in seg
     assert "?.(" not in seg
-    assert SERVER_SRC.count("patch96-multipage") == 2
+    assert SERVER_SRC.count("patch97-easy-link") == 2

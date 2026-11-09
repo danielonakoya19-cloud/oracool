@@ -25,7 +25,7 @@ class TestPatch83BrainResilience(unittest.TestCase):
 
     def test_marker_patch83(self):
         src = open("server.py", encoding="utf-8").read()
-        assert src.count("patch96-multipage") == 2
+        assert src.count("patch97-easy-link") == 2
         assert "def _brain_note_fail(" in src and "def _brain_health_report(" in src
         assert '"/api/admin/brain/status"' in src
 

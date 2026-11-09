@@ -104,15 +104,15 @@ def test_unconnected_message_points_to_links_button(monkeypatch):
     monkeypatch.setattr(server, "connectors_state", lambda email: {})
     st, res = server._connector_call("nobody@x.y", "check my gmail inbox please")
     assert st == "done"
-    assert "Links" in res and "button" in res
+    assert "Link" in res and "card" in res
     assert "Settings" not in res       # the panel is not in Settings anymore
 
 
 def test_prompt_points_to_links_button():
-    assert "\\u2699\\ufe0f Links button" in SERVER_SRC
+    assert "\\ud83d\\udd17 Link card" in SERVER_SRC
     assert "Settings \\u2192 Connectors" not in SERVER_SRC
-    assert "⚙️ Links button" in INDEX_SRC
+    assert "Links" in INDEX_SRC
 
 
 def test_marker():
-    assert SERVER_SRC.count("patch96-multipage") == 2
+    assert SERVER_SRC.count("patch97-easy-link") == 2

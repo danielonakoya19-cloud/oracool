@@ -105,4 +105,4 @@ def test_new_prompt_text_has_no_internal_ids():
 # ---------------------------------------------------------------- marker
 
 def test_marker():
-    assert SERVER_SRC.count("patch96-multipage") == 2
+    assert SERVER_SRC.count("patch97-easy-link") == 2

@@ -3690,6 +3690,88 @@ def google_oauth_save_cfg(email, cid, csec):
     return True, "Google login is set up. One-tap Google login is now live for everyone."
 
 
+_TOKEN_CONNECTOR_RANGES = (
+    ("github", (r"\bghp_[A-Za-z0-9]{20,}\b", r"\bgithub_pat_[A-Za-z0-9_]{20,}\b", r"\bgho_[A-Za-z0-9]{20,}\b")),
+    ("notion", (r"\bntn_[A-Za-z0-9]{10,}\b", r"\bsecret_[A-Za-z0-9]{16,}\b")),
+    ("linear", (r"\blin_api_[A-Za-z0-9]{10,}\b",)),
+    ("dropbox", (r"\bsl\.[A-Za-z0-9_-]{10,}\b",)),
+    ("google", (r"\bya29\.[A-Za-z0-9_-]{10,}\b",)),
+)
+
+
+def _detect_token_connector(tok):
+    t = str(tok or "").strip()
+    if not t or len(t) < 12:
+        return ""
+    for name, pats in _TOKEN_CONNECTOR_RANGES:
+        for pat in pats:
+            if re.search(pat, t):
+                return name
+    return ""
+
+
+def _redact_tokens(text):
+    """Replace anything token-shaped with a hidden placeholder — the raw secret
+    must never reach the model, the history or the logs."""
+    out = str(text or "")
+    for _name, pats in _TOKEN_CONNECTOR_RANGES:
+        for pat in pats:
+            out = re.sub(pat, "[token hidden]", out)
+    return out
+
+
+def connectors_try_token(email, token):
+    """Auto-link a pasted token: detect the service, verify live, save. Never
+    returns or logs the token itself."""
+    name = _detect_token_connector(token)
+    if not name:
+        return {"ok": False, "error": "That does not look like a service token I can use."}
+    spec = CONNECTOR_SPECS.get(name) or {}
+    cred = {"token": str(token or "").strip()}
+    if spec.get("auth") == "google":
+        cred["refresh_token"] = ""
+        cred["expires_at"] = 0
+    ok, meta, err = _connector_verify(name, cred)
+    if not ok:
+        return {"ok": False, "name": name, "label": spec.get("label", name), "error": err or "rejected"}
+    em = (email or "").strip().lower()
+    st = connectors_state(em)
+    entry = {"meta": {"verified": err or ("connected as " + str(meta.get("login") or meta.get("who") or meta.get("email") or "ok"))[:60],
+                      "info": meta, "at": time.time(), "via": "paste"}, "_email": em}
+    if spec.get("auth") == "google":
+        entry["access_token"] = cred["token"]
+    else:
+        entry["token"] = cred["token"]
+    st["google" if spec.get("auth") == "google" else name] = entry
+    connectors_save(em, st)
+    who = str(meta.get("login") or meta.get("who") or meta.get("email") or "ok")[:60]
+    return {"ok": True, "name": name, "label": spec.get("label", name),
+            "message": "connected as " + who + ((" \u00b7 " + str(meta.get("access"))) if meta.get("access") else "")}
+
+
+def _conn_autolink_messages(email, messages):
+    """Defense in depth: tokens in incoming chat messages are hidden from the
+    model and auto-linked to the member's connectors."""
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        c = m.get("content")
+        if not isinstance(c, str) or "[" in c and "token hidden" in c:
+            continue
+        found = []
+        for _name, pats in _TOKEN_CONNECTOR_RANGES:
+            for pat in pats:
+                for mm in re.finditer(pat, c):
+                    found.append(mm.group(0))
+        if found:
+            for tk in dict.fromkeys(found):
+                try:
+                    connectors_try_token(email, tk)
+                except Exception:
+                    pass
+            m["content"] = _redact_tokens(c)
+
+
 def connectors_state(email):
     return supabase_kv_get(_conn_key(email)) or {}
 
@@ -3998,7 +4080,7 @@ def _connector_call(email, text):
             c = dict(c)
             c["access_token"] = google_access(st) or c.get("access_token") or ""
         if not (c.get("token") or c.get("access_token") or c.get("url")):
-            return ("done", "The " + label + " connector is not linked yet. Tell the user: tap the \u2699\ufe0f Links button next to the message box and add " + label + " there, then ask again.")
+            return ("done", "The " + label + " connector is not linked yet. Tell the user to tap the \ud83d\udd17 Link " + label + " card in this chat \u2014 or just paste their " + label + " token right here and it links automatically \u2014 then ask again.")
         try:
             return ("done", _connector_do(name, c, low, text) or ("(" + label + " connector ran, nothing to show.)"))
         except Exception as e:
@@ -10107,7 +10189,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch96-multipage",
+        "build": "patch97-easy-link",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -11235,6 +11317,13 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 if _cres and _cres[1]:
                     out.append({'tool': 'connector', 'label': 'connected account',
                                 'result': _shrink(_cres[1], 2400)})
+                    _lm = re.search(r'The (.+?) connector is not linked yet', str(_cres[1]))
+                    if _lm:
+                        _lab = _lm.group(1).strip()
+                        _nm = next((k for k, v in CONNECTOR_SPECS.items() if v.get('label') == _lab), '')
+                        if _nm:
+                            out.append({'tool': 'connector_link', 'label': 'link ' + _lab, 'conn': _nm,
+                                        'result': {'name': _nm, 'label': _lab}})
             except Exception:
                 pass
     # community (every tier) — patch92: READ chats + inbox AND POST to the member's own
@@ -13762,7 +13851,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch96-multipage", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch97-easy-link", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -14739,6 +14828,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True, "connectors": connectors_public(_em3)})
             elif path == "/api/connectors/google/url":
                 self._send_json(connectors_google_url((body.get("email") or "").strip().lower()))
+            elif path == "/api/connectors/paste":
+                _emp = (body.get("email") or "").strip().lower()
+                _resp = connectors_try_token(_emp, body.get("token") or "")
+                self._send_json(_resp, 200 if _resp.get("ok") else 400)
             elif path == "/api/connectors/google/config":
                 _okc, _msgc = google_oauth_save_cfg((body.get("email") or "").strip().lower(),
                                                     body.get("client_id") or "", body.get("client_secret") or "")
@@ -14959,6 +15052,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_chat(self, body):
         messages = body.get("messages") or []
+        try:
+            _conn_autolink_messages((body.get("email") or "").strip().lower(), messages)
+        except Exception:
+            pass
         stream = bool(body.get("stream", True))
         _mode = str(body.get("mode") or "auto").strip().lower()  # patch43: auto | fast | build | expert
         self._sanitize_overrides(body)   # admin-only overrides stripped before any provider use
@@ -15235,7 +15332,9 @@ class Handler(BaseHTTPRequestHandler):
             "Notion, Linear, Dropbox, Vercel, Supabase) with the \u2699\ufe0f Links button next to the message box. "
             "When they ask to check, search or work in one of those, the connector tool runs the real request "
             "against their linked account \u2014 answer from what it returns. If it is not connected, say plainly: "
-            "tap the \u2699\ufe0f Links button next to the message box and add that service there. "
+            "tap the \ud83d\udd17 Link card in this chat, or just paste the token here and it links automatically. "
+            "When a token is pasted it is linked and hidden instantly \u2014 confirm which service connected in ONE "
+            "short line, and NEVER repeat, quote, summarize or store the token in your replies. "
             "Never pretend to have access that is not connected. "
             "APP LAUNCHING (HONESTY RULE): you cannot open, launch or install apps on the user's device by "
             "yourself — the operating system only allows a launch from a real user tap. When the user asks to open "
@@ -15296,6 +15395,8 @@ class Handler(BaseHTTPRequestHandler):
         tool_summary = []
         for t in tool_runs:
             ts = {"tool": t.get("tool"), "label": t.get("label")}
+            if t.get("tool") == "connector_link":
+                ts["conn"] = t.get("conn") or ""
             if t.get("tool") in ("build", "edit", "github_push", "github_repos"):
                 try:
                     tr = json.loads(t.get("result") or "{}")
