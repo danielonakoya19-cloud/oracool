@@ -88,6 +88,15 @@ def test_tool_summary_passes_conn_through():
 def test_paste_route_exists():
     assert '"/api/connectors/paste"' in SERVER_SRC
     assert "connectors_try_token(_emp" in SERVER_SRC
+    # the paste field must NOT be "token" — that collides with _auth's JWT body field
+    assert 'body.get("connector_token") or body.get("cred")' in SERVER_SRC
+    assert "connector_token:list[i].token" in INDEX_SRC
+
+
+def test_connect_words_trigger_connector_branch():
+    # "connect my gmail" is THE linking ask — the branch must fire without action verbs
+    for w in ("'connect', 'link', 'unlink', 'disconnect'", "'set up', 'setup', 'authorize'"):
+        assert w in SERVER_SRC
 
 
 # ---------------------------------------------------------------- easier guidance

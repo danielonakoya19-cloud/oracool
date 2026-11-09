@@ -8570,7 +8570,7 @@ async function connPasteTokens(list){
   const out=[];
   for(let i=0;i<list.length;i++){
     try{
-      const r = await post('/api/connectors/paste',{token:list[i].token});
+      const r = await post('/api/connectors/paste',{connector_token:list[i].token});
       out.push({ok:!!(r&&r.ok), name:(r&&r.name)||list[i].name, label:(r&&r.label)||list[i].name, error:(r&&r.error)||''});
     }catch(e){ out.push({ok:false, name:list[i].name, label:list[i].name, error:'network error'}); }
   }

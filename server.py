@@ -11311,7 +11311,8 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         if any(v in low for v in ('check', 'read', 'list', 'find', 'search', 'show', 'get', 'open',
                                   'create', 'inbox', 'repo', 'issue', 'meeting', 'event', 'file',
                                   'deploy', 'pull request', 'schedule', 'table', 'drive', 'email',
-                                  'summar', 'any new', 'latest')):
+                                  'summar', 'any new', 'latest', 'connect', 'link', 'unlink', 'disconnect',
+                                  'set up', 'setup', 'authorize', 'sign in', 'log in', 'attach')):
             try:
                 _cres = _connector_call(email, t)
                 if _cres and _cres[1]:
@@ -14830,7 +14831,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(connectors_google_url((body.get("email") or "").strip().lower()))
             elif path == "/api/connectors/paste":
                 _emp = (body.get("email") or "").strip().lower()
-                _resp = connectors_try_token(_emp, body.get("token") or "")
+                _resp = connectors_try_token(_emp, body.get("connector_token") or body.get("cred") or "")
                 self._send_json(_resp, 200 if _resp.get("ok") else 400)
             elif path == "/api/connectors/google/config":
                 _okc, _msgc = google_oauth_save_cfg((body.get("email") or "").strip().lower(),
