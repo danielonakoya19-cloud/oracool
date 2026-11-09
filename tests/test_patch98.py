@@ -222,3 +222,16 @@ def test_prompts_mandate_visual_richness_and_cert_platforms():
 
 def test_marker():
     assert SERVER_SRC.count("patch98-qr-certs") == 2
+
+
+def test_image_pipeline_never_draws_fake_qr(kv, monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "gen_image", lambda *a, **k: calls.append(a) or {"images": []})
+    out = server.auto_tools("make me a qr code for https://oracoolai.com/menu please", email="a@b.c")
+    assert calls == []                                   # the image engine must never be asked
+    assert not any(x.get("tool") == "image" for x in out)
+    assert any(x.get("tool") == "qr" for x in out)
+    assert "never generate, draw or attach an " in SERVER_SRC
+    assert "AI-generated picture of a QR code" in SERVER_SRC
+    assert "A QR code is NEVER an image-generation task" in SERVER_SRC
+    assert "NEVER an image-generation task" in INDEX_SRC

@@ -12253,7 +12253,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         im = re.search(r"(?:generate|create|make|draw|imagine|design|show me)\s+(?:an?\s+)?(?:image|picture|photo|art|logo|wallpaper)?\s*(?:of|for)?\s*(.{6,200})", low)
         if im and any(k in low for k in ("generate", "create", "make", "draw", "imagine", "design")) \
                 and not (_wants and len(t) > 8) and not _no_media_ask and not (_video_words and not _image_words) \
-                and not _BARE_MEDIA_RX.match(t):
+                and not _BARE_MEDIA_RX.match(t) and not re.search(r"\bqr\b|barcode", low):
             prompt = im.group(1).strip().rstrip("?!., ")
             if prompt:
                 r = gen_image(prompt)
@@ -16077,7 +16077,10 @@ class Handler(BaseHTTPRequestHandler):
             "To make a QR code for anything (a link, text, Wi-Fi, payment info), output 'qr :: <the exact content "
             "to encode>' \u2014 a genuine ISO-standard QR code is generated and shown in the chat. Every QR code is "
             "real and scans perfectly: never describe one as fake or decorative, and never draw one out of text "
-            "characters. If they want a QR code but did not say what to encode, ask ONE short question. "
+            "characters. A QR code is NEVER an image-generation task: never generate, draw or attach an "
+            "AI-generated picture of a QR code, and never link an external image as a QR code \u2014 the ONLY real "
+            "QR is the one the qr tool returns and the app already shows as a card, so never link or repeat "
+            "image URLs in the reply. If they want a QR code but did not say what to encode, ask ONE short question. "
             "APP LAUNCHING (HONESTY RULE): you cannot open, launch or install apps on the user's device by "
             "yourself — the operating system only allows a launch from a real user tap. When the user asks to open "
             "an app, the server has prepared a tappable 'Open <app>' launch card in the chat; tell them to tap that "
