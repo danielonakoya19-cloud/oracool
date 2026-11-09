@@ -13,7 +13,7 @@ LAND = Path("landing.html").read_text(encoding="utf-8")
 
 class TestPatch88Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch95-conn-login"'), 2)
+        self.assertEqual(SRV.count('"patch96-multipage"'), 2)
 
 
 class TestPatch88BriefingTools(unittest.TestCase):

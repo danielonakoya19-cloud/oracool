@@ -115,4 +115,4 @@ def test_prompt_points_to_links_button():
 
 
 def test_marker():
-    assert SERVER_SRC.count("patch95-conn-login") == 2
+    assert SERVER_SRC.count("patch96-multipage") == 2

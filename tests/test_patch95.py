@@ -104,4 +104,4 @@ def test_github_verify_notes_token_access_level():
 # ---------------------------------------------------------------- marker
 
 def test_marker():
-    assert SERVER_SRC.count("patch95-conn-login") == 2
+    assert SERVER_SRC.count("patch96-multipage") == 2

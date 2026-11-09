@@ -13,7 +13,7 @@ import server as s  # noqa: E402
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
-MARK = "patch95-conn-login"
+MARK = "patch96-multipage"
 
 
 class Marker(unittest.TestCase):
@@ -69,7 +69,7 @@ class Wiring(unittest.TestCase):
     def test_qa_mode_and_gate(self):
         self.assertIn('"mode": ("app" if _is_app else "site")', SRV)
         self.assertIn("_app_quality_issues(_idx[\"content\"]) if _is_app", SRV)
-        self.assertIn("_new_issues = (_app_quality_issues(_new) if _is_app", SRV)
+        self.assertIn("_new_issues = ((_app_quality_issues(_new) if _is_app", SRV)
 
     def test_user_brief_branch(self):
         self.assertIn("Build this app/game now — the REAL working product, not a page about it. ", SRV)

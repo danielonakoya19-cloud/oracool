@@ -5393,9 +5393,37 @@ def _writer_progress(email, verb="Writing"):
     return cb
 
 
+def _builder_done(c):
+    """True when the builder reply is complete: the last </html> is followed only
+    by whitespace and the closing END line (multi-page replies END every file)."""
+    if not c:
+        return False
+    low = c.lower()
+    i = low.rfind("</html>")
+    if i < 0:
+        return False
+    tail = c[i + 7:].strip()
+    return bool(re.match(r"^END$", tail, re.I))
+
+
+def _nav_issues(files):
+    """Cross-page nav must never point at a page that was not written."""
+    names = set(f["path"] for f in files)
+    issues = []
+    htmls = [f for f in files if f["path"].endswith(".html")]
+    if len(htmls) > 1:
+        for f in htmls:
+            for href in re.findall(r"""href=["']([^"'#:?]+\.html)["']""", f["content"], re.I):
+                h = href.strip().lstrip("./")
+                if h not in names:
+                    issues.append(f["path"] + " links to missing page " + h)
+    return issues
+
+
 def _parse_builder_reply(c):
-    """Marker format: TEMPLATE line, TITLE line, then the raw HTML file. Accepts
-    a legacy {files:[...]} JSON reply too. Returns dict or None."""
+    """Marker format: TEMPLATE line, TITLE line, then one or more files as
+    'BEGIN <path>' / 'END' blocks (index.html first). A bare single HTML file
+    (legacy) and a {files:[...]} JSON reply are accepted too. Returns dict or None."""
     if not c:
         return None
     c = c.strip()
@@ -5413,6 +5441,27 @@ def _parse_builder_reply(c):
             return None
     tm = re.search(r"^\s*TEMPLATE\s*[::]\s*(.+)", c, re.M | re.I)
     nm = re.search(r"^\s*TITLE\s*[::]\s*(.+)", c, re.M | re.I)
+    # multi-file: BEGIN <path> ... END blocks
+    _files, _cp, _cc = [], None, []
+    for _line in c.split("\n"):
+        _mb = re.match(r"^\s*BEGIN\s+([A-Za-z0-9_.\-/]{1,80})\s*$", _line)
+        _me = re.match(r"^\s*END\s*$", _line)
+        if _mb:
+            if _cp and _cc:
+                _files.append({"path": _cp, "content": "\n".join(_cc).strip()})
+            _cp, _cc = _mb.group(1).lstrip("/"), []
+        elif _me and _cp is not None:
+            _files.append({"path": _cp, "content": "\n".join(_cc).strip()})
+            _cp, _cc = None, []
+        elif _cp is not None:
+            _cc.append(_line)
+    if _cp and _cc:
+        _files.append({"path": _cp, "content": "\n".join(_cc).strip()})
+    _files = [f for f in _files if len(f["content"]) > 200 and ("<!doctype" in f["content"][:200].lower() or "<html" in f["content"][:400].lower())]
+    if _files:
+        return {"files": _files,
+                "template": (tm.group(1).strip()[:40] if tm else ""),
+                "name": (nm.group(1).strip()[:60] if nm else "")}
     m = re.search(r"<!DOCTYPE html[\s\S]*", c, re.I) or re.search(r"<html[\s\S]*", c, re.I)
     if not m:
         return None
@@ -5948,13 +5997,19 @@ def build_site(email, name, prompt):
         "You are a Lovable/Base44-grade senior product designer AND senior frontend engineer. "
         "OUTPUT FORMAT (strict — a machine reads it): line 1 'TEMPLATE: <family>' (invent a fitting name like "
         "Aurora SaaS, Noir Dining, Editorial Portfolio, Commerce Grid, Bold Agency, Festival Event, Zen Clinic); "
-        "line 2 'TITLE: <site name>'; line 3 exactly 'BEGIN index.html'; then the COMPLETE raw HTML file — "
-        "no JSON, no markdown fences, no explanations, and nothing after the file except a final 'END' line. "
-        "The file starts with <!DOCTYPE html> and ends with </html>; the WHOLE reply stays between 18KB and 34KB (quality matters — do not go below 18KB) — "
-        "dense, efficient code (short selectors, compact CSS), not sprawling boilerplate. "
+        "line 2 'TITLE: <site name>'; then ONE OR MORE FILES, each written as three parts: a line 'BEGIN <filename>', "
+        "the COMPLETE raw HTML file, and a line 'END'. No JSON, no markdown fences, no explanations between files. "
+        "index.html is written FIRST. Every file starts with <!DOCTYPE html> and ends with </html>. "
+        "PAGES (decide like a real studio reading the brief): when the brief implies a real business presence "
+        "(restaurant, clinic, school, church, agency, store, hotel, portfolio, service company, organisation), "
+        "build the FULL multi-page site — 3-6 pages: index.html plus the pages this business needs, e.g. about.html, "
+        "menu.html, services.html, work.html, pricing.html, contact.html — each a COMPLETE page with the same design "
+        "system, the shared sticky header whose nav links EVERY page you actually wrote (href=\"about.html\" style — "
+        "never link a page you did not write), the same footer, and genuinely page-specific sections and copy. "
+        "When the brief clearly asks for ONE thing (a single landing page, a one-page site, an app or game), "
+        "write just index.html. Per-page length contract below. "
         "First pick the template family, palette and typography that genuinely fit the industry and mood "
-        "(a restaurant is NOT a fintech is NOT a personal portfolio). ONE self-contained index.html with inline "
-        "<style> and <script>; no external JS/CSS frameworks; a Google Fonts <link> is allowed but must fall "
+        "(a restaurant is NOT a fintech is NOT a personal portfolio). No external JS/CSS frameworks; a Google Fonts <link> is allowed but must fall "
         "LIQUID GLASS DESIGN BAR (the OraCool house look — apply it faithfully unless the brief "
         "explicitly demands another style): holographic liquid-glass aesthetic — deep aurora background "
         "(large softly blurred colour blobs in cyan, violet and pink over a dark midnight base), frosted "
@@ -5966,7 +6021,7 @@ def build_site(email, name, prompt):
         "IMAGE LIBRARY photos framed inside glass cards, a refined type scale with gradient display headings, "
         "micro-interactions on every interactive element — the page must look like a premium funded product, "
         "never flat, generic or template-like. "
-        "back to system fonts. PROFESSIONAL BAR (non-negotiable): cohesive CSS custom-property palette "
+        "back to system fonts. Each page is fully self-contained (its own inline <style> and <script>, same look across pages) so every page works alone when downloaded or published. PROFESSIONAL BAR (non-negotiable): cohesive CSS custom-property palette "
         "(background, surface, text, accent, muted) with real contrast; display font for headings + readable "
         "body font; generous spacing and a strong typographic scale; a hero with a clear value-prop H1, "
         "supporting line, primary + secondary CTA and a hero VISUAL (a photo from the IMAGE LIBRARY when one is provided, "
@@ -5980,7 +6035,8 @@ def build_site(email, name, prompt):
         "visible keyboard focus styles; prefers-reduced-motion respected. Fully responsive, mobile-first. "
         "No TODOs, no placeholders. "
         # patch38: an explicit length contract — without it fast models ship thin 10KB pages
-        "LENGTH CONTRACT (hard): the HTML file must be between 20,000 and 30,000 characters. Reach it with SUBSTANCE, "
+        "LENGTH CONTRACT (hard): index.html must be between 18,000 and 30,000 characters; every ADDITIONAL page between "
+        "6,000 and 14,000 characters (a real page: full header/footer + 4-6 sections, not a stub). Reach it with SUBSTANCE, "
         "not padding: 7-9 sections, each with a heading, an intro paragraph of 40-70 words and 3-6 cards/items of 20-40 "
         "words each; a 5-6 question FAQ; a footer with 3 columns; complete CSS (~250 lines) with hover/focus/motion states; "
         "and the JS for the interactive feature. Before you finish, count: if the file is under 20,000 characters, add "
@@ -6032,9 +6088,11 @@ def build_site(email, name, prompt):
                 "No brand name was given — invent a short fitting name and put it after 'TITLE: '. ") +
                 "Brief: " + prompt +
                 " Structure: header with nav, impactful hero, at least five distinct content sections a real "
-                "business in this brief would have, and a footer. Match the visual language to the industry. "
-                "Remember the strict output format: TEMPLATE line, TITLE line, BEGIN index.html, the complete "
-                "HTML file (18-34KB), END. DESIGN BLUEPRINT (art direction — follow it, adapting names/copy to the brief): "
+                "business in this brief would have, and a footer. MULTI-PAGE: if the brief implies a full business "
+                "site, write 3-6 linked pages as specified in the output format; if it asks for a single landing "
+                "page, keep one page. Match the visual language to the industry. "
+                "Remember the strict output format: TEMPLATE line, TITLE line, then BEGIN <file>, the complete "
+                "HTML file, END (repeated for every page). DESIGN BLUEPRINT (art direction — follow it, adapting names/copy to the brief): "
                 + _bpt + ". Write like a top Awwwards studio: specific headlines, real-sounding "
                 "details (prices, hours, names, locations from the brief or plausible for it), polished micro-interactions."
                 + _img_block)
@@ -6042,7 +6100,7 @@ def build_site(email, name, prompt):
     # the model can write past its single-reply token cap — continue the SAME
     # file where it stopped (how real AI builders stream long artifacts)
     for _turn in range(2):
-        if not c_raw or "</html>" in c_raw.lower():
+        if not c_raw or _builder_done(c_raw):
             break
         _bp_step(email, "Continuing the file", "the reply hit the length cap — resuming where it stopped")
         cont, prov2, fin2 = _llm_text(system, user, max_tokens=16000, effort="medium", extra_msgs=[
@@ -6085,7 +6143,7 @@ def build_site(email, name, prompt):
     # patch38: design review — when the first draft misses the bar on 2+ points,
     # one upgrade pass rewrites the complete file against the concrete gap list
     _idx = next(f for f in clean if f["path"] == "index.html")
-    _issues = _app_quality_issues(_idx["content"]) if _is_app else _site_quality_issues(_idx["content"])
+    _issues = (_app_quality_issues(_idx["content"]) if _is_app else _site_quality_issues(_idx["content"])) + _nav_issues(clean)
     _qa = {"issues_before": len(_issues), "upgraded": False, "mode": ("app" if _is_app else "site")}
     if c_raw and (len(_issues) >= 1 or len(_idx["content"]) < 16000):
         _bp_step(email, "Design review", "%d gap(s) found — rewriting" % len(_issues))
@@ -6103,13 +6161,22 @@ def build_site(email, name, prompt):
                 {"role": "user", "content": "DESIGN REVIEW — " + _summary + " Write the COMPLETE site again from scratch, "
                                             "fixing every point: honour the LENGTH CONTRACT of the brief "
                                             "substance), keep the same brand, palette and section plan, same strict output format "
-                                            "(TEMPLATE line, TITLE line, BEGIN index.html, full HTML, END). No fences, no commentary."}])
+                                            "(TEMPLATE line, TITLE line, then BEGIN <file> / full HTML / END for every page). No fences, no commentary."}])
             _d3 = _parse_builder_reply(_c3)
-            _f3s = (_d3 or {}).get("files") if isinstance(_d3, dict) else None
-            _new = next((str(x.get("content") or "") for x in (_f3s or []) if isinstance(x, dict) and str(x.get("path") or "").strip().lstrip("/") == "index.html"), "")
-            _new_issues = (_app_quality_issues(_new) if _is_app else _site_quality_issues(_new))
+            _f3s = [x for x in ((_d3 or {}).get("files") or []) if isinstance(x, dict)] if isinstance(_d3, dict) else []
+            _new_map = {}
+            for _x in _f3s:
+                _pp = str(_x.get("path") or "").strip().lstrip("/")
+                if _pp.endswith(".html") and len(str(_x.get("content") or "")) > 200:
+                    _new_map[_pp] = str(_x.get("content"))
+            _new = _new_map.get("index.html", "")
+            _new_issues = ((_app_quality_issues(_new) if _is_app else _site_quality_issues(_new))
+                           + _nav_issues([{"path": k, "content": v} for k, v in _new_map.items()]))
             if _new and "</html>" in _new.lower() and len(_new_issues) < len(_issues):
-                _idx["content"] = _new[:_BUILD_MAX_FILE]
+                for _f in clean:
+                    if _f["path"] in _new_map:
+                        _f["content"] = _new_map[_f["path"]][:_BUILD_MAX_FILE]
+                _idx = next(f for f in clean if f["path"] == "index.html")
                 _qa["upgraded"] = True
                 _qa["issues_after"] = len(_new_issues)
                 if isinstance(_d3, dict):
@@ -6121,7 +6188,10 @@ def build_site(email, name, prompt):
         except Exception:
             pass
     _bp_step(email, "Design kit", "reset · scroll reveals · focus rings · reduced-motion")
-    _idx["content"] = _inject_design_kit(_idx["content"])
+    for _f in clean:
+        if _f["path"].endswith(".html"):
+            _f["content"] = _inject_design_kit(_f["content"])
+    _idx = next(f for f in clean if f["path"] == "index.html")
     _bp_step(email, "Saving the workspace", "data/builds → vault mirror")
     # honour the model's title when the user gave no explicit name
     _gn = str(data.get("name") or "").strip()[:40] if isinstance(data, dict) else ""
@@ -10037,7 +10107,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch95-conn-login",
+        "build": "patch96-multipage",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -13692,7 +13762,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch95-conn-login", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch96-multipage", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -15179,7 +15249,18 @@ class Handler(BaseHTTPRequestHandler):
             "grants: microphone (voice), camera (photos), location, notifications, and tappable launches "
             "(app cards, tel:/sms:/mailto:). You cannot install apps, read other apps' data, or control the OS; "
             "Settings → Device access has a one-tap 'Give OraCool full access' that requests microphone, camera and "
-            "notifications at once. Be truthful about these limits instead of pretending."}
+            "notifications at once. Be truthful about these limits instead of pretending. "
+            "REPLY WITH EXPRESSION: talk like a warm, expressive human friend \u2014 natural emojis that add feeling "
+            "(\u2728 \ud83d\ude0a \ud83d\udd25 \ud83d\udca1 \ud83c\udf89 \u26a1 \u2705), lively rhythm, real reactions to their news and mood. "
+            "Never sound flat, robotic or like a corporate form. Keep it readable: short paragraphs and punchy "
+            "lines, not walls of text. "
+            "TRADE PREDICTIONS \u2014 LIVE DATA ONLY (hard rule): every number in a trading answer \u2014 price, direction "
+            "(BUY/SELL/WAIT), entry, stop, target, percentage, confidence or timeframe \u2014 MUST come from a live market "
+            "signal, forecast or price tool result present in this conversation; copy those exact values and say they "
+            "are live. If no live market tool result is in your context, you have NO prediction: say plainly that there "
+            "is no live market data right now \u2014 never invent, estimate or extrapolate prices, directions, confidence "
+            "scores or targets, and never present a guess as a live signal. End every trading answer with one short "
+            "line: not financial advice. "}
         ] + messages
         # Community identity: the AI knows this user's OraCool number + username.
         try:
