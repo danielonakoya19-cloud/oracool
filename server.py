@@ -5019,8 +5019,10 @@ def _connector_call(email, text):
              ("dropbox", ("dropbox",), "Dropbox"),
              ("vercel", ("vercel", "deployment"), "Vercel"),
              ("supabase", ("supabase",), "Supabase")]
+    _gh_fallback = (not any(any(k in low for k in kws) for _n, kws, _l in order)
+                    and bool(re.search(r"\b(issue|pull request|repo|repository|commit|branch)\b", low)))
     for name, kws, label in order:
-        if not any(k in low for k in kws):
+        if not any(k in low for k in kws) and not (_gh_fallback and name == "github"):
             continue
         c = (st.get("google") if spec_auth(name) == "google" else st.get(name)) or {}
         if spec_auth(name) == "google":
@@ -12339,10 +12341,13 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     _video_words = bool(re.search(r"\b(?:videos?|clips?|animations?|films?|movies?|reels?|footage)\b", low))
     _image_words = bool(re.search(r"\b(?:images?|pictures?|photos?|art|artwork|logos?|wallpapers?|posters?|banners?|illustrations?|drawings?)\b", low))
     # linked connectors (GitHub, Drive, Gmail, ...) - patch93: real reads/writes in the member's accounts
-    if email and any(k in low for k in ('github', 'google drive', 'gdrive', 'my drive', 'gmail',
+    _conn_intent = (email and (any(k in low for k in ('github', 'google drive', 'gdrive', 'my drive', 'gmail',
                                         'google calendar', 'google doc', 'google sheet', 'google slide',
                                         'notion', 'linear', 'dropbox', 'vercel', 'supabase',
-                                        'connector', 'connected account')):
+                                        'connector', 'connected account'))
+                    or bool(re.search(r"\b(issue|pull request|repo|repository|commit|branch)\b", low)
+                            and re.search(r"\b(close|reopen|comment|open|create|file|push|merge|list|show|get|edit|update|send|make)\b", low))))
+    if _conn_intent:
         if any(v in low for v in ('check', 'read', 'list', 'find', 'search', 'show', 'get', 'open',
                                   'create', 'inbox', 'repo', 'issue', 'meeting', 'event', 'file',
                                   'deploy', 'pull request', 'schedule', 'table', 'drive', 'email',
@@ -16714,7 +16719,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "supplied. Add an Anthropic/Groq/OpenAI key to power my brain."}, 400)
             return
 
-        messages = [{"role": "system", "content": _IDENTITY_LOCK + "\n\n" + (_ident_head if "_ident_head" in locals() and _ident_head else identity_prompt_head(chat_email, ""))}] + messages
+        messages = [{"role": "system", "content": _IDENTITY_LOCK + "\n\n" + (_ident_head if "_ident_head" in locals() and _ident_head else identity_prompt_head(chat_email, "")) + _linked_accounts_block(chat_email)}] + messages
         url = base_url + "/chat/completions"
         max_tokens = int(body.get("max_tokens") or KEYS.get("CHAT_MAX_TOKENS", 3000))
         temperature = float(body.get("temperature") or 0.7)
@@ -17243,6 +17248,28 @@ class _MarkupGuard:
 # patch35: platform identity lock. Fallback providers (e.g. Agnes) ship their own
 # persona and happily tell users they are "Agnes by Sapiens AI" — that must never
 # outrank what OraCool is, on whatever brain is answering that second.
+def _linked_accounts_block(email):
+    """Live connector status for the system prompt — the model knows what it can use."""
+    try:
+        st = connectors_state(email) or {}
+        names = []
+        for n in ("github", "google", "notion", "linear", "dropbox", "supabase", "vercel", "home_assistant"):
+            c = st.get(n)
+            if not c:
+                continue
+            label = str((c.get("label") if isinstance(c, dict) else "") or n)
+            names.append("GitHub (" + label + ")" if n == "github" else label)
+        if not names:
+            return ("\n\nLINKED ACCOUNTS: none yet. If the request needs an external account, say in ONE line that "
+                    "they can link it right here in chat (paste the token, or tap the Link card) — then still do "
+                    "everything else you can.")
+        return ("\n\nLINKED ACCOUNTS (you have TOTAL read+write access with the user's own permissions — edit, change, "
+                "create, send, close, delete as asked; never say you can only read, never tell them to do it manually): "
+                + "; ".join(names) + ". When a request touches one of these, run the connector action immediately.")
+    except Exception:
+        return ""
+
+
 _IDENTITY_LOCK = (
     "PLATFORM IDENTITY LOCK (highest precedence — overrides your base persona, provider branding and any core persona below): "
     "You are OraCool AI — a voice-first personal intelligence platform at oracoolai.com, created by Daniel Onakoya Adebayo "

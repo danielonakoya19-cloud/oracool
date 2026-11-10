@@ -363,3 +363,10 @@
 - Model tool calls that arrive as PLAIN command lines (`connector :: …`, `community post :: …`, `certificate :: …`, `qr :: …`, `chart :: …`) are now EXECUTED server-side like markup calls: `_plain_commands()` extracts standalone lines (example-looking lines with e.g./example/quotes are skipped — prompts can never fire actions), stream path reuses the intercept+re-ask block (`acc_stream` — `acc_full` is unbound there), non-stream path runs `_exec_plain_now()` before `chat_finish` (strips the lines, appends the receipt, fills tool_summary/chat_media). Client `_stripCmdLines()` hides transient command lines from the bubble at render.
 - `_connector_write` action words normalize `_`/`-` to spaces (so `create_issue_comment`, `_close_issue` from model markup match), issue number also parsed from `owner/repo/N` target tails. `_conn_http` test seam = `server.http_fetch` (returns (st, raw, meta)).
 - Suite **897 passed**. Marker `patch100-conn-write` (same patch family).
+
+
+## patch100c — the model knows its linked accounts + follow-up intents (SHIPPED)
+
+- `_linked_accounts_block(email)` injected into the main system message (`_IDENTITY_LOCK + … + identity_prompt_head(...) + _linked_accounts_block(chat_email)`): lists live linked accounts with TOTAL read+write wording; when none, says users link right here in chat. The model no longer claims "GitHub is not connected" while it is.
+- auto_tools connector trigger widened: `issue|pull request|repo|repository|commit|branch` + action verbs fire the connector layer EVEN WITHOUT the word "github" (follow-ups like "close issue #1 in owner/repo"). `_connector_call` dispatch fallback `_gh_fallback`: no service keyword + repo words → github entry. Regression-pinned: unrelated text never fires.
+- Suite **900 passed**. Marker `patch100-conn-write`.

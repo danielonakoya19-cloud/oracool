@@ -243,3 +243,48 @@ def test_plain_sweep_helpers_exist_and_strip():
     assert callable(server._exec_plain_now)
     src = open("index.html").read()
     assert src.count("_stripCmdLines") >= 3
+
+
+# ---------------------------------------------------------------------------
+# patch100c — connector intent without service words + linked-accounts prompt
+# ---------------------------------------------------------------------------
+
+def test_connector_intent_without_github_word():
+    import server
+    # follow-up like "close issue #1 in owner/repo" must reach the connector layer
+    calls = []
+    def fake_call(email, text):
+        calls.append(text)
+        return ("done", "GitHub issue #1 closed.")
+    backup = server._connector_call
+    server._connector_call = fake_call
+    try:
+        runs = server.auto_tools("close issue #7 in danielonakoya19-cloud/oracool", "free", email="danielonakoya19@gmail.com")
+        assert calls and "close issue #7" in calls[0]
+        assert any((r or {}).get("tool") == "connector" for r in (runs or []))
+        # totally unrelated text must NOT fire
+        calls.clear()
+        server.auto_tools("tell me a joke about cats", "free", email="danielonakoya19@gmail.com")
+        assert not calls
+    finally:
+        server._connector_call = backup
+
+
+def test_linked_accounts_block_knows_state():
+    import server
+    backup = server.connectors_state
+    server.connectors_state = lambda e: {"github": {"token": "t", "label": "danielonakoya19-cloud"}}
+    try:
+        b = server._linked_accounts_block("someone@x.y")
+        assert "TOTAL read+write" in b and "GitHub" in b and "never say you can only read" in b
+        server.connectors_state = lambda e: {}
+        b2 = server._linked_accounts_block("someone@x.y")
+        assert "none yet" in b2 and "link it right here in chat" in b2
+    finally:
+        server.connectors_state = backup
+
+
+def test_dispatch_falls_back_to_github_on_repo_words():
+    import server
+    src = open("server.py").read()
+    assert "_gh_fallback" in src and "_linked_accounts_block(chat_email)" in src
