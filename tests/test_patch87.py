@@ -18,7 +18,7 @@ def holo_layer(page):
 
 class TestPatch87Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch98-qr-certs"'), 2)
+        self.assertEqual(SRV.count('"patch99-viz-clean"'), 2)
 
 
 class TestPatch87BuilderGlass(unittest.TestCase):

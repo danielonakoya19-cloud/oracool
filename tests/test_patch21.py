@@ -47,7 +47,7 @@ class FakeSSE:
 class BuildMarkerTests(unittest.TestCase):
     def test_patch21_marker(self):
         src = (ROOT / "server.py").read_text(errors="ignore")
-        self.assertIn('"build": "patch98-qr-certs"', src)
+        self.assertIn('"build": "patch99-viz-clean"', src)
 
 
 class CascadeOrderTests(unittest.TestCase):

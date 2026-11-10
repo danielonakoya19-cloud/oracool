@@ -104,4 +104,4 @@ def test_github_verify_notes_token_access_level():
 # ---------------------------------------------------------------- marker
 
 def test_marker():
-    assert SERVER_SRC.count("patch98-qr-certs") == 2
+    assert SERVER_SRC.count("patch99-viz-clean") == 2

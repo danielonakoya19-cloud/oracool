@@ -3743,7 +3743,13 @@ def connectors_try_token(email, token):
     else:
         entry["token"] = cred["token"]
     st["google" if spec.get("auth") == "google" else name] = entry
+    st["off"] = [x for x in (st.get("off") or []) if x != name]
     connectors_save(em, st)
+    if name == "github":
+        try:
+            vault_set(em, "github_pat", cred["token"])
+        except Exception:
+            pass
     who = str(meta.get("login") or meta.get("who") or meta.get("email") or "ok")[:60]
     return {"ok": True, "name": name, "label": spec.get("label", name),
             "message": "connected as " + who + ((" \u00b7 " + str(meta.get("access"))) if meta.get("access") else "")}
@@ -4407,6 +4413,146 @@ def qr_png(text, scale=8, border=4, ecl="M"):
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) +
             chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b""))
 
+
+# ==================== patch99: charts — visualize anything (pure SVG) ====================
+import math as _chart_math
+_CHART_COLORS = ("#67e8f9", "#c084fc", "#f0abfc", "#fcd34d", "#34d399", "#f87171", "#60a5fa", "#fbbf24")
+
+
+def _chart_esc(s):
+    return (str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def _chart_num(v):
+    try:
+        x = float(str(v).replace(",", "").replace("%", "").strip())
+        return x
+    except Exception:
+        return None
+
+
+def svg_chart(kind, labels, values, title=""):
+    """Real chart, real SVG — bar | line | area | pie | donut. Renders anywhere."""
+    kind = (kind or "bar").strip().lower()
+    if kind in ("column", "columns", "hist", "histogram"):
+        kind = "bar"
+    if kind in ("graph",):
+        kind = "line"
+    if kind in ("circle", "donought"):
+        kind = "pie"
+    labels = [str(x)[:24] for x in (labels or [])][:16]
+    vals = []
+    for v in (values or [])[:16]:
+        n = _chart_num(v)
+        if n is not None:
+            vals.append(n)
+    if not vals:
+        raise ValueError("no numeric values to chart")
+    labels = (labels + [""] * len(vals))[:len(vals)]
+    W, H = 660, 420
+    esc = _chart_esc
+    o = []
+    o.append('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="100%%" role="img" aria-label="%s chart">' % (W, H, esc(kind)))
+    o.append('<defs>')
+    for i, c in enumerate(_CHART_COLORS):
+        o.append('<linearGradient id="cg%d" x1="0" y1="0" x2="0" y2="1">'
+                 '<stop offset="0%%" stop-color="%s"/><stop offset="100%%" stop-color="%s" stop-opacity=".55"/></linearGradient>'
+                 % (i, c, c))
+    o.append('<linearGradient id="cgbg" x1="0" y1="0" x2="1" y2="1">'
+             '<stop offset="0%%" stop-color="#101a33"/><stop offset="100%%" stop-color="#0b1226"/></linearGradient>')
+    o.append('</defs>')
+    o.append('<rect width="%d" height="%d" rx="22" fill="url(#cgbg)"/>' % (W, H))
+    o.append('<rect x="12" y="12" width="%d" height="%d" rx="16" fill="none" stroke="rgba(255,255,255,.12)"/>' % (W - 24, H - 24))
+    if title:
+        o.append('<text x="%d" y="46" text-anchor="middle" font-family="Inter,Segoe UI,system-ui,sans-serif" '
+                 'font-size="21" font-weight="800" fill="#e8f6ff">%s</text>' % (W // 2, esc(title)))
+    vmax = max(vals) if vals else 1
+    vmin = min(min(vals), 0)
+    if vmax == vmin:
+        vmax = vmin + 1
+    span = vmax - vmin
+
+    if kind in ("bar", "line", "area"):
+        x0, y0, x1, y1 = 78.0, 84.0, W - 40.0, H - 74.0
+        ph = y1 - y0
+        n = len(vals)
+        # grid + y ticks
+        for g in range(5):
+            gy = y1 - ph * g / 4.0
+            o.append('<line x1="%d" y1="%.1f" x2="%d" y2="%.1f" stroke="rgba(255,255,255,.10)"/>' % (x0, gy, x1, gy))
+            o.append('<text x="%d" y="%.1f" text-anchor="end" font-family="Inter,sans-serif" font-size="12" fill="rgba(226,240,255,.6)">%.0f</text>'
+                     % (x0 - 10, gy + 4, vmin + span * g / 4.0))
+        o.append('<line x1="%d" y1="%.1f" x2="%d" y2="%.1f" stroke="rgba(255,255,255,.28)"/>' % (x0, y1, x1, y1))
+        zero_y = y1 - (0 - vmin) / span * ph
+        if kind == "bar":
+            slot = (x1 - x0) / n
+            bw = min(64.0, slot * 0.56)
+            for i, v in enumerate(vals):
+                cx = x0 + slot * (i + 0.5)
+                top = y1 - (max(v, 0) - vmin) / span * ph if v >= 0 else zero_y
+                bot = zero_y if v >= 0 else y1 - (v - vmin) / span * ph
+                hgt = abs(bot - top)
+                o.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="7" fill="url(#cg%d)"/>'
+                         % (cx - bw / 2, min(top, bot), bw, max(hgt, 2.0), i % len(_CHART_COLORS)))
+                o.append('<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="700" fill="#eaf7ff">%s</text>'
+                         % (cx, min(top, bot) - 8, esc(("%.4g" % v))))
+                o.append('<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" fill="rgba(226,240,255,.66)">%s</text>'
+                         % (cx, y1 + 22, esc(labels[i])))
+        else:
+            step = (x1 - x0) / max(n - 1, 1)
+            pts = [(x0 + step * i, y1 - (v - vmin) / span * ph) for i, v in enumerate(vals)]
+            if kind == "area":
+                dpath = "M%.1f,%.1f " % (pts[0][0], zero_y) + " ".join("L%.1f,%.1f" % p for p in pts) + " L%.1f,%.1f Z" % (pts[-1][0], zero_y)
+                o.append('<path d="%s" fill="url(#cg0)" opacity=".38"/>' % dpath)
+            line = "M" + " L".join("%.1f,%.1f" % p for p in pts)
+            o.append('<path d="%s" fill="none" stroke="#7dd3fc" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>' % line)
+            for i, (px, py) in enumerate(pts):
+                o.append('<circle cx="%.1f" cy="%.1f" r="6.5" fill="#0b1226" stroke="%s" stroke-width="3"/>'
+                         % (px, py, _CHART_COLORS[i % len(_CHART_COLORS)]))
+                o.append('<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="700" fill="#eaf7ff">%s</text>'
+                         % (px, py - 14, esc("%.4g" % vals[i])))
+                o.append('<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" fill="rgba(226,240,255,.66)">%s</text>'
+                         % (px, y1 + 22, esc(labels[i])))
+    else:
+        # pie / donut
+        pos = [max(v, 0) for v in vals]
+        total = sum(pos) or 1
+        cx, cy = 220.0, (H + 40) / 2
+        R = 132.0
+        r_in = 74.0 if kind == "donut" else 0.0
+        ang = -3.14159265 / 2
+        for i, v in enumerate(pos):
+            if v <= 0:
+                continue
+            a2 = ang + 6.28318531 * v / total
+            large = 1 if (a2 - ang) > 3.14159265 else 0
+            xA, yA = cx + R * _chart_math.cos(ang), cy + R * _chart_math.sin(ang)
+            xB, yB = cx + R * _chart_math.cos(a2), cy + R * _chart_math.sin(a2)
+            if r_in:
+                xC, yD = cx + r_in * _chart_math.cos(a2), cy + r_in * _chart_math.sin(a2)
+                xD, yC = cx + r_in * _chart_math.cos(ang), cy + r_in * _chart_math.sin(ang)
+                dpath = ("M%.2f,%.2f A%.2f,%.2f 0 %d 1 %.2f,%.2f L%.2f,%.2f A%.2f,%.2f 0 %d 0 %.2f,%.2f Z"
+                         % (xA, yA, R, R, large, xB, yB, xC, yD, r_in, r_in, large, xD, yC))
+            else:
+                dpath = ("M%.2f,%.2f L%.2f,%.2f A%.2f,%.2f 0 %d 1 %.2f,%.2f Z"
+                         % (cx, cy, xA, yA, R, R, large, xB, yB))
+            o.append('<path d="%s" fill="%s" stroke="#0b1226" stroke-width="2.5"/>' % (dpath, _CHART_COLORS[i % len(_CHART_COLORS)]))
+            ang = a2
+        if kind == "donut":
+            o.append('<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Inter,sans-serif" font-size="24" font-weight="800" fill="#eaf7ff">%s</text>'
+                     % (cx, cy + 2, esc("%.4g" % total)))
+            o.append('<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="rgba(226,240,255,.6)">total</text>'
+                     % (cx, cy + 22))
+        lx = 400.0
+        for i, v in enumerate(vals):
+            ly = 110.0 + i * 30
+            if ly > H - 40:
+                break
+            o.append('<rect x="%.1f" y="%.1f" width="14" height="14" rx="4" fill="%s"/>' % (lx, ly - 11, _CHART_COLORS[i % len(_CHART_COLORS)]))
+            o.append('<text x="%.1f" y="%.1f" font-family="Inter,sans-serif" font-size="13" fill="rgba(226,240,255,.85)">%s — %s (%.0f%%)</text>'
+                     % (lx + 22, ly, esc(labels[i]), esc("%.4g" % v), 100.0 * max(v, 0) / total))
+    o.append("</svg>")
+    return "".join(o)
 
 # ==================== patch98: certificates platform ====================
 import base64 as _qr_b64  # (rebind-safe: server already imports its own modules above)
@@ -7207,23 +7353,47 @@ def build_zip(slug):
 
 # ------------------------------------------------------------ GitHub (user's own account, PAT-sealed in the vault)
 
-def _gh(email, path, method="GET", body=None, timeout=30):
-    pat = ""
+_GH_RELINK = "GitHub needs re-linking — tap the \U0001F517 Link GitHub card in this chat, or paste a fresh GitHub token here and it links automatically."
+
+
+def _gh_tokens(email):
+    """One GitHub credential source: vault PAT first, then the linked connector token."""
+    out = []
     try:
         r = vault_get(email, "github_pat")
-        pat = str(r.get("value") or "")
+        if r.get("value"):
+            out.append(str(r["value"]))
     except Exception:
         pass
-    if not pat:
-        return None, "No GitHub account connected (Devices → Connectors → GitHub)."
     try:
-        _, raw, _ = http_fetch("https://api.github.com" + path, method=method, timeout=timeout,
-                               headers={"Authorization": "Bearer " + pat, "Accept": "application/vnd.github+json",
-                                        "User-Agent": "oracool-builder"},
-                               json_body=body)
-        return json.loads(raw), None
-    except Exception as e:
-        return None, str(e)[:140]
+        st = connectors_state(email)
+        g = st.get("github") or {}
+        t = str(g.get("token") or g.get("access_token") or "")
+        if t and t not in out:
+            out.append(t)
+    except Exception:
+        pass
+    return out
+
+
+def _gh(email, path, method="GET", body=None, timeout=30):
+    toks = _gh_tokens(email)
+    if not toks:
+        return None, "No GitHub account connected yet — tap the \U0001F517 Link GitHub card in this chat, or paste your GitHub token here and it links automatically."
+    last = ""
+    for pat in toks:
+        try:
+            st, raw, _ = http_fetch("https://api.github.com" + path, method=method, timeout=timeout,
+                                    headers={"Authorization": "Bearer " + pat, "Accept": "application/vnd.github+json",
+                                             "User-Agent": "oracool-builder"},
+                                    json_body=body)
+            if st == 401:
+                last = _GH_RELINK
+                continue
+            return json.loads(raw), None
+        except Exception as e:
+            last = "GitHub is unreachable right now (" + str(e)[:100] + ") — try again in a moment."
+    return None, last
 
 def github_connect(email, pat):
     pat = (pat or "").strip()
@@ -7241,21 +7411,24 @@ def github_connect(email, pat):
     v = vault_set(email, "github_pat", pat)
     if v.get("status") != "ok":
         return {"error": v.get("error", "Could not store the token.")}
+    try:
+        st = connectors_state(email)
+        st["github"] = {"token": pat, "via": "vault",
+                        "meta": {"verified": "connected as " + str(u.get("login")),
+                                 "info": {"login": u.get("login"), "access": "full access"},
+                                 "at": time.time()}}
+        st["off"] = [x for x in (st.get("off") or []) if x != "github"]
+        connectors_save(email, st)
+    except Exception:
+        pass
     return {"ok": True, "login": u.get("login"), "html_url": u.get("html_url"),
             "note": "Connected as @" + str(u.get("login")) + " — the token is stored AES-encrypted in your vault. OraCool can now list repos, create repos, push built sites and enable GitHub Pages for you."}
 
 def github_status(email):
-    try:
-        r = vault_get(email, "github_pat")
-        if r.get("value"):
-            _, raw, _ = http_fetch("https://api.github.com/user", method="GET", timeout=20,
-                                   headers={"Authorization": "Bearer " + str(r["value"]), "Accept": "application/vnd.github+json",
-                                            "User-Agent": "oracool-builder"})
-            u = json.loads(raw)
-            return {"connected": bool(u.get("login")), "login": u.get("login")}
-    except Exception:
-        pass
-    return {"connected": False}
+    d, err = _gh(email, "/user", timeout=20)
+    if isinstance(d, dict) and d.get("login"):
+        return {"connected": True, "login": d.get("login")}
+    return {"connected": False, "error": err or ""}
 
 def github_repos(email, only_mine=True):
     q = "?per_page=30&sort=updated&type=owner" if only_mine else "?per_page=30&sort=updated"
@@ -10812,7 +10985,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch98-qr-certs",
+        "build": "patch99-viz-clean",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -11950,6 +12123,46 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                                         'result': {'name': _nm, 'label': _lab}})
             except Exception:
                 pass
+    # patch99: REAL charts — "chart :: type :: labels :: values :: title" or natural
+    # "visualize/chart/graph ..." with numbers. Renders genuine SVG charts.
+    if re.search(r"\bchart\b|\bgraph\b|\bvisuali[sz]e\b|\bplot\b|\bdiagram\b|\bbreakdown\b", low):
+        for _seg in re.split(r"\s*;\s*|\n+", t):
+            _ctype = _clabels = _cvals = _ctitle = ""
+            if re.match(r"\s*(chart|graph|plot)\s*::", _seg, re.I):
+                _cp = [x.strip() for x in _seg.split("::")]
+                if len(_cp) >= 4:
+                    _ctype, _clabels, _cvals = _cp[1], _cp[2], _cp[3]
+                    _ctitle = _cp[4] if len(_cp) > 4 else ""
+            else:
+                _cm = re.search(r"(?:chart|graph|plot|visuali[sz]e)\b", _seg, re.I)
+                if _cm:
+                    _ctitle = re.sub(r"\s*\b(of|for|the|a|an|my|our|this|that|data|figures?|numbers?)\b", " ", _seg[:_cm.start()], flags=re.I).strip(" :-")[:60]
+                    _ck = re.search(r"\b(bar|column|line|area|pie|donut|circle|histogram|graph)\b", _seg[:_cm.end()], re.I)
+                    _ctype = _ck.group(1).lower() if _ck else "bar"
+                    _labs, _vs = [], []
+                    for _piece in _seg.split(","):
+                        _mn = re.search(r"(-?[0-9][0-9,]*(?:\.[0-9]+)?%?)\s*$", _piece.strip())
+                        if not _mn:
+                            continue
+                        _lab = _piece[:_mn.start()].strip(" :=;")
+                        _lab = re.sub(r"\b(?:of|for|the|a|an|my|our|this|that|data|figures?|numbers?|is|are|at|to|was|were|in|on|and|plot|chart|graph|visuali[sz]e|show|me|please|these|those)\b", " ", _lab, flags=re.I)
+                        _words = _lab.split()
+                        _lab = _words[-1] if _words else str(len(_vs) + 1)
+                        _labs.append(_lab[:24])
+                        _vs.append(_mn.group(1))
+                    if len(_vs) >= 2:
+                        _clabels = ",".join(_labs)
+                        _cvals = ",".join(_vs)
+            if _cvals and _ctype:
+                try:
+                    _labs = [x.strip() for x in _clabels.split(",") if x.strip()]
+                    _vs = [x.strip() for x in _cvals.split(",") if x.strip()]
+                    _svg = svg_chart(_ctype, _labs, _vs, _ctitle)
+                    out.append({"tool": "chart", "label": "chart" + ((" \u00b7 " + _ctitle[:40]) if _ctitle else ""),
+                                "result": {"svg": _svg, "title": _ctitle, "type": _ctype,
+                                           "labels": _labs, "values": _vs}})
+                except Exception:
+                    pass
     # patch98: REAL QR codes — "a qr code for X" or the command form "qr :: content".
     # Generates a spec-exact, genuinely scannable code (never decorative/fake).
     if re.search(r"\bqr\b|\bscann?able\b|scan code", low):
@@ -14530,7 +14743,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch98-qr-certs", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch99-viz-clean", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -16081,6 +16294,12 @@ class Handler(BaseHTTPRequestHandler):
             "AI-generated picture of a QR code, and never link an external image as a QR code \u2014 the ONLY real "
             "QR is the one the qr tool returns and the app already shows as a card, so never link or repeat "
             "image URLs in the reply. If they want a QR code but did not say what to encode, ask ONE short question. "
+            "VISUALIZATION (REAL CHARTS): you can turn ANY numbers into a real, beautiful chart instantly. "
+            "When the user shares numbers and wants to see them (sales, prices, votes, scores, comparison, "
+            "progress, breakdown), output the command form exactly: 'chart :: <bar|line|area|pie|donut> :: "
+            "<label1,label2,label3> :: <value1,value2,value3> :: <title>' \u2014 the app renders a real chart card. "
+            "Never draw ASCII/emoji charts or text tables when the chart form can do it; never describe a chart "
+            "as fake \u2014 every chart is real SVG. If the user's numbers are unclear, ask ONE short question. "
             "APP LAUNCHING (HONESTY RULE): you cannot open, launch or install apps on the user's device by "
             "yourself — the operating system only allows a launch from a real user tap. When the user asks to open "
             "an app, the server has prepared a tappable 'Open <app>' launch card in the chat; tell them to tap that "
@@ -16142,6 +16361,14 @@ class Handler(BaseHTTPRequestHandler):
             ts = {"tool": t.get("tool"), "label": t.get("label")}
             if t.get("tool") == "connector_link":
                 ts["conn"] = t.get("conn") or ""
+            if t.get("tool") == "chart":
+                try:
+                    tr = t.get("result") if isinstance(t.get("result"), dict) else json.loads(t.get("result") or "{}")
+                    for _k in ("svg", "title", "type"):
+                        if tr.get(_k):
+                            ts[_k] = tr[_k]
+                except Exception:
+                    pass
             if t.get("tool") in ("qr", "cert"):
                 try:
                     tr = t.get("result") if isinstance(t.get("result"), dict) else json.loads(t.get("result") or "{}")

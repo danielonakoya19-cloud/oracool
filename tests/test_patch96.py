@@ -105,4 +105,4 @@ def test_new_prompt_text_has_no_internal_ids():
 # ---------------------------------------------------------------- marker
 
 def test_marker():
-    assert SERVER_SRC.count("patch98-qr-certs") == 2
+    assert SERVER_SRC.count("patch99-viz-clean") == 2
