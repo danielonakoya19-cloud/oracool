@@ -5200,6 +5200,26 @@ def _wa_action(email, low, text):
             cmd_text = "::".join(cmd_parts[3:]).strip()
         elif len(cmd_parts) >= 3 and re.search(r"messages|read", verb1):
             cmd_to = cmd_parts[2]
+    # command forms dispatch directly — 'whatsapp :: chats', 'whatsapp :: messages :: X',
+    # 'whatsapp :: check' must never fall through the natural-language parsers
+    if cmd_parts and not re.search(r"bot", (cmd_parts[1] if len(cmd_parts) > 1 else "")):
+        _v1 = (cmd_parts[1] if len(cmd_parts) > 1 else "").lower()
+        if re.search(r"check|status", _v1):
+            low = low + " check"  # fall into the summary block below
+        elif re.search(r"chat|list|conversations", _v1):
+            r = wa_gateway("/api/wa/chats", email, {})
+            ch = r.get("chats") or []
+            if not ch:
+                return "No WhatsApp chats are visible yet \u2014 they appear after the linked account syncs.", None
+            lines = ["\u2022 " + ((c2.get("name") or c2.get("id") or "").split("@")[0][:40]) for c2 in ch[:10]]
+            return "Recent WhatsApp chats:\n" + "\n".join(lines), None
+        elif re.search(r"messages|read|history", _v1) and cmd_to:
+            r = wa_gateway("/api/wa/messages", email, {"to": cmd_to})
+            msgs = r.get("messages") or []
+            if not msgs:
+                return "No recent messages found with " + cmd_to[:30] + " in the linked WhatsApp.", None
+            lines = [("me: " if m2.get("fromMe") else "them: ") + str(m2.get("text") or "")[:120] for m2 in msgs[-8:]]
+            return "WhatsApp messages with " + cmd_to[:30] + ":\n" + "\n".join(lines), None
     if re.search(r"\b(log ?out|unlink|disconnect|remove)\b", low) and "whatsapp" in low:
         r = wa_gateway("/api/wa/logout", email, {})
         return ("WhatsApp unlinked from OraCool." if r.get("ok") else str(r.get("error"))[:160]), None
@@ -5302,19 +5322,6 @@ def _wa_action(email, low, text):
             r = wa_gateway("/api/wa/action", email, {"kind": kind, "to": tgt})
             return (r.get("message") or str(r.get("error"))[:180]), None
 
-    # ---- chats list
-    if (re.search(r"\b(chat|chats|conversation|conversations)\b", low) and re.search(r"\b(list|show|check|my|recent|open)\b", low)
-            and not re.search(r"\b(send|react|delete|mute|archive|mark|reply|read|message|about)\b", low)) :
-        r = wa_gateway("/api/wa/chats", email, {})
-        ch = r.get("chats") or []
-        if not ch:
-            return "No WhatsApp chats are visible yet \u2014 they appear after the linked account syncs.", None
-        lines = []
-        for c2 in ch[:10]:
-            nm = (c2.get("name") or c2.get("id") or "").split("@")[0]
-            lines.append("\u2022 " + nm[:40])
-        return "Recent WhatsApp chats:\n" + "\n".join(lines), None
-
     # ---- read messages (names resolve too)
     read_m = re.search(r"\b(?:read|show|get|check|open)\b.{0,34}?(?:from|with|on|in|between)\s+"
                        r"([+\d][\d ().-]{7,22}\d|[A-Za-z][\w .-]{1,30})", text or "", re.I)
@@ -5329,6 +5336,42 @@ def _wa_action(email, low, text):
             who2 = "me" if m2.get("fromMe") else "them"
             lines.append(who2 + ": " + str(m2.get("text") or "")[:120])
         return "WhatsApp messages with " + to[:30] + ":\n" + "\n".join(lines), None
+    # ---- "check my whatsapp" -> live status + recent chats summary
+    if (re.search(r"\b(check|status|look|see|catch up|what'?s (?:new|up|happening|going on))\b", low)
+            and not re.search(r"\b(send|react|delete|mute|archive|reply|write|tell|mark)\b", low)):
+        r = wa_gateway("/api/wa/status", email, {})
+        if not r.get("connected"):
+            return ("WhatsApp is not linked yet \u2014 say 'link my whatsapp' and scan the QR, "
+                    "then I can check everything for you."), {"wa_link": True}
+        who = str((r.get("user") or {}).get("name") or "your number")[:30]
+        b = (wa_gateway("/api/wa/bot", email, {}).get("bot") or {})
+        ch = (wa_gateway("/api/wa/chats", email, {}).get("chats") or [])
+        lines = ["Your WhatsApp is linked (" + who + ")."]
+        lines.append("Auto-reply bot: " + ("ON \u2014 replies: " + str(b.get("reply") or "")[:60]
+                     if b.get("enabled") else "off.") + ((" | " + str(len(b.get("rules") or [])) + " keyword rule(s)")
+                     if b.get("rules") else ""))
+        if ch:
+            lines.append("Recent chats:")
+            for c2 in ch[:6]:
+                lines.append("\u2022 " + ((c2.get("name") or c2.get("id") or "").split("@")[0][:40]))
+        else:
+            lines.append("No chats have synced yet \u2014 they appear within a minute of linking.")
+        lines.append("Say the word and I will send, read, react, mute or run the bot for you.")
+        return "\n".join(lines), None
+
+    # ---- chats list
+    if (re.search(r"\b(chat|chats|conversation|conversations)\b", low) and re.search(r"\b(list|show|check|my|recent|open)\b", low)
+            and not re.search(r"\b(send|react|delete|mute|archive|mark|reply|read|message|about)\b", low)) :
+        r = wa_gateway("/api/wa/chats", email, {})
+        ch = r.get("chats") or []
+        if not ch:
+            return "No WhatsApp chats are visible yet \u2014 they appear after the linked account syncs.", None
+        lines = []
+        for c2 in ch[:10]:
+            nm = (c2.get("name") or c2.get("id") or "").split("@")[0]
+            lines.append("\u2022 " + nm[:40])
+        return "Recent WhatsApp chats:\n" + "\n".join(lines), None
+
     return None, None
 
 
@@ -17387,7 +17430,7 @@ class Handler(BaseHTTPRequestHandler):
             break
         _final_txt = _strip_agent_markup(acc_stream)
         # scrub the internal placeholder the model sometimes echoes back
-        _final_txt = re.sub(r"\(?\*{0,2}\(?ran a tool\)?\*{0,2}\)?", "", _final_txt)
+        _final_txt = _scrub_tool_placeholders(_final_txt)
         _final_txt = re.sub(r"\n{3,}", "\n\n", _final_txt).strip()
         _final_txt = _pii_scrub(_identity_scrub(_final_txt), chat_email)
         if _markup_runs and len(_final_txt) < 160:
@@ -17736,13 +17779,27 @@ def chat_finish(text, tools, cores, media, conv_id="", conv_em="", note=None):
 _REPLY_JUNK = re.compile(r"^[.\-\u2013\u2014\u2022*_\s()#`'\"\u2026]+$")
 
 
+_TOOL_PLACEHOLDER_RX = re.compile(r"\(?\*{0,2}\(?ran (?:a|the|this|whatsapp|connector|[a-z_]+)?\s*[a-z_ ]{0,30}tool\)?\*{0,2}\)?", re.I)
+
+
+def _scrub_tool_placeholders(txt):
+    out = _TOOL_PLACEHOLDER_RX.sub("", str(txt or ""))
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return out
+
+
 def _reply_is_junk(s):
     s = str(s or "").strip()
     if not s:
         return True
     if _REPLY_JUNK.match(s):
         return True
-    return s.lower().strip("()*` ") in ("ran a tool", "(ran a tool)", "ran tool")
+    if s.lower().strip("()*` ") in ("ran a tool", "(ran a tool)", "ran tool"):
+        return True
+    # "(ran WhatsApp connector tool)" style placeholders, with or without a small header
+    if _TOOL_PLACEHOLDER_RX.search(s) and len(s) < 220:
+        return True
+    return False
 
 
 def _tool_digest(tool_runs):

@@ -203,3 +203,55 @@ def test_status_reopens_vaulted_session(monkeypatch):
     assert r["connected"] and any(p.startswith("/new") for p in calls)
     b = open("wa-bridge.mjs").read()
     assert "creds.json'))) await openSession" in b.replace('"', "'").replace("`", "'") or "openSession(id) } catch" in b
+
+
+# ---------------------------------------------------------------------------
+# "check my whatsapp" + command forms must ALWAYS produce real content
+# ---------------------------------------------------------------------------
+
+def _fake_wa_gateway(path2, who, body):
+    if path2.endswith("/status"):
+        return {"ok": True, "connected": True, "user": {"name": "T"}, "chats": 3}
+    if path2.endswith("/bot"):
+        return {"ok": True, "bot": {"enabled": True, "reply": "busy", "rules": []}}
+    if path2.endswith("/chats"):
+        return {"ok": True, "chats": [{"id": "x@g.us", "name": "Family Group", "ts": 1},
+                                      {"id": "2@s.whatsapp.net", "name": "Mum", "ts": 2}]}
+    if path2.endswith("/messages"):
+        return {"ok": True, "messages": [{"fromMe": False, "text": "hello there"}]}
+    return {"ok": True, "message": "ok"}
+
+
+def test_check_my_whatsapp_returns_real_summary(monkeypatch):
+    monkeypatch.setattr(server, "wa_gateway", _fake_wa_gateway)
+    t, _ = server._wa_action("a@b.c", "check my whatsapp", "check my whatsapp")
+    assert "linked" in t and "Family Group" in t and "Mum" in t and "bot" in t.lower()
+
+
+def test_check_unlinked_offers_qr(monkeypatch):
+    monkeypatch.setattr(server, "wa_gateway",
+                        lambda p, w, b: {"ok": True, "connected": False})
+    t, extra = server._wa_action("a@b.c", "check my whatsapp", "check my whatsapp")
+    assert "not linked" in t and extra and extra.get("wa_link")
+
+
+def test_check_chat_with_name_reads_messages_not_list(monkeypatch):
+    monkeypatch.setattr(server, "wa_gateway", _fake_wa_gateway)
+    t, _ = server._wa_action("a@b.c", "check my whatsapp chat with Mum", "check my whatsapp chat with Mum")
+    assert "hello there" in t and "Recent WhatsApp chats" not in t
+
+
+def test_command_forms_chats_and_messages(monkeypatch):
+    monkeypatch.setattr(server, "wa_gateway", _fake_wa_gateway)
+    t, _ = server._wa_action("a@b.c", "whatsapp :: chats", "whatsapp :: chats")
+    assert "Family Group" in t and "Mum" in t
+    t2, _ = server._wa_action("a@b.c", "whatsapp :: messages :: Mum", "whatsapp :: messages :: Mum")
+    assert "hello there" in t2
+
+
+def test_placeholder_scrub_and_junk_detection():
+    assert server._reply_is_junk("(ran WhatsApp connector tool)")
+    assert server._reply_is_junk("ORA-COOL - PHONE WHATSAPP + JARVIS\n\n(ran WhatsApp connector tool)")
+    assert not server._reply_is_junk("Your WhatsApp is linked. Recent chats: Family Group.")
+    out = server._scrub_tool_placeholders("Done.\n(ran whatsapp connector tool)\n**Live results gathered for you:**")
+    assert "ran" not in out and "Live results" in out

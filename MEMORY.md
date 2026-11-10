@@ -410,3 +410,10 @@
 - patch102c: vaulted sessions AUTO-REOPEN after redeploys — bridge /status opens restored sessions (creds.json presence), server /status nudges /new when state is none (restore + reconnect). Without this the row showed unlinked after every redeploy until the QR sheet was opened. Suite **933 passed**.
 
 - patch102d: bridge fills group/newsletter display names via groupMetadata on connect (chat lists readable). LIVE FINAL: auto-reconnect proven on prod after redeploy (status → connected by itself, 3 chats); real message read from a synced chat; bot reset clean ('' reply not 'null'). Profile about could not be cleared programmatically (updateProfileStatus('') → WhatsApp 500) — the test-probe value 'hello' remains until the user edits it in WhatsApp; DISCLOSED to the user.
+
+
+## patch103 — "check my whatsapp" produces real content (SHIPPED)
+
+- Bug (user screenshot): asking "check my whatsapp" (or actions) returned only "(ran WhatsApp connector tool)" — a model placeholder. Causes: (1) `whatsapp :: chats|messages|check` command forms fell through the natural parsers (the prompt TEACHES these forms!); (2) "check my whatsapp" matched no intent (chats block needed the word 'chat'); (3) placeholder text was not junk-detected, so the last-resort digest floor never replaced it.
+- Fixes: `_wa_action` explicit COMMAND dispatch (chats|list / messages|read with target / check|status) before natural parsing; NEW summary block for check/status-type asks (linked state + bot state + last 6 chats + offer; unlinked → wa_link card); READ block reordered before summary and chats ("check my whatsapp chat with Mum" reads messages, not the list). `_scrub_tool_placeholders` + `_TOOL_PLACEHOLDER_RX` (removes 'ran … tool' phrases) and `_reply_is_junk` now treats short placeholder replies as junk → the canonical floor ("Here is what my live tools found for you:" + `_tool_digest`) replaces them. The `_markup_runs`-only short-answer digest left as-is (patch34 pins the canonical format).
+- Tests +6 (test_patch102): summary content, unlinked→wa_link, read-vs-list ordering, command forms chats/messages, placeholder junk+scrub. **Suite 938 passed.**
