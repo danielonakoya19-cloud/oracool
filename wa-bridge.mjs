@@ -242,10 +242,10 @@ async function handle(req, res) {
           const cur = loadBot(id)
           const bot = {
             enabled: typeof j.enabled === 'boolean' ? j.enabled : cur.enabled,
-            reply: j.reply !== undefined ? String(j.reply).slice(0, 1500) : cur.reply,
+            reply: (j.reply !== undefined && j.reply !== null) ? String(j.reply).slice(0, 1500) : cur.reply,
             rules: Array.isArray(j.rules) ? j.rules.slice(0, 20).map(r => ({
               match: String(r.match || '').slice(0, 80), reply: String(r.reply || '').slice(0, 800) })) : cur.rules,
-            skipGroups: j.skipGroups !== undefined ? !!j.skipGroups : cur.skipGroups,
+            skipGroups: (j.skipGroups !== undefined && j.skipGroups !== null) ? !!j.skipGroups : cur.skipGroups,
             gapSeconds: Number(j.gapSeconds || cur.gapSeconds || 90)
           }
           saveBot(id, bot)

@@ -5149,10 +5149,10 @@ def wa_gateway(path2, who, body):
     if path2 == "/api/wa/bot":
         if (body.get("set") if isinstance(body.get("set"), bool) else (body.get("enabled") is not None or body.get("reply") is not None
                                                                       or body.get("rules") is not None)):
-            d = _wa_http("/bot?session=" + sid, method="POST",
-                         obj={"enabled": body.get("enabled"), "reply": body.get("reply"),
-                              "rules": body.get("rules"), "skipGroups": body.get("skipGroups"),
-                              "gapSeconds": body.get("gapSeconds")}, timeout=10)
+            _bot_obj = {k: v for k, v in {"enabled": body.get("enabled"), "reply": body.get("reply"),
+                         "rules": body.get("rules"), "skipGroups": body.get("skipGroups"),
+                         "gapSeconds": body.get("gapSeconds")}.items() if v is not None}
+            d = _wa_http("/bot?session=" + sid, method="POST", obj=_bot_obj, timeout=10)
             return {"ok": not d.get("error"), "bot": d.get("bot") or {},
                     "message": "WhatsApp auto-reply bot updated." if not d.get("error") else str(d.get("error"))[:160]}
         d = _wa_http("/bot?session=" + sid, timeout=8)
@@ -5161,10 +5161,10 @@ def wa_gateway(path2, who, body):
         kind = str(body.get("kind") or "").strip().lower()
         if not kind:
             return {"ok": False, "error": "kind is required"}
-        d = _wa_http("/action?session=" + sid, method="POST",
-                     obj={"kind": kind, "to": body.get("to"), "text": body.get("text"),
-                          "image_url": body.get("image_url"), "emoji": body.get("emoji"),
-                          "minutes": body.get("minutes")}, timeout=30)
+        _act_obj = {k: v for k, v in {"kind": kind, "to": body.get("to"), "text": body.get("text"),
+                     "image_url": body.get("image_url"), "emoji": body.get("emoji"),
+                     "minutes": body.get("minutes")}.items() if v is not None}
+        d = _wa_http("/action?session=" + sid, method="POST", obj=_act_obj, timeout=30)
         if d.get("error") == "not connected":
             return {"ok": False, "error": "WhatsApp is not linked yet \u2014 scan the QR in Connectors first."}
         return {"ok": not d.get("error"), "message": d.get("message") or str(d.get("error"))[:180]}

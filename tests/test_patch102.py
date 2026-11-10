@@ -169,3 +169,18 @@ def test_bridge_ships_bot_and_actions():
     assert "doAction" in b and "chatModify" in b and "updateProfileStatus" in b
     assert "toJid" in b  # name resolution against synced chats
     assert "sendPresenceUpdate('composing'" in b  # human-ish bot typing
+
+
+def test_bot_update_never_sends_json_nulls(monkeypatch):
+    seen = []
+    def fake_http(p2, method="GET", obj=None, timeout=8):
+        seen.append(obj)
+        return {"ok": True, "bot": {}}
+    monkeypatch.setattr(server, "_wa_ensure_bridge", lambda: (True, ""))
+    monkeypatch.setattr(server, "_wa_http", fake_http)
+    monkeypatch.setattr(server, "_wa_vault_restore", lambda sid: None)
+    server.wa_gateway("/api/wa/bot", "a@b.c", {"enabled": True})
+    server.wa_gateway("/api/wa/action", "a@b.c", {"kind": "react", "emoji": "x"})
+    for obj in seen:
+        if obj:
+            assert all(v is not None for v in obj.values()), obj
