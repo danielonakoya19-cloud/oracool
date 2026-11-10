@@ -376,3 +376,5 @@
 
 - `_PLAIN_CMD_RX` now captures commands ANYWHERE in a line (models write "commenting now... connector :: …"); example-skip guard tests the FULL line (quotes, 'you can say', e.g., …) so prompt examples can never fire actions. Issue numbers parse from `owner/repo#N` and `#N`/`/N` tails. Stream strip + non-stream `_exec_plain_now` share the pattern.
 - Suite **900 passed**. Marker `patch100-conn-write`.
+
+- patch100e: github write actions are CUMULATIVE (compound 'reopen and comment' runs both); comment content from 'saying X'; comment-first messages never create issues (`_comment_first` guard). Suite **901 passed**.

@@ -288,3 +288,31 @@ def test_dispatch_falls_back_to_github_on_repo_words():
     import server
     src = open("server.py").read()
     assert "_gh_fallback" in src and "_linked_accounts_block(chat_email)" in src
+
+
+def test_compound_reopen_and_comment_runs_both():
+    import server
+    calls = []
+    def fake(url, method="GET", headers=None, json_body=None, timeout=25):
+        calls.append((method, url, json_body))
+        if method == "PATCH":
+            return 200, {"state": "open"}
+        if "/comments" in url:
+            return 201, {"html_url": "https://github.com/x"}
+        return 404, {}
+    backup = server._conn_http
+    server._conn_http = fake
+    try:
+        r = server._connector_do("github", {"token": "t"},
+                                 "reopen issue #1 in a/b and add a comment saying write actions verified",
+                                 "reopen issue #1 in a/b and add a comment saying write actions verified")
+        assert "reopened" in r and "Comment posted" in r, r
+        assert any(m == "PATCH" for m, u, b in calls) and any("/comments" in u for m, u, b in calls)
+        # comment-first with 'new' in the text must NOT create an issue
+        calls.clear()
+        r2 = server._connector_do("github", {"token": "t"},
+                                  "comment on issue #1 in a/b: this is new",
+                                  "comment on issue #1 in a/b: this is new")
+        assert "Comment posted" in r2 and not any(u.endswith("/issues") for m, u, b in calls), (r2, calls)
+    finally:
+        server._conn_http = backup

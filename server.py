@@ -3975,30 +3975,38 @@ def _connector_write(name, c, low, text, tok):
         body_txt = cmd_content or ""
         if not cmd_action:
             body_txt = _after_colon(text) or body_txt
+        _res = []
         if re.search(r"\b(close|reopen)\b", act) and issue_m and repo_m:
             state = "closed" if "close" in act and "reopen" not in act else "open"
             st, d = _conn_http("https://api.github.com/repos/" + repo_m.group(1) + "/issues/" + issue_m.group(1),
                                method="PATCH", headers=_auth(), json_body={"state": state})
-            return ("GitHub issue #" + issue_m.group(1) + " " + ("closed." if state == "closed" else "reopened.")
-                    if st in (200, 201) else "GitHub said: " + str(d.get("message") if isinstance(d, dict) else d)[:120])
+            _res.append("GitHub issue #" + issue_m.group(1) + " " + ("closed." if state == "closed" else "reopened.")
+                        if st in (200, 201) else "GitHub said: " + str(d.get("message") if isinstance(d, dict) else d)[:120])
         if re.search(r"\b(comment|reply)\b", act) and issue_m and repo_m:
-            msg = body_txt or _after_colon(text)
+            sm = re.search(r"\b(?:saying|says|say|that says|quote|reading)\b[:\s]*[\"']?(.+)$", text or "", re.I)
+            msg = body_txt or _after_colon(text) or (sm.group(1).strip() if sm else "")
             if len(msg) > 1:
                 st, d = _conn_http("https://api.github.com/repos/" + repo_m.group(1) + "/issues/" + issue_m.group(1) + "/comments",
                                    method="POST", headers=_auth(), json_body={"body": msg[:2000]})
-                return ("Comment posted on issue #" + issue_m.group(1) + ": " + str(d.get("html_url") if isinstance(d, dict) else "")[:120]
-                        if st in (200, 201) else "GitHub said: " + str(d.get("message") if isinstance(d, dict) else d)[:120])
-            return "Tell me what to comment on issue #" + issue_m.group(1) + " (e.g. 'comment on issue #3 in me/app: looks good')."
-        if re.search(r"\b(create|open|new|file a|raise)\b.*\bissue\b|\bissue\b.*\b(create|open|new)\b", act) or (cmd_action and "issue" in cmd_action):
+                _res.append("Comment posted on issue #" + issue_m.group(1) + ": " + str(d.get("html_url") if isinstance(d, dict) else "")[:120]
+                            if st in (200, 201) else "GitHub said: " + str(d.get("message") if isinstance(d, dict) else d)[:120])
+            elif not _res:
+                return "Tell me what to comment on issue #" + issue_m.group(1) + " (e.g. 'comment on issue #3 in me/app: looks good')."
+        _comment_first = bool(re.search(r"^\s*(?:[^a-z]{0,6})?(?:add\s+)?(?:a\s+)?(?:comment|reply)\b", low))
+        if ((re.search(r"\b(create|open|new|file a|raise)\b.*\bissue\b|\bissue\b.*\b(create|open|new)\b", act)
+             or (cmd_action and "issue" in cmd_action and "comment" not in cmd_action))
+            and not (_comment_first and not re.search(r"\b(and|then|also)\b[^.]{0,30}\b(create|open|new)\b", act))):
             if not repo_m:
-                return "Which repository? Say it like: 'open github issue in owner/repo: title :: details'."
+                return (_res and " ".join(_res)) or "Which repository? Say it like: 'open github issue in owner/repo: title :: details'."
             title, body2 = (body_txt.split("::", 1) + [""])[:2] if "::" in body_txt else (body_txt[:120], "")
             if len(title.strip()) < 2:
-                return "Give the issue title after the colon (e.g. 'open github issue in me/app: login crashes')."
+                return (_res and " ".join(_res)) or "Give the issue title after the colon (e.g. 'open github issue in me/app: login crashes')."
             st, d = _conn_http("https://api.github.com/repos/" + repo_m.group(1) + "/issues", method="POST",
                                headers=_auth(), json_body={"title": title.strip()[:120], "body": body2.strip() or title.strip()})
-            return ("GitHub issue created: " + str(d.get("html_url") if isinstance(d, dict) else d)[:140]
-                    if st in (200, 201) else "GitHub said: " + str(d.get("message") if isinstance(d, dict) else d)[:120])
+            _res.append("GitHub issue created: " + str(d.get("html_url") if isinstance(d, dict) else d)[:140]
+                        if st in (200, 201) else "GitHub said: " + str(d.get("message") if isinstance(d, dict) else d)[:120])
+        if _res:
+            return " ".join(x for x in _res if x)
         fm = re.search(r"\b(file|readme|\.md|\.txt|\.html|\.css|\.js|\.json|\.py)\b", cmd_target + " " + (text or ""), re.I)
         if re.search(r"\b(edit|update|change|write|create|add|fix|replace)\b", act) and fm and repo_m:
             pm = re.search(r"[\w./-]+\.[a-z0-9]{1,6}", cmd_target or text or "", re.I)
