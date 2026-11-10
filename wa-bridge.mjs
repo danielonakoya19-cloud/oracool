@@ -86,6 +86,18 @@ async function openSession(id) {
     if (u.connection === 'open') {
       rec.state = 'connected'; rec.qr = ''
       try { rec.user = { id: sock.user?.id || '', name: sock.user?.name || '' } } catch (e) {}
+      // fill group/newsletter display names so chat lists are readable
+      setTimeout(async () => {
+        for (const [jid, ch] of rec.chats) {
+          if (ch.name) continue
+          try {
+            if (String(jid).endsWith('@g.us')) {
+              const meta = await sock.groupMetadata(jid)
+              if (meta && meta.subject) { ch.name = meta.subject; rec.chats.set(jid, ch) }
+            }
+          } catch (e) {}
+        }
+      }, 2500)
     }
     if (u.connection === 'close') {
       const code = u.lastDisconnect?.error?.output?.statusCode
