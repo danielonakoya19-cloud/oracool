@@ -419,3 +419,5 @@
 - Tests +6 (test_patch102): summary content, unlinked→wa_link, read-vs-list ordering, command forms chats/messages, placeholder junk+scrub. **Suite 938 passed.**
 
 - patch103b: 'connecting/starting' states report 'reconnecting — still linked' (never 'not linked' + QR sheet mid-reconnect); send/action errors say 'reconnecting or not linked — try again'. The mystery 'ORA-COOL · PHONE WHATSAPP + JARVIS' header = the PHONE WHATSAPP core persona (`__cores`) + model placeholder, now always replaced by real content. Suite **939 passed**.
+
+- patch103c: model tool calls written as fenced JSON (`{"function": X, "tool_input": {...}}`) are now EXECUTED (`_json_tool_commands` → whatsapp/connector command forms, hooked into both stream intercept and non-stream sweep) and SCRUBBED from replies (server `_scrub_tool_placeholders` + client `_stripCmdLines`) so raw call JSON never reaches the user. Suite **941 passed**.

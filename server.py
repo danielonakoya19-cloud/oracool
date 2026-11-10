@@ -17368,7 +17368,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.flush()
                 except Exception:
                     pass
-            _plain_cmds = _plain_commands(acc_stream)
+            _plain_cmds = _plain_commands(acc_stream) + _json_tool_commands(acc_stream)
             if (_guard.captured.strip() or _plain_cmds) and markup_rounds < 1:
                 # the model leaked tool-call markup or a plain command line as text —
                 # the server runs the call for real and asks for a clean answer
@@ -17525,6 +17525,39 @@ _PLAIN_CMD_SKIP = re.compile(r"e\.?g\b|example|for instance|looks like|format is
                              r"you can (say|use|type|write|send|ask)|say (something )?like|such as|quote|for demo", re.I)
 
 
+_JSON_TOOL_RX = re.compile(r"\{\s*\"function\"\s*:\s*\"([a-z_ ]{2,30})\"\s*,\s*\"tool_input\"\s*:\s*(\{[^{}]*\})", re.I)
+
+
+def _json_tool_commands(txt):
+    """Model tool calls written as JSON ({\"function\": X, \"tool_input\": {...}}) become
+    real commands — the same channel as plain command lines."""
+    out = []
+    for m in _JSON_TOOL_RX.finditer(txt or ""):
+        fn = m.group(1).strip().lower()
+        try:
+            args = json.loads(m.group(2))
+        except Exception:
+            args = {}
+        if not isinstance(args, dict):
+            args = {}
+        if fn in ("whatsapp", "whatsapp_send", "wa"):
+            act = str(args.get("action") or args.get("kind") or "check").lower()
+            to = args.get("to") or args.get("number") or args.get("recipient") or ""
+            tx = args.get("text") or args.get("message") or args.get("body") or ""
+            if act in ("chats", "list", "conversations"):
+                out.append("whatsapp :: chats")
+            elif act in ("check", "status", "summary"):
+                out.append("whatsapp :: check")
+            elif act in ("send", "message", "reply") and to:
+                out.append("whatsapp :: send :: " + str(to) + " :: " + str(tx))
+            else:
+                out.append("whatsapp :: " + act + " :: " + str(to) + " :: " + str(tx))
+        else:
+            out.append("connector :: " + fn + " :: " + str(args.get("action") or "") + " :: "
+                       + str(args.get("to") or "") + " :: " + str(args.get("text") or ""))
+    return out[:3]
+
+
 def _plain_commands(txt):
     """Command lines the model wrote to EXECUTE (never display-only).
     Lines that read like examples are skipped so prompts never fire actions."""
@@ -17542,7 +17575,7 @@ def _plain_commands(txt):
 
 def _exec_plain_now(acc_full, tier, body, chat_email, tool_summary, chat_media):
     """Non-stream: run any command lines the model wrote, strip them, append a receipt."""
-    cmds = _plain_commands(acc_full)
+    cmds = _plain_commands(acc_full) + _json_tool_commands(acc_full)
     if not cmds:
         return acc_full
     txt = _PLAIN_CMD_RX.sub("", acc_full).strip()
@@ -17787,6 +17820,8 @@ _TOOL_PLACEHOLDER_RX = re.compile(r"\(?\*{0,2}\(?ran (?:a|the|this|whatsapp|conn
 
 def _scrub_tool_placeholders(txt):
     out = _TOOL_PLACEHOLDER_RX.sub("", str(txt or ""))
+    out = re.sub(r"```(?:json)?\s*\{[^`]*\"function\"[^`]*\}\s*```", "", out, flags=re.I)
+    out = re.sub(r"\{\s*\"function\"\s*:\s*\"[a-z_ ]{2,30}\"\s*,\s*\"tool_input\"\s*:\s*\{[^{}]*\}\s*\}", "", out, flags=re.I)
     out = re.sub(r"\n{3,}", "\n\n", out).strip()
     return out
 

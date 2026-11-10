@@ -3197,7 +3197,9 @@ function regenerateLast(){
   const q=history[ui].content; history.splice(ui);
   send(q);
 }
-function _stripCmdLines(t){ try{ return String(t||"").replace(/^[ \t]*(?:[-\u2022>]+\s*)?(?:connector|community|certificate|cert|qr|chart|whatsapp)\s*::[^\n]*\n?/gmi,""); }catch(e){ return t; } }
+function _stripCmdLines(t){ try{ var o=String(t||"").replace(/^[ \t]*(?:[-\u2022>]+\s*)?(?:connector|community|certificate|cert|qr|chart|whatsapp)\s*::[^\n]*\n?/gmi,"");
+  o=o.replace(/```(?:json)?\s*\{[^`]*"function"[^`]*\}\s*```/gi,"").replace(/\{\s*"function"\s*:\s*"[a-z_ ]{2,30}"\s*,\s*"tool_input"\s*:\s*\{[^{}]*\}\s*\}/gi,"");
+  return o; }catch(e){ return t; } }
 function renderRich(el, text){
   text=_mediaJsonToMarkdown(text);
   text=_cleanReply(text);

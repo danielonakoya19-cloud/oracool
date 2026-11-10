@@ -262,3 +262,23 @@ def test_summary_says_reconnecting_not_unlinked(monkeypatch):
                         lambda p, w, b: {"ok": True, "connected": False, "state": "connecting"})
     t, extra = server._wa_action("a@b.c", "check my whatsapp", "check my whatsapp")
     assert "reconnecting" in t and "still linked" in t and extra is None
+
+
+def test_json_tool_calls_become_real_commands():
+    raw = 'Let me check.\n```json\n{"function": "whatsapp", "tool_input": {"action": "check"}}\n```'
+    cmds = server._json_tool_commands(raw)
+    assert cmds == ["whatsapp :: check"]
+    raw2 = '{"function": "whatsapp", "tool_input": {"action": "send", "to": "+2348012345678", "text": "hi"}}'
+    assert server._json_tool_commands(raw2) == ["whatsapp :: send :: +2348012345678 :: hi"]
+    raw3 = '{"function": "github", "tool_input": {"action": "list repos"}}'
+    assert server._json_tool_commands(raw3)[0].startswith("connector :: github ::")
+
+
+def test_json_tool_blocks_scrubbed_from_replies():
+    raw = 'Checking now.\n```json\n{"function": "whatsapp", "tool_input": {"action": "check"}}\n```\n'
+    out = server._scrub_tool_placeholders(raw)
+    assert "function" not in out and "Checking now" in out
+    only = server._scrub_tool_placeholders('{"function": "whatsapp", "tool_input": {"action": "check"}}')
+    assert server._reply_is_junk(only) or not only
+    c = open("index.html").read()
+    assert '"function"' in c.split("function _stripCmdLines")[1][:900]
