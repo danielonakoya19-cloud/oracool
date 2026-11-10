@@ -3805,6 +3805,10 @@ def _conn_http(url, method="GET", headers=None, json_body=None, timeout=25):
             data = json.loads(raw) if raw else {}
         except Exception:
             data = {"raw": str(raw)[:400]}
+        if isinstance(data, dict):
+            _m = str(data.get("message") or "")
+            if "credential" in _m.lower() or "bad token" in _m.lower() or _m.lower() == "bad credentials":
+                data["message"] = "token rejected \u2014 re-link the account"
         return st, data
     except Exception as e:
         _es = str(e)
@@ -3951,7 +3955,7 @@ def _connector_write(name, c, low, text, tok):
     if re.match(r"\s*connector\s*::", text or "", re.I):
         parts = [x.strip() for x in (text or "").split("::")]
         if len(parts) >= 4:
-            cmd_action = parts[2].lower()
+            cmd_action = re.sub(r"[_-]+", " ", parts[2].lower())
             cmd_target = parts[3]
             cmd_content = "::".join(parts[4:]).strip()
 
@@ -3964,8 +3968,9 @@ def _connector_write(name, c, low, text, tok):
 
     if name == "github":
         repo_m = re.search(r"\b([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)\b", cmd_target or text or "")
-        issue_m = re.search(r"(?:issue|pr|pull request)\s*#?\s*(\d+)", cmd_action + " " + cmd_target + " " + (text or ""), re.I)
-        act = cmd_action or low
+        issue_m = (re.search(r"(?:issue|pr|pull request)\s*#?\s*(\d+)", cmd_action + " " + cmd_target + " " + (text or ""), re.I)
+                   or re.search(r"/(\d+)\s*$", cmd_target or ""))
+        act = cmd_action or re.sub(r"[_-]+", " ", low)
         body_txt = cmd_content or ""
         if not cmd_action:
             body_txt = _after_colon(text) or body_txt
@@ -16757,6 +16762,7 @@ class Handler(BaseHTTPRequestHandler):
                         _d34n = _tool_digest(tool_runs)
                         if _d34n:
                             acc_full = "Here is what my live tools found for you:\n\n" + _d34n
+                    acc_full = _exec_plain_now(acc_full, tier, body, chat_email, tool_summary, chat_media)
                     self._send_json(chat_finish(acc_full, tool_summary, core_names, chat_media,
                                                 _conv_id, _conv_em))
                 except urllib.error.HTTPError as e:
@@ -16777,6 +16783,7 @@ class Handler(BaseHTTPRequestHandler):
                             payload.pop("reasoning_effort", None)
                         continue
                     if acc_full:
+                        acc_full = _exec_plain_now(acc_full, tier, body, chat_email, tool_summary, chat_media)
                         self._send_json(chat_finish(acc_full, tool_summary, core_names, chat_media,
                                                     _conv_id, _conv_em,
                                                     "The provider dropped during a continuation segment."))
@@ -16785,6 +16792,7 @@ class Handler(BaseHTTPRequestHandler):
                         self._send_json({"error": _brain_error_text(e.code, err_body)}, 502)
                 except Exception as e:
                     if acc_full:
+                        acc_full = _exec_plain_now(acc_full, tier, body, chat_email, tool_summary, chat_media)
                         self._send_json(chat_finish(acc_full, tool_summary, core_names, chat_media,
                                                     _conv_id, _conv_em))
                     else:
@@ -16952,11 +16960,12 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.flush()
                 except Exception:
                     pass
-            if _guard.captured.strip() and markup_rounds < 1:
-                # the model leaked tool-call markup as text — the server runs the
-                # call for real and asks for a clean answer instead of showing junk
+            _plain_cmds = _plain_commands(acc_stream)
+            if (_guard.captured.strip() or _plain_cmds) and markup_rounds < 1:
+                # the model leaked tool-call markup or a plain command line as text —
+                # the server runs the call for real and asks for a clean answer
                 markup_rounds += 1
-                _cmds = _markup_commands(_guard.captured)
+                _cmds = _markup_commands(_guard.captured) + _plain_cmds
                 _ctx2 = ""
                 if _cmds:
                     try:
@@ -16979,7 +16988,8 @@ class Handler(BaseHTTPRequestHandler):
                     {"role": "system", "content":
                      "OraCool's server INTERCEPTED and EXECUTED the tool call you emitted just now — the fresh "
                      "results are in your context below. NEVER output tool-call markup, parameter tags or "
-                     "internal metadata again (no <tool_call>, <invoke>, <arg_key>/<arg_value>, no model or "
+                     "internal metadata again (no command lines like 'connector :: …' either — just think the "
+                     "command and the server will run it; never show these forms to the user), no <tool_call>, <invoke>, <arg_key>/<arg_value>, no model or "
                      "telemetry fields): tools are executed automatically. Answer the user's question now in "
                      "plain prose, grounded in those results."}]
                 if _ctx2:
@@ -17100,6 +17110,57 @@ def _strip_agent_markup(text):
     t = re.sub(r"<\s*/?\s*(?:think|thinking|reasoning)\b[^>]*>", "", t, flags=re.I)
     t = re.sub(r"\n{3,}", "\n\n", t)
     return t.strip()
+
+
+_PLAIN_CMD_RX = re.compile(r"(?m)^\s*(?:[-\u2022>]+\s*)?((?:connector|community|certificate|cert|qr|chart)\s*::[^\n]+)$", re.I)
+_PLAIN_CMD_SKIP = re.compile(r"e\.?g\b|example|for instance|looks like|format is|template", re.I)
+
+
+def _plain_commands(txt):
+    """Standalone command lines the model wrote to EXECUTE (never display-only).
+    Lines that read like examples are skipped so prompts never fire actions."""
+    out = []
+    for m in _PLAIN_CMD_RX.finditer(txt or ""):
+        line = m.group(1).strip()
+        if _PLAIN_CMD_SKIP.search(line):
+            continue
+        out.append(line[:300])
+    return out[:3]
+
+
+def _exec_plain_now(acc_full, tier, body, chat_email, tool_summary, chat_media):
+    """Non-stream: run any command lines the model wrote, strip them, append a receipt."""
+    cmds = _plain_commands(acc_full)
+    if not cmds:
+        return acc_full
+    txt = re.sub(r"(?m)^\s*(?:[-\u2022>]+\s*)?(?:(?:connector|community|certificate|cert|qr|chart)\s*::[^\n]+)\n?", "", acc_full).strip()
+    runs = []
+    try:
+        runs = auto_tools(" ; ".join(cmds), tier, ha_url=body.get("ha_url"),
+                          ha_token=body.get("ha_token"), email=chat_email, crypto_site="") or []
+    except Exception:
+        runs = []
+    for t in runs:
+        ts = {"tool": t.get("tool"), "label": t.get("label")}
+        try:
+            tr = t.get("result") if isinstance(t.get("result"), dict) else json.loads(t.get("result") or "{}")
+            for _k in ("url", "name", "svg", "title", "type", "qr_url", "data", "id", "verify_url", "recipient"):
+                if tr.get(_k):
+                    ts[_k] = tr[_k]
+        except Exception:
+            pass
+        tool_summary.append(ts)
+        if t.get("tool") in ("qr", "cert"):
+            try:
+                tr2 = t.get("result") if isinstance(t.get("result"), dict) else json.loads(t.get("result") or "{}")
+                if tr2.get("qr_url"):
+                    chat_media.append({"kind": "image", "url": tr2["qr_url"], "prompt": str(tr2.get("data") or tr2.get("id") or "qr code")})
+            except Exception:
+                pass
+    lbl = " · ".join(str(x.get("label")) for x in runs[:3])
+    if lbl:
+        txt = (txt + "\n\n⚙️ *(live)* ran for you: " + lbl).strip()
+    return txt or ("⚙️ ran: " + lbl)
 
 
 def _markup_commands(captured):

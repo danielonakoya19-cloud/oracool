@@ -3197,6 +3197,7 @@ function regenerateLast(){
   const q=history[ui].content; history.splice(ui);
   send(q);
 }
+function _stripCmdLines(t){ try{ return String(t||"").replace(/^[ \t]*(?:[-\u2022>]+\s*)?(?:connector|community|certificate|cert|qr|chart)\s*::[^\n]*\n?/gmi,""); }catch(e){ return t; } }
 function renderRich(el, text){
   text=_mediaJsonToMarkdown(text);
   text=_cleanReply(text);
@@ -4476,7 +4477,7 @@ async function send(text){
     // patch41: one copy of each generated image/video — never the "duplicate rubbish" of URL + markdown + card
     if(streamMedia.length){ const seen={}; streamMedia=streamMedia.filter(m=>{ if(!m||!m.url||seen[m.url]) return false; seen[m.url]=1; return true; }); const missing=streamMedia.filter(m=>acc.indexOf(m.url)<0); if(missing.length) acc += '\n\n' + missing.map(m=>m.url).join('\n'); }
     body.dataset.fresh='1';
-    renderRich(body, acc||'(no response) — the brain stayed silent; send again and it will pick up.');
+    renderRich(body, _stripCmdLines(acc)||'(no response) — the brain stayed silent; send again and it will pick up.');
     if(streamMedia.length){
       streamMedia.forEach(m=>{
         if(body.querySelector('img[src="'+m.url+'"],video[src="'+m.url+'"]')) return;
@@ -4492,7 +4493,7 @@ async function send(text){
         const _bm=acc.match(/(?:•\s*)?(?:build|edit)\s*·\s*[^:\n]{0,30}:\s*(\{"ok"\s*:\s*true[\s\S]*?"note"[\s\S]*?\})/);
         if(_bm){ let _pj=null; try{ _pj=JSON.parse(_bm[1]); }catch(e){}
           acc=acc.replace(_bm[0], _pj?('<b>'+escapeHtml(_pj.name||'Your site')+'</b> is ready — the live preview card is below.'):'✅ The build finished — the live preview card is below.');
-          renderRich(body, acc);
+          renderRich(body, _stripCmdLines(acc));
           if(_pj&&(_pj.url||_pj.slug)){ try{ buildCard(_pj); _builtCard=true; }catch(e){} } }
       }
     }catch(e){}

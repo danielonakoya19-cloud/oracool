@@ -186,3 +186,60 @@ def test_write_layer_wired_into_dispatch():
 
 def test_marker():
     assert SERVER_SRC.count("patch100-conn-write") == 2
+
+
+# ---------------------------------------------------------------------------
+# patch100b — plain command interception + verb normalization + clean errors
+# ---------------------------------------------------------------------------
+
+def test_plain_command_lines_are_extracted_not_examples():
+    import server
+    cmds = server._plain_commands("I made the issue.\nconnector :: github :: close issue :: me/app/5 :: \n\nDone \u2705")
+    assert any("close issue" in x for x in cmds)
+    # example-looking lines never fire actions
+    assert server._plain_commands('You can say: "certificate :: John :: Course"') == []
+    assert server._plain_commands("e.g. connector :: github :: comment :: me/app/1 :: hi") == []
+
+
+def test_write_action_underscores_normalized():
+    import server, json, tests.test_patch100 as _t
+    def fake(url, method="GET", headers=None, json_body=None, timeout=25):
+        if "/comments" in url and method == "POST":
+            return 201, {"id": 9}
+        if method == "PATCH" and "/issues/" in url:
+            return 200, {"state": "closed"}
+        return 404, {}
+    server._conn_http, backup = fake, server._conn_http
+    try:
+        c = {"token": "tk"}
+        r = server._connector_do("github", c, "create issue comment danielonakoya19-cloud/oracool/1",
+                                 "connector :: github :: create_issue_comment :: danielonakoya19-cloud/oracool/1 :: clean write")
+        assert "Comment posted" in r
+        r2 = server._connector_do("github", c, "close issue",
+                                  "connector :: github :: _close_issue :: danielonakoya19-cloud/oracool/1 :: ")
+        assert "closed" in r2
+    finally:
+        server._conn_http = backup
+
+
+def test_conn_http_credentials_message_sanitized():
+    import server
+    def fake_fetch(url, method="GET", headers=None, json_body=None, timeout=25):
+        return 401, '{"message": "Bad credentials"}', {}
+    backup = server.http_fetch
+    server.http_fetch = fake_fetch
+    try:
+        st, d = server._conn_http("https://api.github.com/user")
+    finally:
+        server.http_fetch = backup
+    assert st == 401
+    assert "Bad credentials" not in str(d)
+    assert "token rejected" in str(d.get("message", ""))
+
+
+def test_plain_sweep_helpers_exist_and_strip():
+    import server
+    assert callable(server._plain_commands)
+    assert callable(server._exec_plain_now)
+    src = open("index.html").read()
+    assert src.count("_stripCmdLines") >= 3

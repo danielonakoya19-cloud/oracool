@@ -354,3 +354,12 @@
 - **Prompt (server + client mirror):** "TOTAL ACCESS (READ AND WRITE) … Never say you can only read, never tell them to go do it manually … do exactly what they asked; ask ONE question only when target/content genuinely ambiguous (every action is audited)." auto_tools connector trigger verbs extended (edit/change/update/delete/send/post/upload/close/comment/schedule/…).
 - Parsing fix across all write handlers: content extraction is colon+SPACE (`_after_colon`) — URL colons (`https:`) can never swallow the payload again.
 - Suite **893 passed** (test_patch100 = 18). Marker `patch100-conn-write` ×2, 70 files retargeted.
+
+
+## patch100b — live-write hardening (SHIPPED)
+
+- Prod server_vault `GITHUB_TOKEN` rotated via `POST /api/admin/vault` body {"email","token","set":{...}} (the `/api/admin/keys` route is READ-ONLY booleans; the SET route is `/api/admin/vault` with `body["set"]`) — the server's own key() consumers no longer 401 with the revoked PAT.
+- `_conn_http` sanitizes credential errors in BOTH layers: exception path and JSON body path ("Bad credentials" → "token rejected — re-link the account"). Never leak provider error strings.
+- Model tool calls that arrive as PLAIN command lines (`connector :: …`, `community post :: …`, `certificate :: …`, `qr :: …`, `chart :: …`) are now EXECUTED server-side like markup calls: `_plain_commands()` extracts standalone lines (example-looking lines with e.g./example/quotes are skipped — prompts can never fire actions), stream path reuses the intercept+re-ask block (`acc_stream` — `acc_full` is unbound there), non-stream path runs `_exec_plain_now()` before `chat_finish` (strips the lines, appends the receipt, fills tool_summary/chat_media). Client `_stripCmdLines()` hides transient command lines from the bubble at render.
+- `_connector_write` action words normalize `_`/`-` to spaces (so `create_issue_comment`, `_close_issue` from model markup match), issue number also parsed from `owner/repo/N` target tails. `_conn_http` test seam = `server.http_fetch` (returns (st, raw, meta)).
+- Suite **897 passed**. Marker `patch100-conn-write` (same patch family).
