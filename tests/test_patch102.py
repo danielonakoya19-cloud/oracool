@@ -255,3 +255,10 @@ def test_placeholder_scrub_and_junk_detection():
     assert not server._reply_is_junk("Your WhatsApp is linked. Recent chats: Family Group.")
     out = server._scrub_tool_placeholders("Done.\n(ran whatsapp connector tool)\n**Live results gathered for you:**")
     assert "ran" not in out and "Live results" in out
+
+
+def test_summary_says_reconnecting_not_unlinked(monkeypatch):
+    monkeypatch.setattr(server, "wa_gateway",
+                        lambda p, w, b: {"ok": True, "connected": False, "state": "connecting"})
+    t, extra = server._wa_action("a@b.c", "check my whatsapp", "check my whatsapp")
+    assert "reconnecting" in t and "still linked" in t and extra is None

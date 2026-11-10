@@ -5147,7 +5147,7 @@ def wa_gateway(path2, who, body):
             return {"ok": False, "error": "to and text are required"}
         d = _wa_http("/send?session=" + sid, method="POST", obj={"to": to, "text": text2}, timeout=30)
         if d.get("error") == "not connected":
-            return {"ok": False, "error": "WhatsApp is not linked yet \u2014 scan the QR in Connectors first."}
+            return {"ok": False, "error": "WhatsApp is reconnecting or not linked \u2014 try again in a few seconds, or scan the QR in Connectors \u2192 WhatsApp if it is not linked."}
         return {"ok": not d.get("error"), "id": d.get("id") or "",
                 "message": ("WhatsApp message sent to " + to + ".") if not d.get("error") else str(d.get("error"))[:160]}
     if path2 == "/api/wa/bot":
@@ -5170,7 +5170,7 @@ def wa_gateway(path2, who, body):
                      "minutes": body.get("minutes")}.items() if v is not None}
         d = _wa_http("/action?session=" + sid, method="POST", obj=_act_obj, timeout=30)
         if d.get("error") == "not connected":
-            return {"ok": False, "error": "WhatsApp is not linked yet \u2014 scan the QR in Connectors first."}
+            return {"ok": False, "error": "WhatsApp is reconnecting or not linked \u2014 try again in a few seconds, or scan the QR in Connectors \u2192 WhatsApp if it is not linked."}
         return {"ok": not d.get("error"), "message": d.get("message") or str(d.get("error"))[:180]}
     if path2 == "/api/wa/chats":
         d = _wa_http("/chats?session=" + sid, timeout=12)
@@ -5341,6 +5341,9 @@ def _wa_action(email, low, text):
             and not re.search(r"\b(send|react|delete|mute|archive|reply|write|tell|mark)\b", low)):
         r = wa_gateway("/api/wa/status", email, {})
         if not r.get("connected"):
+            if str(r.get("state") or "") in ("connecting", "starting"):
+                return ("Your WhatsApp is reconnecting after a server update \u2014 give it about 15 seconds "
+                        "and check again. It is still linked."), None
             return ("WhatsApp is not linked yet \u2014 say 'link my whatsapp' and scan the QR, "
                     "then I can check everything for you."), {"wa_link": True}
         who = str((r.get("user") or {}).get("name") or "your number")[:30]
