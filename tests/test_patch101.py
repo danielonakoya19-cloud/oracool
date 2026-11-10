@@ -230,3 +230,11 @@ def test_bridge_script_ships_with_repo():
     assert "127.0.0.1" in b  # never exposed publicly
     pkg = json.load(open("package.json"))
     assert "@whiskeysockets/baileys" in pkg["dependencies"]
+
+
+def test_starting_state_is_not_an_error(monkeypatch):
+    monkeypatch.setattr(server, "_wa_ensure_bridge", lambda: (False, "starting"))
+    r = server.wa_gateway("/api/wa/qr", "a@b.c", {})
+    assert r["starting"] and r["state"] == "starting" and r["qr"] == "" and "error" not in r
+    c = open("index.html").read()
+    assert "r.starting" in c and "Starting the link service" in c

@@ -5045,7 +5045,8 @@ def _wa_http(p2, method="GET", obj=None, timeout=8):
 
 
 def _wa_ensure_bridge():
-    """Start the Node link bridge on this host if it is not already up."""
+    """Start the Node link bridge on this host. Never blocks a request while it
+    boots — callers poll, the client re-polls, and nothing piles up."""
     global _WA_PROC
     try:
         import subprocess, shutil  # noqa
@@ -5058,20 +5059,29 @@ def _wa_ensure_bridge():
     base = os.path.dirname(os.path.abspath(__file__))
     if not os.path.exists(os.path.join(base, "wa-bridge.mjs")):
         return False, "the link service script is missing on this server"
+    starting = False
     try:
-        env2 = dict(os.environ)
-        env2["WA_BRIDGE_PORT"] = str(_WA_BRIDGE_PORT)
-        _WA_PROC = subprocess.Popen(
-            "npm install --no-audit --no-fund --omit=dev >/dev/null 2>&1; exec node wa-bridge.mjs",
-            shell=True, cwd=base, env=env2,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    except Exception as e:
-        return False, str(e)[:90]
-    for _ in range(40):
+        if _WA_PROC is not None and _WA_PROC.poll() is None:
+            starting = True  # already booting — do not spawn a twin
+    except Exception:
+        pass
+    if not starting:
+        try:
+            env2 = dict(os.environ)
+            env2["WA_BRIDGE_PORT"] = str(_WA_BRIDGE_PORT)
+            _WA_PROC = subprocess.Popen(
+                "if [ ! -d node_modules ]; then npm install --no-audit --no-fund --omit=dev >/dev/null 2>&1; fi; exec node wa-bridge.mjs",
+                shell=True, cwd=base, env=env2,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            starting = True
+        except Exception as e:
+            return False, str(e)[:90]
+    # short grace only — warm restarts come up in ~1s
+    for _ in range(4):
         time.sleep(0.5)
         if _wa_http("/health", timeout=2).get("ok"):
             return True, ""
-    return False, "the link service did not start"
+    return False, "starting"
 
 
 def _wa_vault_push(sid):
@@ -5101,6 +5111,8 @@ def wa_gateway(path2, who, body):
     sid = _wa_sid(who)
     ok, err = _wa_ensure_bridge()
     if not ok:
+        if err == "starting":
+            return {"ok": False, "starting": True, "state": "starting", "qr": "", "connected": False}
         return {"ok": False, "error": "WhatsApp QR linking needs the server link service \u2014 " + err}
     if path2 == "/api/wa/logout":
         _wa_http("/logout?session=" + sid, method="POST", timeout=20)

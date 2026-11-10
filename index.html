@@ -8434,6 +8434,7 @@ function waQRStartPoll(){
 function waQRTick(){
   post('/api/wa/qr',{}).then(function(r){
     var box=document.getElementById('waQRBox'), st=document.getElementById('waQRStat');
+    if(r && r.starting){ if(st) st.textContent='Starting the link service - one moment...'; return; }
     if(!r || r.error){ if(st) st.innerHTML='<span style="color:#fca5a5">'+escapeHtml((r&&r.error)||'Could not reach the link service.')+'</span>'; return; }
     if(r.connected){
       if(_waPoll){ clearInterval(_waPoll); _waPoll=null; }
