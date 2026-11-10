@@ -3197,7 +3197,7 @@ function regenerateLast(){
   const q=history[ui].content; history.splice(ui);
   send(q);
 }
-function _stripCmdLines(t){ try{ return String(t||"").replace(/^[ \t]*(?:[-\u2022>]+\s*)?(?:connector|community|certificate|cert|qr|chart)\s*::[^\n]*\n?/gmi,""); }catch(e){ return t; } }
+function _stripCmdLines(t){ try{ return String(t||"").replace(/^[ \t]*(?:[-\u2022>]+\s*)?(?:connector|community|certificate|cert|qr|chart|whatsapp)\s*::[^\n]*\n?/gmi,""); }catch(e){ return t; } }
 function renderRich(el, text){
   text=_mediaJsonToMarkdown(text);
   text=_cleanReply(text);
@@ -4463,7 +4463,7 @@ async function send(text){
                     (_cur.detail?' — <span style="opacity:.72">'+escapeHtml(String(_cur.detail).slice(0,90))+'</span>':'')+
                     ' <span class="dots"></span></div>'; scrollChat(); }
                 }catch(e){} }
-              if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build'){ if(x.coins_left!=null){ COINS=COINS||{}; COINS.balance=x.coins_left; renderCoinPill(); } if(x.url){ _builtCard=true; try{ buildCard(x); }catch(e){ addAI('<b>🏗 '+(x.name||'Your site')+'</b> is built — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the live preview here</a> (auto-saved to your vault).'); } } } if(x.tool==='edit'&&x.url){ _builtCard=true; try{ buildCard(x); }catch(e){ addAI('<b>✏️ '+(x.name||'Your site')+' updated</b> — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the new preview</a>.'); } } if(x.tool==='publish'){ try{ addAI(x.url?('🌐 Published — live at <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener">'+escapeHtml(x.url)+'</a>'):''); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } if(x.tool==='connector_link'){ try{ connLinkCard(x); }catch(e){} } if(x.tool==='chart'){ try{ chartCard(x); }catch(e){} } if(x.tool==='qr'){ try{ qrCard(x); }catch(e){} } if(x.tool==='cert'){ try{ certCard(x); }catch(e){} } }); }
+              if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build'){ if(x.coins_left!=null){ COINS=COINS||{}; COINS.balance=x.coins_left; renderCoinPill(); } if(x.url){ _builtCard=true; try{ buildCard(x); }catch(e){ addAI('<b>🏗 '+(x.name||'Your site')+'</b> is built — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the live preview here</a> (auto-saved to your vault).'); } } } if(x.tool==='edit'&&x.url){ _builtCard=true; try{ buildCard(x); }catch(e){ addAI('<b>✏️ '+(x.name||'Your site')+' updated</b> — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the new preview</a>.'); } } if(x.tool==='publish'){ try{ addAI(x.url?('🌐 Published — live at <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener">'+escapeHtml(x.url)+'</a>'):''); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } if(x.tool==='connector_link'){ try{ connLinkCard(x); }catch(e){} } if(x.tool==='wa_link'){ try{ waQRSheet(); }catch(e){} } if(x.tool==='chart'){ try{ chartCard(x); }catch(e){} } if(x.tool==='qr'){ try{ qrCard(x); }catch(e){} } if(x.tool==='cert'){ try{ certCard(x); }catch(e){} } }); }
               if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
               if(j.__media && j.__media.length){ streamMedia=streamMedia.concat(j.__media); }
               const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; const _shown=_noApp(_cleanReply(acc)); body.textContent=_shown+(acc.indexOf('```')>=0&&_shown.length<_cleanReply(acc).length?' ✨ drawing it for you…':''); if(turnSpeaker)turnSpeaker.feed(_shown); scrollChat(); }
@@ -8391,12 +8391,91 @@ function connRow(c){
     '<div class="connact">'+form+(c.connected?'<button class="conndisc" data-n="'+c.name+'">Disconnect</button>':'')+'</div>'+
     '</div>';
 }
+function waConnRow(){
+  return '<div class="connrow" data-n="wa-qr">'+
+    '<div class="connic">\ud83d\udcac</div>'+
+    '<div class="conninfo"><div class="connname">WhatsApp <span style="opacity:.7;font-size:11px">- QR link (your own number)</span></div>'+
+    '<div class="conndesc" id="waQRDesc">Link your WhatsApp by scanning a QR code - exactly like WhatsApp Web. Then the AI can send and read messages for you.</div></div>'+
+    '<div class="connact"><button class="cmgo" style="padding:9px 12px;font-size:12.5px" id="waQRBtn">Link with QR</button></div>'+
+    '</div>';
+}
+var _waPoll=null, _waLastQR='';
+function waQRSheet(){
+  var m=document.getElementById('waov');
+  if(!m){
+    m=document.createElement('div'); m.id='waov'; m.className='cmov';
+    m.innerHTML='<div style="width:min(92vw,380px);background:rgba(13,18,32,.97);border:1px solid rgba(125,211,252,.28);'+
+      'border-radius:20px;padding:20px;text-align:center;box-shadow:0 30px 80px rgba(0,0,0,.55)">'+
+      '<div style="font-size:17px;font-weight:700">Link your WhatsApp</div>'+
+      '<div style="font-size:12.5px;opacity:.78;margin:8px 0 14px;line-height:1.5">Open WhatsApp on your phone &rarr; <b>Settings &rarr; Linked devices &rarr; Link a device</b>, then scan this code.</div>'+
+      '<div id="waQRBox" style="background:#fff;border-radius:14px;padding:10px;min-height:210px;display:flex;align-items:center;justify-content:center">'+
+      '<span style="color:#334;font-size:12px">Preparing the live link code<span class="dots"></span></span></div>'+
+      '<div id="waQRStat" style="font-size:12px;opacity:.85;margin-top:10px;min-height:18px">Connecting to WhatsApp...</div>'+
+      '<div style="display:flex;gap:8px;justify-content:center;margin-top:12px">'+
+      '<button id="waQRUnlink" style="display:none;padding:9px 14px;border-radius:12px;border:1px solid rgba(248,113,113,.4);background:transparent;color:#fca5a5;font-size:12.5px">Unlink</button>'+
+      '<button id="waQRClose" style="padding:9px 14px;border-radius:12px;border:1px solid rgba(125,211,252,.35);background:rgba(125,211,252,.12);color:#bae6fd;font-size:12.5px">Close</button>'+
+      '</div></div>';
+    document.body.appendChild(m);
+    m.addEventListener('click',function(e){ if(e.target===m) waQRCloseFn(); });
+  }
+  m.style.display='flex';
+  document.getElementById('waQRClose').onclick=waQRCloseFn;
+  document.getElementById('waQRUnlink').onclick=function(){
+    post('/api/wa/logout',{}).then(function(){ toastMsg('WhatsApp unlinked.'); waQRStatus(); waQRStartPoll(); }).catch(function(){});
+  };
+  waQRStartPoll();
+}
+function waQRCloseFn(){ var m=document.getElementById('waov'); if(m) m.style.display='none'; if(_waPoll){ clearInterval(_waPoll); _waPoll=null; } }
+function waQRStartPoll(){
+  if(_waPoll) clearInterval(_waPoll);
+  waQRTick();
+  _waPoll=setInterval(waQRTick, 2600);
+}
+function waQRTick(){
+  post('/api/wa/qr',{}).then(function(r){
+    var box=document.getElementById('waQRBox'), st=document.getElementById('waQRStat');
+    if(!r || r.error){ if(st) st.innerHTML='<span style="color:#fca5a5">'+escapeHtml((r&&r.error)||'Could not reach the link service.')+'</span>'; return; }
+    if(r.connected){
+      if(_waPoll){ clearInterval(_waPoll); _waPoll=null; }
+      var nm=(r.user&&r.user.name)?String(r.user.name).slice(0,30):'';
+      if(box) box.innerHTML='<div style="color:#0a7d38;font-size:34px">&#10004;</div><div style="color:#123;font-size:12.5px;margin-top:6px">Linked'+(nm?(' as '+escapeHtml(nm)):'')+'</div>';
+      if(st) st.textContent='Your WhatsApp is linked to OraCool. The AI can send and read messages for you.';
+      var un=document.getElementById('waQRUnlink'); if(un) un.style.display='inline-block';
+      toastMsg('WhatsApp linked.');
+      waQRStatus();
+      return;
+    }
+    if(r.qr && r.qr!==_waLastQR){
+      _waLastQR=r.qr;
+      if(box) box.innerHTML='<img alt="WhatsApp link QR" style="width:190px;height:190px;display:block" src="/api/qr?data='+encodeURIComponent(r.qr)+'&fmt=png">';
+      if(st) st.textContent='Waiting for you to scan... the code refreshes by itself.';
+    } else if(!r.qr && st && !(_waLastQR)) {
+      st.textContent='Warming up the link service...';
+    }
+    var un2=document.getElementById('waQRUnlink'); if(un2) un2.style.display='none';
+    waQRStatus();
+  }).catch(function(){});
+}
+function waQRStatus(){
+  post('/api/wa/status',{}).then(function(r){
+    var d=document.getElementById('waQRDesc'), b=document.getElementById('waQRBtn');
+    if(!d) return;
+    if(r && r.connected){
+      var nm=(r.user&&r.user.name)?(' as '+String(r.user.name).slice(0,28)):'';
+      d.innerHTML='<span style="color:#4ade80">Connected'+nm+'</span> - the AI can send and read messages on your WhatsApp.';
+      if(b){ b.textContent='Manage link'; b.onclick=waQRSheet; }
+    } else {
+      d.textContent='Link your WhatsApp by scanning a QR code - exactly like WhatsApp Web. Then the AI can send and read messages for you.';
+      if(b){ b.textContent='Link with QR'; b.onclick=waQRSheet; }
+    }
+  }).catch(function(){});
+}
 function connRefresh(){
   post('/api/connectors',{}).then(function(r){
     window._connGReady = !!(r && r.google_ready);
     window._connState = (r && r.connectors) || [];
     var list=document.getElementById('connList'); if(!list) return;
-    if(r && r.connectors){ list.innerHTML=r.connectors.map(connRow).join(''); }
+    if(r && r.connectors){ list.innerHTML=waConnRow()+r.connectors.map(connRow).join(''); waQRStatus(); }
     else { list.innerHTML='<div class="connrow">'+((r&&r.error)||'Could not load connectors - sign in and try again.')+'</div>'; }
     connWire();
   }).catch(function(){});

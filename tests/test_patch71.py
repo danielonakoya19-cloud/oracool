@@ -13,7 +13,7 @@ import server as s  # noqa: E402
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 
-MARK = "patch100-conn-write"
+MARK = "patch101-wa-qr"
 
 
 class Marker(unittest.TestCase):

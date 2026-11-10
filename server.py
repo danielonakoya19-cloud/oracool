@@ -5013,6 +5013,202 @@ border-radius:16px;padding:14px 18px;font-family:Inter,system-ui,sans-serif;font
     }
 
 
+# ===================== WhatsApp QR link — REAL multi-device sessions =====================
+# The user's OWN WhatsApp links exactly like WhatsApp Web: OraCool shows the live
+# pairing QR (always the genuine payload from the link service, never drawn),
+# they scan it under WhatsApp -> Linked devices, and from then on the AI can send
+# and read messages on that number through the link bridge. Sessions are vaulted
+# in the key-value store so links survive redeploys.
+_WA_BRIDGE_PORT = os.environ.get("WA_BRIDGE_PORT", "8788")
+_WA_PROC = None
+_WA_RESTORED = set()
+_WA_VAULT_PREFIX = "wa_creds:"
+
+
+def _wa_sid(email):
+    return "wa" + hashlib.sha1((email or "").strip().lower().encode()).hexdigest()[:16]
+
+
+def _wa_base():
+    return "http://127.0.0.1:" + str(_WA_BRIDGE_PORT)
+
+
+def _wa_http(p2, method="GET", obj=None, timeout=8):
+    try:
+        data = json.dumps(obj).encode() if obj is not None else None
+        req = urllib.request.Request(_wa_base() + p2, data=data, method=method,
+                                     headers={"Content-Type": "application/json"} if data else {})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads((r.read() or b"{}").decode() or "{}")
+    except Exception as e:
+        return {"error": str(e)[:120]}
+
+
+def _wa_ensure_bridge():
+    """Start the Node link bridge on this host if it is not already up."""
+    global _WA_PROC
+    try:
+        import subprocess, shutil  # noqa
+    except Exception:
+        pass
+    if _wa_http("/health", timeout=3).get("ok"):
+        return True, ""
+    if shutil.which("node") is None:
+        return False, "Node.js is not installed on this server"
+    base = os.path.dirname(os.path.abspath(__file__))
+    if not os.path.exists(os.path.join(base, "wa-bridge.mjs")):
+        return False, "the link service script is missing on this server"
+    try:
+        env2 = dict(os.environ)
+        env2["WA_BRIDGE_PORT"] = str(_WA_BRIDGE_PORT)
+        _WA_PROC = subprocess.Popen(
+            "npm install --no-audit --no-fund --omit=dev >/dev/null 2>&1; exec node wa-bridge.mjs",
+            shell=True, cwd=base, env=env2,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except Exception as e:
+        return False, str(e)[:90]
+    for _ in range(40):
+        time.sleep(0.5)
+        if _wa_http("/health", timeout=2).get("ok"):
+            return True, ""
+    return False, "the link service did not start"
+
+
+def _wa_vault_push(sid):
+    try:
+        d = _wa_http("/credsfiles?session=" + sid, timeout=8)
+        files = d.get("files") or {}
+        if files:
+            supabase_kv_put(_WA_VAULT_PREFIX + sid, files)
+    except Exception:
+        pass
+
+
+def _wa_vault_restore(sid):
+    if sid in _WA_RESTORED:
+        return
+    _WA_RESTORED.add(sid)
+    try:
+        files = supabase_kv_get(_WA_VAULT_PREFIX + sid)
+    except Exception:
+        files = None
+    if files:
+        _wa_http("/restore?session=" + sid, method="POST", obj={"files": files}, timeout=12)
+
+
+def wa_gateway(path2, who, body):
+    """All WhatsApp QR-link endpoints in one testable place."""
+    sid = _wa_sid(who)
+    ok, err = _wa_ensure_bridge()
+    if not ok:
+        return {"ok": False, "error": "WhatsApp QR linking needs the server link service \u2014 " + err}
+    if path2 == "/api/wa/logout":
+        _wa_http("/logout?session=" + sid, method="POST", timeout=20)
+        try:
+            supabase_kv_put(_WA_VAULT_PREFIX + sid, {})
+        except Exception:
+            pass
+        _WA_RESTORED.discard(sid)
+        return {"ok": True, "message": "WhatsApp unlinked from OraCool."}
+    _wa_vault_restore(sid)
+    if path2 in ("/api/wa/qr", "/api/wa/link"):
+        d = _wa_http("/new?session=" + sid, timeout=25)
+        if d.get("connected"):
+            _wa_vault_push(sid)
+        return {"ok": "error" not in d, "state": d.get("state") or "none",
+                "qr": d.get("qr") or "", "connected": bool(d.get("connected")),
+                "user": d.get("user") or None}
+    if path2 == "/api/wa/status":
+        d = _wa_http("/status?session=" + sid, timeout=8)
+        if d.get("connected"):
+            _wa_vault_push(sid)
+        return {"ok": True, "state": d.get("state") or "none", "connected": bool(d.get("connected")),
+                "user": d.get("user") or None, "chats": d.get("chats") or 0}
+    if path2 == "/api/wa/send":
+        to = str(body.get("to") or "").strip()
+        text2 = str(body.get("text") or "").strip()
+        if not to or not text2:
+            return {"ok": False, "error": "to and text are required"}
+        d = _wa_http("/send?session=" + sid, method="POST", obj={"to": to, "text": text2}, timeout=30)
+        if d.get("error") == "not connected":
+            return {"ok": False, "error": "WhatsApp is not linked yet \u2014 scan the QR in Connectors first."}
+        return {"ok": not d.get("error"), "id": d.get("id") or "",
+                "message": ("WhatsApp message sent to " + to + ".") if not d.get("error") else str(d.get("error"))[:160]}
+    if path2 == "/api/wa/chats":
+        d = _wa_http("/chats?session=" + sid, timeout=12)
+        return {"ok": True, "chats": d.get("chats") or []}
+    if path2 == "/api/wa/messages":
+        to = str(body.get("to") or "").strip()
+        d = _wa_http("/messages?session=" + sid + "&to=" + urllib.parse.quote(to), timeout=12)
+        return {"ok": True, "messages": d.get("messages") or []}
+    return {"ok": False, "error": "unknown WhatsApp request"}
+
+
+def _wa_action(email, low, text):
+    """Model-driven actions on the linked personal WhatsApp. Returns (text, extra)."""
+    if not email:
+        return None, None
+    cmd_to = cmd_text = ""
+    if re.match(r"\s*whatsapp\s*::", low):
+        parts = [x.strip() for x in (text or "").split("::")]
+        if len(parts) >= 3 and re.search(r"send|message|text|write", parts[1] or "", re.I):
+            cmd_to = parts[2]
+            cmd_text = "::".join(parts[3:]).strip()
+        elif len(parts) >= 2 and re.search(r"chat|list", parts[1] or "", re.I):
+            cmd_to = ""
+        elif len(parts) >= 3 and re.search(r"read|message", parts[1] or "", re.I):
+            cmd_to = parts[2]
+    if re.search(r"\b(log ?out|unlink|disconnect|remove)\b", low):
+        r = wa_gateway("/api/wa/logout", email, {})
+        return ("WhatsApp unlinked from OraCool." if r.get("ok") else str(r.get("error"))[:160]), None
+    if re.search(r"\b(link|connect|pair|scan|set ?up)\b", low) and not re.search(r"\bsend\b", low):
+        return ("Point the user to the live QR: open Connectors \u2192 WhatsApp \u2192 Link with QR and scan it with "
+                "WhatsApp (Settings \u2192 Linked devices \u2192 Link a device). The QR below/above is the real pairing "
+                "code \u2014 once scanned, they can use WhatsApp through OraCool."), {"wa_link": True}
+    send_m = (cmd_to or None) and None
+    to = cmd_to
+    body_txt = cmd_text
+    if not to:
+        sm = re.search(r"\b(?:send|text|message|write to|tell)\b[^a-z0-9]{0,24}(?:a\s+)?(?:whatsapp\s+)?(?:message\s+)?(?:to\s+)?"
+                       r"([+\d][\d\s().-]{6,22}|[\w .-]{2,36})\s*(?:[:,-]\s*|\s+(?:saying|that says|telling them)\s+)(.+)$",
+                       text or "", re.I)
+        if sm:
+            to = sm.group(1).strip()
+            body_txt = sm.group(2).strip().strip("\"'")
+    if to and body_txt and re.search(r"\b(send|text|message|reply|write|tell)\b", low):
+        digits = re.sub(r"\D", "", to)
+        if len(digits) < 7:
+            return ("Give the phone number with country code to message on WhatsApp "
+                    "(e.g. '+2348012345678: hello')."), None
+        r = wa_gateway("/api/wa/send", email, {"to": digits, "text": body_txt})
+        return (r.get("message") or str(r.get("error"))[:160]), None
+    if re.search(r"\b(chat|chats|conversation|conversations)\b", low) and re.search(r"\b(list|show|check|my|recent|open)\b", low):
+        r = wa_gateway("/api/wa/chats", email, {})
+        ch = r.get("chats") or []
+        if not ch:
+            return "No WhatsApp chats are visible yet \u2014 messages from linked chats appear here after the account syncs.", None
+        lines = []
+        for c2 in ch[:10]:
+            nm = (c2.get("name") or c2.get("id") or "").split("@")[0]
+            lines.append("\u2022 " + nm[:40])
+        return "Recent WhatsApp chats:\n" + "\n".join(lines), None
+    read_m = re.search(r"\b(?:read|show|get|check)\b[^a-z0-9]{0,24}(?:the\s+)?(?:whatsapp\s+)?(?:messages?\s+)?(?:from|with|on)\s+([+\d][\d\s().-]{6,22}|[\w .-]{2,36})",
+                       text or "", re.I)
+    if read_m and re.search(r"\b(message|messages|chat|whatsapp|read)\b", low):
+        to = read_m.group(1).strip()
+        digits = re.sub(r"\D", "", to) or to
+        r = wa_gateway("/api/wa/messages", email, {"to": digits})
+        msgs = r.get("messages") or []
+        if not msgs:
+            return "No recent messages found with " + to[:30] + " in the linked WhatsApp.", None
+        lines = []
+        for m2 in msgs[-8:]:
+            who2 = "me" if m2.get("fromMe") else "them"
+            lines.append(who2 + ": " + str(m2.get("text") or "")[:120])
+        return "WhatsApp messages with " + to[:30] + ":\n" + "\n".join(lines), None
+    return None, None
+
+
 def _connector_call(email, text):
     low = (text or "").lower()
     st = connectors_state(email)
@@ -11235,7 +11431,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch100-conn-write",
+        "build": "patch101-wa-qr",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -12349,6 +12545,17 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     # patch41: "generate a video" must never be treated as an IMAGE of "a video"
     _video_words = bool(re.search(r"\b(?:videos?|clips?|animations?|films?|movies?|reels?|footage)\b", low))
     _image_words = bool(re.search(r"\b(?:images?|pictures?|photos?|art|artwork|logos?|wallpapers?|posters?|banners?|illustrations?|drawings?)\b", low))
+    # linked personal WhatsApp (QR link) — send/read on the user's own number
+    if email and re.search(r"\bwhatsapp\b", low) and re.search(
+            r"\b(send|text|message|reply|write|tell|chat|chats|read|check|list|link|connect|pair|scan|unlink|disconnect|log ?out)\b", low):
+        try:
+            _wt, _wx = _wa_action(email, low, t)
+            if _wt:
+                out.append({'tool': 'wa_link' if (_wx or {}).get('wa_link') else 'whatsapp',
+                            'label': 'whatsapp \u00b7 ' + str(t[:40]).strip(),
+                            'result': _shrink(_wt, 1600)})
+        except Exception:
+            pass
     # linked connectors (GitHub, Drive, Gmail, ...) - patch93: real reads/writes in the member's accounts
     _conn_intent = (email and (any(k in low for k in ('github', 'google drive', 'gdrive', 'my drive', 'gmail',
                                         'google calendar', 'google doc', 'google sheet', 'google slide',
@@ -14999,7 +15206,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch100-conn-write", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch101-wa-qr", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -16013,6 +16220,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True, "connectors": connectors_public(_em3)})
             elif path == "/api/connectors/google/url":
                 self._send_json(connectors_google_url((body.get("email") or "").strip().lower()))
+            elif path in ("/api/wa/qr", "/api/wa/link", "/api/wa/status", "/api/wa/chats",
+                          "/api/wa/messages", "/api/wa/send", "/api/wa/logout"):
+                _wa_who = request_identity(self, body) or (body.get("email") or "").strip().lower()
+                if not _wa_who:
+                    self._send_json({"ok": False, "error": "sign in to link WhatsApp"}, 401)
+                else:
+                    self._send_json(wa_gateway(path, _wa_who, body))
             elif path == "/api/connectors/paste":
                 _emp = (body.get("email") or "").strip().lower()
                 _resp = connectors_try_token(_emp, body.get("connector_token") or body.get("cred") or "")
@@ -16545,6 +16759,12 @@ class Handler(BaseHTTPRequestHandler):
             "exactly what they asked; only ask ONE short question first if the target or the content is genuinely "
             "ambiguous. The precise command form is 'connector :: <service> :: <action> :: <target> :: <content>' "
             "\u2014 use it when a natural request would be ambiguous. "
+            "LINKED WHATSAPP (QR link \u2014 the user's OWN number, linked like WhatsApp Web): when linked, you can "
+            "send and read messages on their WhatsApp directly \u2014 total access like every linked account. "
+            "Forms: 'whatsapp :: send :: <number with country code> :: <message>', 'whatsapp :: chats', "
+            "'whatsapp :: messages :: <number>'. Natural works too: 'send whatsapp to +2348012345678: hello'. "
+            "If not linked yet, say in ONE line they scan the QR in Connectors \u2192 WhatsApp \u2192 Link with QR. "
+            "Never tell the user to open WhatsApp and do it themselves.\n"
             "CERTIFICATES & QR CODES (REAL, NEVER DECORATIVE): you can issue real, verifiable certificates "
             "and generate real, scannable QR codes for absolutely anything. To issue a certificate, output the "
             "command form exactly: 'certificate :: <recipient full name> :: <course or achievement title> :: "
@@ -17126,7 +17346,7 @@ def _strip_agent_markup(text):
     return t.strip()
 
 
-_PLAIN_CMD_RX = re.compile(r"(?m)(?:^|\s)((?:connector|community|certificate|cert|qr|chart)\s*::[^\n]+)", re.I)
+_PLAIN_CMD_RX = re.compile(r"(?m)(?:^|\s)((?:connector|community|certificate|cert|qr|chart|whatsapp)\s*::[^\n]+)", re.I)
 _PLAIN_CMD_SKIP = re.compile(r"e\.?g\b|example|for instance|looks like|format is|template|"
                              r"you can (say|use|type|write|send|ask)|say (something )?like|such as|quote|for demo", re.I)
 
