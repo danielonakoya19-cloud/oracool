@@ -406,3 +406,5 @@
 - Marker `patch102-wa-bot` ×2 (72 files retargeted). **Suite 931 passed** (test_patch102 = 13 new).
 
 - patch102b: JSON-null passthrough bug fixed (bridge `j.reply !== null` checks + python gateway filters None values — bot reply became the STRING 'null' and skipGroups flipped false when keys were absent). LIVE FACTS (2026-11-10): the user's WhatsApp IS linked (state connected, 2 group chats synced, read access live). Test probes against the real account SENT one text to the example number +2348012345678 ('test') and set profile about to 'hello' — cleaned up (about cleared, bot reset off/empty) and disclosed to the user. Suite **932 passed**.
+
+- patch102c: vaulted sessions AUTO-REOPEN after redeploys — bridge /status opens restored sessions (creds.json presence), server /status nudges /new when state is none (restore + reconnect). Without this the row showed unlinked after every redeploy until the QR sheet was opened. Suite **933 passed**.

@@ -184,3 +184,22 @@ def test_bot_update_never_sends_json_nulls(monkeypatch):
     for obj in seen:
         if obj:
             assert all(v is not None for v in obj.values()), obj
+
+
+def test_status_reopens_vaulted_session(monkeypatch):
+    calls = []
+    def fake_http(p2, method="GET", obj=None, timeout=8):
+        calls.append(p2)
+        if p2.startswith("/status"):
+            return {"state": "none", "connected": False}
+        if p2.startswith("/new"):
+            return {"state": "connected", "qr": "", "connected": True, "user": {"name": "T"}}
+        return {"ok": True}
+    monkeypatch.setattr(server, "_wa_ensure_bridge", lambda: (True, ""))
+    monkeypatch.setattr(server, "_wa_http", fake_http)
+    monkeypatch.setattr(server, "_wa_vault_restore", lambda sid: None)
+    monkeypatch.setattr(server, "_wa_vault_push", lambda sid: None)
+    r = server.wa_gateway("/api/wa/status", "a@b.c", {})
+    assert r["connected"] and any(p.startswith("/new") for p in calls)
+    b = open("wa-bridge.mjs").read()
+    assert "creds.json'))) await openSession" in b.replace('"', "'").replace("`", "'") or "openSession(id) } catch" in b

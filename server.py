@@ -5132,6 +5132,10 @@ def wa_gateway(path2, who, body):
                 "user": d.get("user") or None}
     if path2 == "/api/wa/status":
         d = _wa_http("/status?session=" + sid, timeout=8)
+        if (d.get("state") or "none") == "none":
+            d2 = _wa_http("/new?session=" + sid, timeout=25)  # restores + reconnects a vaulted session
+            if not d2.get("error"):
+                d = d2
         if d.get("connected"):
             _wa_vault_push(sid)
         return {"ok": True, "state": d.get("state") or "none", "connected": bool(d.get("connected")),

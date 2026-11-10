@@ -227,6 +227,9 @@ async function handle(req, res) {
       return sendJson(res, 200, { state: rec.state, qr: rec.qr || '', connected: rec.state === 'connected', user: rec.user })
     }
     if (p === '/status') {
+      if (!sessions.has(id)) {
+        try { if (fs.existsSync(path.join(SESS_DIR, id, 'creds.json'))) await openSession(id) } catch (e) {}
+      }
       const rec = sessions.get(id)
       return sendJson(res, 200, rec ? {
         state: rec.state, connected: rec.state === 'connected', user: rec.user,
