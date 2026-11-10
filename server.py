@@ -3939,11 +3939,240 @@ def _conn_find_id(text):
     return m.group(1) if m else ""
 
 
+def _connector_write(name, c, low, text, tok):
+    """TOTAL ACCESS — perform REAL edits/changes in the linked account with the
+    same permissions the user's token has. Returns a readable result, a usage
+    hint when a write was clearly asked but the target is missing, or None when
+    the request is a read (fall through to the read handlers)."""
+    if not re.search(r"\b(create|make|new|open|add|append|write|send|post|upload|save|edit|update|change|fix|modify|replace|rename|close|reopen|comment|reply|schedule|book|delete|remove|move|insert)\b", low):
+        return None
+    # command form (model-driven, precise): connector :: <service> :: <action> :: <target> :: <content>
+    cmd_action = cmd_target = cmd_content = ""
+    if re.match(r"\s*connector\s*::", text or "", re.I):
+        parts = [x.strip() for x in (text or "").split("::")]
+        if len(parts) >= 4:
+            cmd_action = parts[2].lower()
+            cmd_target = parts[3]
+            cmd_content = "::".join(parts[4:]).strip()
+
+    def _auth(tok2=None):
+        return {"Authorization": "Bearer " + (tok2 or tok), "Accept": "application/vnd.github+json"}
+
+    def _after_colon(t2):
+        m = re.search(r":[ \t]+(.+)$", t2 or "", re.S)
+        return m.group(1).strip() if m else ""
+
+    if name == "github":
+        repo_m = re.search(r"\b([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)\b", cmd_target or text or "")
+        issue_m = re.search(r"(?:issue|pr|pull request)\s*#?\s*(\d+)", cmd_action + " " + cmd_target + " " + (text or ""), re.I)
+        act = cmd_action or low
+        body_txt = cmd_content or ""
+        if not cmd_action:
+            body_txt = _after_colon(text) or body_txt
+        if re.search(r"\b(close|reopen)\b", act) and issue_m and repo_m:
+            state = "closed" if "close" in act and "reopen" not in act else "open"
+            st, d = _conn_http("https://api.github.com/repos/" + repo_m.group(1) + "/issues/" + issue_m.group(1),
+                               method="PATCH", headers=_auth(), json_body={"state": state})
+            return ("GitHub issue #" + issue_m.group(1) + " " + ("closed." if state == "closed" else "reopened.")
+                    if st in (200, 201) else "GitHub said: " + str(d.get("message") if isinstance(d, dict) else d)[:120])
+        if re.search(r"\b(comment|reply)\b", act) and issue_m and repo_m:
+            msg = body_txt or _after_colon(text)
+            if len(msg) > 1:
+                st, d = _conn_http("https://api.github.com/repos/" + repo_m.group(1) + "/issues/" + issue_m.group(1) + "/comments",
+                                   method="POST", headers=_auth(), json_body={"body": msg[:2000]})
+                return ("Comment posted on issue #" + issue_m.group(1) + ": " + str(d.get("html_url") if isinstance(d, dict) else "")[:120]
+                        if st in (200, 201) else "GitHub said: " + str(d.get("message") if isinstance(d, dict) else d)[:120])
+            return "Tell me what to comment on issue #" + issue_m.group(1) + " (e.g. 'comment on issue #3 in me/app: looks good')."
+        if re.search(r"\b(create|open|new|file a|raise)\b.*\bissue\b|\bissue\b.*\b(create|open|new)\b", act) or (cmd_action and "issue" in cmd_action):
+            if not repo_m:
+                return "Which repository? Say it like: 'open github issue in owner/repo: title :: details'."
+            title, body2 = (body_txt.split("::", 1) + [""])[:2] if "::" in body_txt else (body_txt[:120], "")
+            if len(title.strip()) < 2:
+                return "Give the issue title after the colon (e.g. 'open github issue in me/app: login crashes')."
+            st, d = _conn_http("https://api.github.com/repos/" + repo_m.group(1) + "/issues", method="POST",
+                               headers=_auth(), json_body={"title": title.strip()[:120], "body": body2.strip() or title.strip()})
+            return ("GitHub issue created: " + str(d.get("html_url") if isinstance(d, dict) else d)[:140]
+                    if st in (200, 201) else "GitHub said: " + str(d.get("message") if isinstance(d, dict) else d)[:120])
+        fm = re.search(r"\b(file|readme|\.md|\.txt|\.html|\.css|\.js|\.json|\.py)\b", cmd_target + " " + (text or ""), re.I)
+        if re.search(r"\b(edit|update|change|write|create|add|fix|replace)\b", act) and fm and repo_m:
+            pm = re.search(r"[\w./-]+\.[a-z0-9]{1,6}", cmd_target or text or "", re.I)
+            if not pm:
+                return "Which file path? Say: 'edit file README.md in owner/repo: new content'."
+            path = pm.group(0).lstrip("/")
+            content = cmd_content or _after_colon(text)
+            if len(content) < 1:
+                return "What should the file say? Put the new content after the colon."
+            sha = None
+            st0, d0 = _conn_http("https://api.github.com/repos/" + repo_m.group(1) + "/contents/" + path, headers=_auth())
+            if st0 == 200 and isinstance(d0, dict) and d0.get("sha"):
+                sha = d0.get("sha")
+            payload = {"message": ("Update " + path + " via OraCool") if sha else ("Create " + path + " via OraCool"),
+                       "content": __import__("base64").b64encode(content.encode()).decode()}
+            if sha:
+                payload["sha"] = sha
+            st, d = _conn_http("https://api.github.com/repos/" + repo_m.group(1) + "/contents/" + path,
+                               method="PUT", headers=_auth(), json_body=payload)
+            return (("Updated " if sha else "Created ") + path + " in " + repo_m.group(1) + ": "
+                    + str((d.get("content") or {}).get("html_url") if isinstance(d, dict) else "")[:120]
+                    if st in (200, 201) else "GitHub said: " + str(d.get("message") if isinstance(d, dict) else d)[:120])
+        return None
+
+    if name == "gmail":
+        if re.search(r"\b(send|email|mail|write to|reply)\b", cmd_action + " " + low) and (re.search(r"\bsend\b", low) or cmd_action):
+            to_m = re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", cmd_target or text or "")
+            subj_m = re.search(r"subject\s*[:\-]\s*([^\n:]{1,120})", text or "", re.I)
+            body_txt = cmd_content or ""
+            if not body_txt:
+                body_txt = _after_colon(text)
+            if not to_m:
+                return "Who should I send it to? Give me their email address."
+            if not subj_m and not cmd_content:
+                return "What is the subject and message? Say: 'send email to x@y.com subject: Hello :: the message'."
+            subj = subj_m.group(1).strip() if subj_m else "Message from OraCool"
+            if "::" in body_txt:
+                subj, body_txt = (body_txt.split("::", 1) + [""])[:2]
+                subj = re.sub(r"^subject\s*[:\-]\s*", "", subj, flags=re.I).strip() or subj
+            import base64 as _b64
+            raw = ("To: " + to_m.group(0) + "\r\nSubject: " + subj[:120] + "\r\nMIME-Version: 1.0\r\n"
+                   "Content-Type: text/plain; charset=utf-8\r\n\r\n" + (body_txt.strip() or "(no content)"))
+            enc = _b64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+            st, d = _conn_http("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", method="POST",
+                               headers={"Authorization": "Bearer " + tok}, json_body={"raw": enc})
+            return ("Email sent to " + to_m.group(0) + " — subject \"" + subj[:60] + "\"." if st in (200, 201)
+                    else "Gmail said: " + str(d.get("error", {}).get("message") if isinstance(d, dict) else d)[:120])
+        return None
+
+    if name == "calendar":
+        ev = cmd_content or (text or "")
+        if re.search(r"\b(create|add|schedule|book|set up|set)\b", cmd_action + " " + low) and re.search(r"\b(event|meeting|call|appointment|calendar|schedule)\b", low):
+            ev_txt = cmd_target if cmd_action else _after_colon(text)
+            ev_txt = (ev_txt + (" " + ev if cmd_action and ev else "")).strip() or (text or "")[:180]
+            st, d = _conn_http("https://www.googleapis.com/calendar/v3/calendars/primary/events/quickAdd?text=" + urllib.parse.quote(ev_txt[:240]),
+                               method="POST", headers={"Authorization": "Bearer " + tok})
+            return ("Calendar event created: " + str(d.get("summary") or ev_txt)[:80] + " — " + str(d.get("htmlLink", ""))[:80]
+                    if st in (200, 201) else "Calendar said: " + str(d.get("error", {}).get("message") if isinstance(d, dict) else d)[:120])
+        return None
+
+    if name == "docs":
+        did = _conn_find_id(text) or _conn_find_id(cmd_target)
+        content = cmd_content or _after_colon(text)
+        if re.search(r"\b(add|append|write|insert|edit|update|change)\b", cmd_action + " " + low) and did and content:
+            st0, d0 = _conn_http("https://docs.googleapis.com/v1/documents/" + did, headers={"Authorization": "Bearer " + tok})
+            end = 1
+            for b in _walk_get(d0, "content"):
+                end = max(end, b.get("endIndex") or b.get("startIndex") or 1)
+            st, d = _conn_http("https://docs.googleapis.com/v1/documents/" + did + ":batchUpdate", method="POST",
+                               headers={"Authorization": "Bearer " + tok},
+                               json_body={"requests": [{"insertText": {"location": {"index": max(1, end - 1)}, "text": "\n" + content[:4000]}}]})
+            return ("Added " + str(len(content)) + " characters to the Google Doc." if st == 200
+                    else "Docs said: " + str(d.get("error", {}).get("message") if isinstance(d, dict) else d)[:120])
+        if re.search(r"\b(add|append|write|insert|edit)\b", cmd_action + " " + low):
+            return "Send me the Doc link/ID and the text to add (e.g. 'add to google doc <link>: new paragraph')."
+        return None
+
+    if name == "sheets":
+        did = _conn_find_id(text) or _conn_find_id(cmd_target)
+        content = cmd_content or _after_colon(text)
+        if re.search(r"\b(add|append|write|insert|new)\b", cmd_action + " " + low) and re.search(r"\b(row|cell|entry|data|record)\b", low):
+            vals = [x.strip() for x in content.split(",")] if content else []
+            if did and vals:
+                st, d = _conn_http("https://sheets.googleapis.com/v4/spreadsheets/" + did + "/values/A1:Z1:append?valueInputOption=USER_ENTERED",
+                                   method="POST", headers={"Authorization": "Bearer " + tok},
+                                   json_body={"values": [vals]})
+                return ("Row appended to the sheet: " + " | ".join(vals)[:120] if st in (200, 201)
+                        else "Sheets said: " + str(d.get("error", {}).get("message") if isinstance(d, dict) else d)[:120])
+            return "Send me the Sheet link/ID and the row values (e.g. 'add row to google sheet <link>: name, email, date')."
+        return None
+
+    if name == "notion":
+        def _notion_id(x):
+            m = re.search(r"notion\.so/([a-zA-Z0-9-]{6,40})", x or "")
+            return (m.group(1) if m else "") or _conn_find_id(x) or _conn_find_id(cmd_target)
+        if re.search(r"\b(create|make|new|add)\b", cmd_action + " " + low) and re.search(r"\b(page|note|doc)\b", low):
+            parent = _notion_id(text)
+            title = cmd_target if cmd_action else _after_colon(text)
+            title = title.split("::")[0].strip()[:120] or "Untitled"
+            if not parent:
+                return "Which Notion page should it live under? Send the parent page link/ID."
+            st, d = _conn_http("https://api.notion.com/v1/pages", method="POST",
+                               headers={"Authorization": "Bearer " + tok, "Notion-Version": "2022-06-28"},
+                               json_body={"parent": {"page_id": parent},
+                                          "properties": {"title": {"title": [{"text": {"content": title}}]}},
+                                          "children": [{"object": "block", "type": "paragraph",
+                                                        "paragraph": {"rich_text": [{"text": {"content": (cmd_content or "")[:1800]}}]}}]})
+            return ("Notion page created: " + str(d.get("url", ""))[:110] if st in (200, 201)
+                    else "Notion said: " + str((d.get("message") or d.get("code") or d))[:120])
+        if re.search(r"\b(add|append|write|insert)\b", cmd_action + " " + low):
+            pid = _notion_id(text)
+            content = cmd_content or _after_colon(text)
+            if pid and content:
+                st, d = _conn_http("https://api.notion.com/v1/blocks/" + pid + "/children", method="PATCH",
+                                   headers={"Authorization": "Bearer " + tok, "Notion-Version": "2022-06-28"},
+                                   json_body={"children": [{"object": "block", "type": "paragraph",
+                                                            "paragraph": {"rich_text": [{"text": {"content": content[:1800]}}]}}]})
+                return ("Text added to the Notion page." if st in (200, 200) else "Notion said: " + str(d.get("message") or d)[:120])
+            return "Send me the Notion page link/ID and the text to add."
+        return None
+
+    if name == "linear":
+        if re.search(r"\b(create|make|new|open|add)\b", cmd_action + " " + low) and re.search(r"\b(issue|ticket|task)\b", low):
+            title = cmd_target if cmd_action else _after_colon(text)
+            title = title.split("::")[0].strip()[:120]
+            if not title:
+                return "What is the issue title?"
+            st, d = _conn_http("https://api.linear.app/api/graphql", method="POST", headers={"Authorization": tok},
+                               json_body={"query": "{ teams(first: 1) { nodes { id } } }"})
+            teams = (((d.get("data") or {}).get("teams") or {}).get("nodes") or []) if isinstance(d, dict) else []
+            if not teams:
+                return "Could not find a Linear team to file under."
+            st2, d2 = _conn_http("https://api.linear.app/api/graphql", method="POST", headers={"Authorization": tok},
+                                 json_body={"query": "mutation($i: IssueCreateInput!){ issueCreate(input:$i){ success issue { url } } }",
+                                            "variables": {"i": {"teamId": teams[0].get("id"), "title": title,
+                                                                "description": (cmd_content or "")[:2000]}}})
+            url = (((d2.get("data") or {}).get("issueCreate") or {}).get("issue") or {}).get("url") if isinstance(d2, dict) else ""
+            return ("Linear issue created: " + str(url)[:110] if url else "Linear said: " + str(d2)[:140])
+        return None
+
+    if name == "dropbox":
+        if re.search(r"\b(create|make|new)\b", cmd_action + " " + low) and re.search(r"\b(folder|directory)\b", low):
+            path = "/" + (cmd_target if cmd_action else _after_colon(text)).strip("/")
+            st, d = _conn_http("https://api.dropboxapi.com/2/files/create_folder_v2", method="POST",
+                               headers={"Authorization": "Bearer " + tok}, json_body={"path": path[:180]})
+            return ("Dropbox folder created: " + path[:80] if st in (200, 200) else "Dropbox said: " + str(d.get("error_summary", ""))[:120])
+        return None
+
+    if name == "supabase":
+        url = (c.get("url") or "").strip().rstrip("/")
+        keyv = c.get("token") or ""
+        mt = re.search(r"\btable\W{0,3}([a-z0-9_]{2,40})", low)
+        jm = re.search(r"\{[^{}]{2,600}\}", cmd_content or text or "")
+        if re.search(r"\b(insert|add|create|write|new)\b", cmd_action + " " + low) and mt and jm:
+            try:
+                row = json.loads(jm.group(0))
+            except Exception:
+                return "Give the row as JSON, e.g. 'insert into table notes {\"title\": \"hi\"}'."
+            st, d = _conn_http(url + "/rest/v1/" + mt.group(1), method="POST",
+                               headers={"apikey": keyv, "Authorization": "Bearer " + keyv,
+                                        "Prefer": "return=representation"},
+                               json_body=row)
+            return ("Row inserted into " + mt.group(1) + ": " + json.dumps(d, ensure_ascii=False)[:120] if st in (200, 201)
+                    else "Supabase said: " + str(d)[:120])
+        return None
+
+    return None
+
+
 def _connector_do(name, c, low, text):
     """Run one real request against the member's linked account and return readable output."""
     tok = (c.get("access_token") or c.get("token") or "").strip()
     if spec_auth(name) == "google":
         tok = tok or ""
+    try:
+        _wr = _connector_write(name, c, low, text, tok)
+        if _wr:
+            return _wr
+    except Exception as _we:
+        return "connector action error: " + str(_we)[:140]
     if name == "gmail":
         q = ""
         mq = re.search(r'(?:search|find|look for)[^a-z0-9]{0,20}(?:email|gmail|mail|inbox)?[^a-z0-9]{0,10}([a-z0-9 @._-]{2,60})', low)
@@ -10990,7 +11219,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch99-viz-clean",
+        "build": "patch100-conn-write",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -12113,7 +12342,10 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                                   'create', 'inbox', 'repo', 'issue', 'meeting', 'event', 'file',
                                   'deploy', 'pull request', 'schedule', 'table', 'drive', 'email',
                                   'summar', 'any new', 'latest', 'connect', 'link', 'unlink', 'disconnect',
-                                  'set up', 'setup', 'authorize', 'sign in', 'log in', 'attach')):
+                                  'set up', 'setup', 'authorize', 'sign in', 'log in', 'attach',
+                                  'edit', 'change', 'update', 'delete', 'remove', 'rename', 'close', 'reopen',
+                                  'comment', 'send', 'post', 'upload', 'save', 'write', 'append', 'insert',
+                                  'move', 'replace', 'schedule', 'book', 'fix', 'modify', 'add')):
             try:
                 _cres = _connector_call(email, t)
                 if _cres and _cres[1]:
@@ -14748,7 +14980,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch99-viz-clean", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch100-conn-write", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -16286,6 +16518,14 @@ class Handler(BaseHTTPRequestHandler):
             "When a token is pasted it is linked and hidden instantly \u2014 confirm which service connected in ONE "
             "short line, and NEVER repeat, quote, summarize or store the token in your replies. "
             "Never pretend to have access that is not connected. "
+            "TOTAL ACCESS (READ AND WRITE): when a connector is linked you have FULL use of that account \u2014 "
+            "the same permissions as the user's own token. When they ask to edit, change, create, update, fix, "
+            "rename, delete, send, post, upload, append or schedule ANYTHING in a connected service, DO it "
+            "through the connector tool right away (every action is audited). Never say you can only read, and "
+            "never tell them to go do it manually. For irreversible actions (sending an email, deleting) do "
+            "exactly what they asked; only ask ONE short question first if the target or the content is genuinely "
+            "ambiguous. The precise command form is 'connector :: <service> :: <action> :: <target> :: <content>' "
+            "\u2014 use it when a natural request would be ambiguous. "
             "CERTIFICATES & QR CODES (REAL, NEVER DECORATIVE): you can issue real, verifiable certificates "
             "and generate real, scannable QR codes for absolutely anything. To issue a certificate, output the "
             "command form exactly: 'certificate :: <recipient full name> :: <course or achievement title> :: "
