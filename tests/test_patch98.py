@@ -221,7 +221,7 @@ def test_prompts_mandate_visual_richness_and_cert_platforms():
 # ---------------------------------------------------------------- marker
 
 def test_marker():
-    assert SERVER_SRC.count("patch101-wa-qr") == 2
+    assert SERVER_SRC.count("patch102-wa-bot") == 2
 
 
 def test_image_pipeline_never_draws_fake_qr(kv, monkeypatch):

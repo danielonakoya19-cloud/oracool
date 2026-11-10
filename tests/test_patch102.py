@@ -1,0 +1,171 @@
+# -*- coding: utf-8 -*-
+"""patch102 — WhatsApp auto-reply bot (user-armed only) + total access actions."""
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import server  # noqa: E402
+
+
+def test_marker_pinned():
+    src = open("server.py").read()
+    assert src.count("patch102-wa-bot") == 2
+
+
+# ---------------------------------------------------------------------------
+# bot gateway
+# ---------------------------------------------------------------------------
+
+def test_bot_get_and_set(monkeypatch):
+    calls = []
+    def fake_http(p2, method="GET", obj=None, timeout=8):
+        calls.append((method, p2, obj))
+        if p2.startswith("/bot") and method == "POST":
+            return {"ok": True, "bot": {"enabled": (obj or {}).get("enabled", False),
+                                        "reply": (obj or {}).get("reply") or "",
+                                        "rules": (obj or {}).get("rules") or []}}
+        if p2.startswith("/bot"):
+            return {"ok": True, "bot": {"enabled": True, "reply": "busy", "rules": [{"match": "price", "reply": "50"}]}}
+        return {"ok": True}
+    monkeypatch.setattr(server, "_wa_ensure_bridge", lambda: (True, ""))
+    monkeypatch.setattr(server, "_wa_http", fake_http)
+    monkeypatch.setattr(server, "_wa_vault_restore", lambda sid: None)
+    r = server.wa_gateway("/api/wa/bot", "a@b.c", {})
+    assert r["bot"]["enabled"] and r["bot"]["reply"] == "busy"
+    r2 = server.wa_gateway("/api/wa/bot", "a@b.c", {"enabled": True, "reply": "in a meeting"})
+    assert r2["ok"] and r2["bot"]["reply"] == "in a meeting"
+    assert any(p.startswith("/bot") and m == "POST" for m, p, _o in calls)
+
+
+def test_action_kinds_reach_bridge(monkeypatch):
+    calls = []
+    def fake_http(p2, method="GET", obj=None, timeout=8):
+        calls.append((method, p2, obj))
+        return {"ok": True, "message": "done"}
+    monkeypatch.setattr(server, "_wa_ensure_bridge", lambda: (True, ""))
+    monkeypatch.setattr(server, "_wa_http", fake_http)
+    monkeypatch.setattr(server, "_wa_vault_restore", lambda sid: None)
+    r = server.wa_gateway("/api/wa/action", "a@b.c", {"kind": "react", "to": "Mum", "emoji": "😂"})
+    assert r["ok"]
+    r2 = server.wa_gateway("/api/wa/action", "a@b.c", {"kind": "send", "to": "+2348012345678",
+                                                       "image_url": "https://x/y.png", "text": "look"})
+    assert r2["ok"]
+    r3 = server.wa_gateway("/api/wa/action", "a@b.c", {})
+    assert not r3["ok"]
+    kinds = [(o or {}).get("kind") for _m, p, o in calls if p.startswith("/action")]
+    assert kinds == ["react", "send"]
+    media = [o for _m, p, o in calls if p.startswith("/action") and (o or {}).get("image_url")]
+    assert media and media[0]["image_url"] == "https://x/y.png"
+
+
+# ---------------------------------------------------------------------------
+# _wa_action: the bot arms ONLY on user command
+# ---------------------------------------------------------------------------
+
+def test_bot_on_off_rule_status(monkeypatch):
+    sent = []
+    def fake_gw(path2, who, body):
+        sent.append((path2, body))
+        return {"ok": True, "bot": dict(body), "message": "ok"}
+    monkeypatch.setattr(server, "wa_gateway", fake_gw)
+    t, _ = server._wa_action("a@b.c", "turn on my whatsapp bot replying: I am in a meeting, I will reply later",
+                             "turn on my whatsapp bot replying: I am in a meeting, I will reply later")
+    assert "bot is ON" in t and sent[-1][1].get("enabled") is True
+    assert "in a meeting" in sent[-1][1].get("reply", "")
+    t2, _ = server._wa_action("a@b.c", "turn off my whatsapp bot", "turn off my whatsapp bot")
+    assert "OFF" in t2 and sent[-1][1].get("enabled") is False
+    t3, _ = server._wa_action("a@b.c",
+                              "add whatsapp bot rule when they say price reply Our price list is on the site",
+                              "add whatsapp bot rule when they say price reply Our price list is on the site")
+    assert "rule saved" in t3 and sent[-1][1].get("rules")
+    assert sent[-1][1]["rules"][0]["match"].lower() == "price"
+    monkeypatch.setattr(server, "wa_gateway",
+                        lambda p, w, b: {"ok": True, "bot": {"enabled": True, "reply": "busy", "rules": [{"match": "x", "reply": "y"}]}})
+    t4, _ = server._wa_action("a@b.c", "is my whatsapp bot on?", "is my whatsapp bot on?")
+    assert "ON" in t4 and "rule" in t4
+
+
+def test_bot_never_self_arms_without_command(monkeypatch):
+    monkeypatch.setattr(server, "wa_gateway",
+                        lambda p, w, b: (_ for _ in ()).throw(AssertionError("must not call gateway")))
+    t, extra = server._wa_action("a@b.c", "what can you do with my whatsapp?", "what can you do with my whatsapp?")
+    assert extra is None or not (extra or {}).get("wa_link")
+    # no bot call happened: _wa_action must bail to hint or None without arming
+    assert t is None or "bot" in t.lower()
+
+
+# ---------------------------------------------------------------------------
+# total access actions parsing
+# ---------------------------------------------------------------------------
+
+def test_send_parses_whatsapp_first_and_reply_verb(monkeypatch):
+    sent = []
+    monkeypatch.setattr(server, "wa_gateway",
+                        lambda p, w, b: sent.append(b) or {"ok": True, "message": "WhatsApp message sent to " + str(b.get("to")) + "."})
+    t, _ = server._wa_action("a@b.c", "whatsapp +2348012345678 saying on my way", "whatsapp +2348012345678 saying on my way")
+    assert "sent to" in t and sent[-1]["text"] == "on my way"
+    t2, _ = server._wa_action("a@b.c", "reply to Mum on whatsapp: I will call you", "reply to Mum on whatsapp: I will call you")
+    assert "sent to" in t2 and sent[-1]["to"] == "Mum"
+    t3, _ = server._wa_action("a@b.c", "send whatsapp image to +2348012345678: https://x.site/pic.png",
+                              "send whatsapp image to +2348012345678: https://x.site/pic.png")
+    assert "media sent" in t3 or "sent" in t3
+    assert sent[-1].get("kind") == "send" and sent[-1].get("image_url") == "https://x.site/pic.png"
+
+
+def test_react_delete_mute_archive_markread_about(monkeypatch):
+    sent = []
+    monkeypatch.setattr(server, "wa_gateway",
+                        lambda p, w, b: sent.append(dict(b)) or {"ok": True, "message": str(b.get("kind")) + " ok"})
+    server._wa_action("a@b.c", "react to my whatsapp chat with +2348012345678 with 😂",
+                      "react to my whatsapp chat with +2348012345678 with 😂")
+    assert sent[-1]["kind"] == "react" and sent[-1]["emoji"] == "😂"
+    server._wa_action("a@b.c", "delete my last whatsapp message to +2348012345678",
+                      "delete my last whatsapp message to +2348012345678")
+    assert sent[-1]["kind"] == "delete"
+    server._wa_action("a@b.c", "mute my whatsapp chat with +2348012345678", "mute my whatsapp chat with +2348012345678")
+    assert sent[-1]["kind"] == "mute"
+    server._wa_action("a@b.c", "archive my whatsapp chat with +2348012345678", "archive my whatsapp chat with +2348012345678")
+    assert sent[-1]["kind"] == "archive"
+    server._wa_action("a@b.c", "mark my whatsapp chat with +2348012345678 read", "mark my whatsapp chat with +2348012345678 read")
+    assert sent[-1]["kind"] == "markread"
+    server._wa_action("a@b.c", "set my whatsapp about to Building the future",
+                      "set my whatsapp about to Building the future")
+    assert sent[-1]["kind"] == "about" and "Building the future" in sent[-1]["text"]
+
+
+def test_read_still_works_with_names(monkeypatch):
+    monkeypatch.setattr(server, "wa_gateway",
+                        lambda p, w, b: {"ok": True, "messages": [{"fromMe": False, "text": "hello"}]})
+    t, _ = server._wa_action("a@b.c", "read my whatsapp chat with Mum", "read my whatsapp chat with Mum")
+    assert "hello" in t
+
+
+# ---------------------------------------------------------------------------
+# pins: prompt, routes, client, bridge
+# ---------------------------------------------------------------------------
+
+def test_prompt_covers_bot_and_total_access():
+    src = open("server.py").read()
+    assert "ONLY when the user asks" in src or "only when the user asks" in src.lower()
+    assert "turn on my whatsapp bot replying:" in src
+    assert "add whatsapp bot rule" in src
+    assert "The bot never arms itself" in src
+    assert "react" in src and "mute" in src and "archive" in src and "mark-read" in src
+
+
+def test_routes_and_client_pins():
+    src = open("server.py").read()
+    assert '"/api/wa/bot"' in src and '"/api/wa/action"' in src
+    c = open("index.html").read()
+    assert "waBotBox" in c and "waBotToggle" in c and "waBotLoad" in c
+    assert "??=" not in c.split("function waBotLoad()")[1][:2500]
+    assert ":has(" not in c.split("function waBotLoad()")[1][:2500]
+
+
+def test_bridge_ships_bot_and_actions():
+    b = open("wa-bridge.mjs").read()
+    assert "maybeBotReply" in b and "bot.json" in b and "loadBot" in b
+    assert "doAction" in b and "chatModify" in b and "updateProfileStatus" in b
+    assert "toJid" in b  # name resolution against synced chats
+    assert "sendPresenceUpdate('composing'" in b  # human-ish bot typing

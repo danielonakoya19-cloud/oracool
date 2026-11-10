@@ -12,7 +12,7 @@ APP = Path("index.html").read_text(encoding="utf-8")
 
 class TestPatch90Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch101-wa-qr"'), 2)
+        self.assertEqual(SRV.count('"patch102-wa-bot"'), 2)
 
 
 class TestPatch90CallAnswers(unittest.TestCase):

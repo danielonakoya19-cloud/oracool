@@ -8411,6 +8411,12 @@ function waQRSheet(){
       '<div id="waQRBox" style="background:#fff;border-radius:14px;padding:10px;min-height:210px;display:flex;align-items:center;justify-content:center">'+
       '<span style="color:#334;font-size:12px">Preparing the live link code<span class="dots"></span></span></div>'+
       '<div id="waQRStat" style="font-size:12px;opacity:.85;margin-top:10px;min-height:18px">Connecting to WhatsApp...</div>'+
+      '<div id="waBotBox" style="display:none;text-align:left;margin-top:14px;border-top:1px solid rgba(125,211,252,.18);padding-top:12px">'+
+      '<div style="font-size:12.5px;font-weight:700;margin-bottom:6px">Auto-reply bot <span style="opacity:.6;font-weight:400">(only when you turn it on)</span></div>'+
+      '<textarea id="waBotReply" rows="2" placeholder="Reply message, e.g. I am in a meeting, I will reply later." style="width:100%;box-sizing:border-box;border-radius:10px;border:1px solid rgba(125,211,252,.25);background:rgba(255,255,255,.05);color:inherit;font-size:12px;padding:8px"></textarea>'+
+      '<div style="display:flex;gap:8px;margin-top:8px">'+
+      '<button id="waBotToggle" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(125,211,252,.35);background:rgba(125,211,252,.12);color:#bae6fd;font-size:12px">Turn bot ON</button>'+
+      '<span id="waBotState" style="font-size:11.5px;opacity:.75;align-self:center">bot: off</span></div></div>'+
       '<div style="display:flex;gap:8px;justify-content:center;margin-top:12px">'+
       '<button id="waQRUnlink" style="display:none;padding:9px 14px;border-radius:12px;border:1px solid rgba(248,113,113,.4);background:transparent;color:#fca5a5;font-size:12.5px">Unlink</button>'+
       '<button id="waQRClose" style="padding:9px 14px;border-radius:12px;border:1px solid rgba(125,211,252,.35);background:rgba(125,211,252,.12);color:#bae6fd;font-size:12.5px">Close</button>'+
@@ -8420,6 +8426,7 @@ function waQRSheet(){
   }
   m.style.display='flex';
   document.getElementById('waQRClose').onclick=waQRCloseFn;
+  waBotLoad();
   document.getElementById('waQRUnlink').onclick=function(){
     post('/api/wa/logout',{}).then(function(){ toastMsg('WhatsApp unlinked.'); waQRStatus(); waQRStartPoll(); }).catch(function(){});
   };
@@ -8444,6 +8451,7 @@ function waQRTick(){
       var un=document.getElementById('waQRUnlink'); if(un) un.style.display='inline-block';
       toastMsg('WhatsApp linked.');
       waQRStatus();
+      waBotLoad();
       return;
     }
     if(r.qr && r.qr!==_waLastQR){
@@ -8455,6 +8463,28 @@ function waQRTick(){
     }
     var un2=document.getElementById('waQRUnlink'); if(un2) un2.style.display='none';
     waQRStatus();
+  }).catch(function(){});
+}
+function waBotLoad(){
+  post('/api/wa/bot',{}).then(function(r){
+    var b=(r&&r.bot)||{}; var box=document.getElementById('waBotBox'); if(!box) return;
+    box.style.display='block';
+    var ta=document.getElementById('waBotReply'); if(ta && b.reply && !ta.value) ta.value=b.reply;
+    var st=document.getElementById('waBotState');
+    if(st) st.textContent='bot: '+(b.enabled?('on'+((b.rules&&b.rules.length)?(' ('+b.rules.length+' rules)'):'')):'off');
+    var tg=document.getElementById('waBotToggle');
+    if(tg){
+      tg.textContent=b.enabled?'Turn bot OFF':'Turn bot ON';
+      tg.onclick=function(){
+        var on=tg.textContent.indexOf('ON')>=0;
+        var body={enabled:on};
+        if(on){ body.reply=(document.getElementById('waBotReply')||{}).value||'I am busy right now, I will reply later.'; }
+        post('/api/wa/bot',body).then(function(){
+          toastMsg(on?'WhatsApp auto-reply bot is ON.':'WhatsApp bot is OFF.');
+          waBotLoad();
+        }).catch(function(){});
+      };
+    }
   }).catch(function(){});
 }
 function waQRStatus(){

@@ -5146,6 +5146,28 @@ def wa_gateway(path2, who, body):
             return {"ok": False, "error": "WhatsApp is not linked yet \u2014 scan the QR in Connectors first."}
         return {"ok": not d.get("error"), "id": d.get("id") or "",
                 "message": ("WhatsApp message sent to " + to + ".") if not d.get("error") else str(d.get("error"))[:160]}
+    if path2 == "/api/wa/bot":
+        if (body.get("set") if isinstance(body.get("set"), bool) else (body.get("enabled") is not None or body.get("reply") is not None
+                                                                      or body.get("rules") is not None)):
+            d = _wa_http("/bot?session=" + sid, method="POST",
+                         obj={"enabled": body.get("enabled"), "reply": body.get("reply"),
+                              "rules": body.get("rules"), "skipGroups": body.get("skipGroups"),
+                              "gapSeconds": body.get("gapSeconds")}, timeout=10)
+            return {"ok": not d.get("error"), "bot": d.get("bot") or {},
+                    "message": "WhatsApp auto-reply bot updated." if not d.get("error") else str(d.get("error"))[:160]}
+        d = _wa_http("/bot?session=" + sid, timeout=8)
+        return {"ok": True, "bot": d.get("bot") or {}}
+    if path2 == "/api/wa/action":
+        kind = str(body.get("kind") or "").strip().lower()
+        if not kind:
+            return {"ok": False, "error": "kind is required"}
+        d = _wa_http("/action?session=" + sid, method="POST",
+                     obj={"kind": kind, "to": body.get("to"), "text": body.get("text"),
+                          "image_url": body.get("image_url"), "emoji": body.get("emoji"),
+                          "minutes": body.get("minutes")}, timeout=30)
+        if d.get("error") == "not connected":
+            return {"ok": False, "error": "WhatsApp is not linked yet \u2014 scan the QR in Connectors first."}
+        return {"ok": not d.get("error"), "message": d.get("message") or str(d.get("error"))[:180]}
     if path2 == "/api/wa/chats":
         d = _wa_http("/chats?session=" + sid, timeout=12)
         return {"ok": True, "chats": d.get("chats") or []}
@@ -5157,59 +5179,144 @@ def wa_gateway(path2, who, body):
 
 
 def _wa_action(email, low, text):
-    """Model-driven actions on the linked personal WhatsApp. Returns (text, extra)."""
+    """Model-driven actions on the linked personal WhatsApp. Returns (text, extra).
+    TOTAL ACCESS — send text/media, read, react, delete my messages, mute, archive,
+    mark read, profile about, and the auto-reply bot (only when the user asks)."""
     if not email:
         return None, None
     cmd_to = cmd_text = ""
-    if re.match(r"\s*whatsapp\s*::", low):
-        parts = [x.strip() for x in (text or "").split("::")]
-        if len(parts) >= 3 and re.search(r"send|message|text|write", parts[1] or "", re.I):
-            cmd_to = parts[2]
-            cmd_text = "::".join(parts[3:]).strip()
-        elif len(parts) >= 2 and re.search(r"chat|list", parts[1] or "", re.I):
-            cmd_to = ""
-        elif len(parts) >= 3 and re.search(r"read|message", parts[1] or "", re.I):
-            cmd_to = parts[2]
-    if re.search(r"\b(log ?out|unlink|disconnect|remove)\b", low):
+    cmd_parts = [x.strip() for x in (text or "").split("::")] if re.match(r"\s*whatsapp\s*::", low) else []
+    if cmd_parts:
+        verb1 = (cmd_parts[1] if len(cmd_parts) > 1 else "").lower()
+        if len(cmd_parts) >= 3 and re.search(r"send|message|text|write|image|photo|media", verb1):
+            cmd_to = cmd_parts[2]
+            cmd_text = "::".join(cmd_parts[3:]).strip()
+        elif len(cmd_parts) >= 3 and re.search(r"react|delete|mute|archive|read mark|markread|mark read", verb1):
+            cmd_to = cmd_parts[2]
+            cmd_text = "::".join(cmd_parts[3:]).strip()
+        elif len(cmd_parts) >= 3 and re.search(r"messages|read", verb1):
+            cmd_to = cmd_parts[2]
+    if re.search(r"\b(log ?out|unlink|disconnect|remove)\b", low) and "whatsapp" in low:
         r = wa_gateway("/api/wa/logout", email, {})
         return ("WhatsApp unlinked from OraCool." if r.get("ok") else str(r.get("error"))[:160]), None
+
+    # ---- auto-reply bot (ONLY armed on the user's command)
+    if re.search(r"\bbot\b|auto[ -]?repl", low):
+        if re.search(r"\b(off|disable|stop|turn off|shut)\b", low):
+            r = wa_gateway("/api/wa/bot", email, {"enabled": False})
+            return ("WhatsApp auto-reply bot is OFF." if r.get("ok") else str(r.get("error"))[:160]), None
+        if re.search(r"\b(status|state|is it on)\b", low) and not re.search(r"\b(on|enable|start)\b", low):
+            r = wa_gateway("/api/wa/bot", email, {})
+            b = r.get("bot") or {}
+            if b.get("enabled"):
+                n = len(b.get("rules") or [])
+                return ("WhatsApp bot is ON \u2014 default reply: " + str(b.get("reply") or "(none)")[:80]
+                        + (" | " + str(n) + " keyword rule(s)" if n else "") + "."), None
+            return "WhatsApp bot is OFF \u2014 say 'turn on my whatsapp bot replying: …' to arm it.", None
+        rule_m = re.search(r"\brule\b[^a-z0-9]{0,20}(?:when|if)?[^a-z0-9]{0,20}(?:they|someone|anyone)?[^a-z0-9]{0,20}"
+                           r"(?:say|says|mention|mentions|write|writes|message|messages|about|containing)?\s*[\"']?([\w .-]{2,40}?)[\"']?\s*"
+                           r"(?:then\s+|,\s*)?(?:reply|answer|respond)(?:\s+with)?\s*[\"']?(.+)$", text or "", re.I)
+        if rule_m and re.search(r"\b(add|create|set|make|new)\b", low):
+            cur = wa_gateway("/api/wa/bot", email, {}).get("bot") or {}
+            rules = list(cur.get("rules") or [])
+            rules = [x for x in rules if str(x.get("match", "")).lower() != rule_m.group(1).strip().lower()]
+            rules.append({"match": rule_m.group(1).strip(), "reply": rule_m.group(2).strip().strip("\"'")})
+            r = wa_gateway("/api/wa/bot", email, {"rules": rules, "enabled": True})
+            return (("WhatsApp bot rule saved: messages about '" + rule_m.group(1).strip() + "' get your reply.")
+                    if r.get("ok") else str(r.get("error"))[:160]), None
+        reply_m = re.search(r"(?:repl\w*|answer|respond)\s*(?:to\s+(?:everyone|anyone|all|them|messages?))?\s*"
+                            r"(?:with|saying|that says|:)?\s*[\"']?(.+)$", text or "", re.I)
+        reply_txt = (reply_m.group(1).strip().strip("\"'") if reply_m else "") or cmd_text
+        if re.search(r"\b(on|enable|start|set ?up|arm|activate)\b", low) and reply_txt:
+            r = wa_gateway("/api/wa/bot", email, {"enabled": True, "reply": reply_txt})
+            return (("WhatsApp auto-reply bot is ON \u2014 it now replies: '" + reply_txt[:80] + "' (once per person per 90s).")
+                    if r.get("ok") else str(r.get("error"))[:160]), None
+        return ("Tell the user in ONE line: say 'turn on my whatsapp bot replying: <text>', "
+                "'add whatsapp bot rule when they say <word> reply <text>', or 'turn off my whatsapp bot'."), None
+
     if re.search(r"\b(link|connect|pair|scan|set ?up)\b", low) and not re.search(r"\bsend\b", low):
         return ("Point the user to the live QR: open Connectors \u2192 WhatsApp \u2192 Link with QR and scan it with "
-                "WhatsApp (Settings \u2192 Linked devices \u2192 Link a device). The QR below/above is the real pairing "
-                "code \u2014 once scanned, they can use WhatsApp through OraCool."), {"wa_link": True}
-    send_m = (cmd_to or None) and None
+                "WhatsApp (Settings \u2192 Linked devices \u2192 Link a device). The QR is the real pairing code \u2014 "
+                "once scanned, they can use WhatsApp through OraCool."), {"wa_link": True}
+
+    # ---- profile about
+    about_m = re.search(r"\b(?:about|profile status|status message|set my status)\b[^a-z0-9]{0,24}[\"']?(.+)$", text or "", re.I)
+    if about_m and re.search(r"whatsapp", low) and re.search(r"\b(set|change|update|put)\b", low):
+        r = wa_gateway("/api/wa/action", email, {"kind": "about", "text": about_m.group(1).strip().strip("\"'")})
+        return (r.get("message") or str(r.get("error"))[:160]), None
+
+    def _wa_pick_target(t2):
+        pm = re.search(r"([+\d][\d ().-]{7,22}\d)", t2 or "")
+        if pm:
+            return pm.group(1).strip()
+        words = re.findall(r"(?:chat\s+with|with|to|from|chat)\s+([A-Za-z][\w .-]{1,30})", t2 or "", re.I)
+        words = [re.sub(r"\s+(?:on|in|via|through)\s+whatsapp$", "", w, flags=re.I) for w in words]
+        skip = {"whatsapp", "chat", "chats", "message", "messages", "my", "the", "a", "an", "on", "in",
+                "to", "with", "and", "it", "them", "him", "her", "read", "mark", "delete", "last"}
+        cands = [w.strip() for w in words if w.strip().lower() not in skip]
+        return cands[-1] if cands else ""
+
+    # ---- send (text or image) — names resolve against synced chats
     to = cmd_to
     body_txt = cmd_text
+    img_url = ""
+    if re.search(r"image|photo|picture|media|screenshot", low) and re.search(r"https?://\S+", text or ""):
+        img_url = re.search(r"https?://\S+", text or "").group(0).rstrip(".,)")
     if not to:
-        sm = re.search(r"\b(?:send|text|message|write to|tell)\b[^a-z0-9]{0,24}(?:a\s+)?(?:whatsapp\s+)?(?:message\s+)?(?:to\s+)?"
-                       r"([+\d][\d\s().-]{6,22}|[\w .-]{2,36})\s*(?:[:,-]\s*|\s+(?:saying|that says|telling them)\s+)(.+)$",
-                       text or "", re.I)
+        txt_s = re.sub(r"\b(?:images?|photos?|pictures?|videos?|media|files?|screenshots?|gif|sticker|documents?)\b",
+                       " ", text or "", flags=re.I)
+        sm = (re.search(r"\b(?:send|text|message|write to|tell|reply to|dm|ping|forward to)\b[^a-z0-9]{0,26}"
+                        r"(?:a\s+)?(?:whatsapp\s+)?(?:message\s+)?(?:to\s+)?"
+                        r"([+\d][\d\s().-]{6,22}|[\w .-]{2,36}?)\s*(?:[:,-]\s*|\s+(?:saying|that says|telling them)\s+)(.+)$",
+                        txt_s, re.I)
+              or re.search(r"\bwhatsapp\s+([+\d][\d\s().-]{6,22}|[\w .-]{2,36}?)\s*"
+                           r"(?:[:,-]\s*|\s+(?:saying|that says|telling them)\s+)(.+)$", txt_s, re.I))
         if sm:
-            to = sm.group(1).strip()
+            to = re.sub(r"\s+(?:on|in|via|through)\s+whatsapp$", "", sm.group(1).strip(), flags=re.I)
             body_txt = sm.group(2).strip().strip("\"'")
-    if to and body_txt and re.search(r"\b(send|text|message|reply|write|tell)\b", low):
-        digits = re.sub(r"\D", "", to)
-        if len(digits) < 7:
-            return ("Give the phone number with country code to message on WhatsApp "
-                    "(e.g. '+2348012345678: hello')."), None
-        r = wa_gateway("/api/wa/send", email, {"to": digits, "text": body_txt})
-        return (r.get("message") or str(r.get("error"))[:160]), None
-    if re.search(r"\b(chat|chats|conversation|conversations)\b", low) and re.search(r"\b(list|show|check|my|recent|open)\b", low):
+    if to and (body_txt or img_url) and not re.search(r"\b(bot|rule)\b", low):
+        if img_url:
+            r = wa_gateway("/api/wa/action", email, {"kind": "send", "to": to, "image_url": img_url,
+                                                     "text": body_txt or ""})
+        else:
+            r = wa_gateway("/api/wa/send", email, {"to": to, "text": body_txt})
+        return (r.get("message") or str(r.get("error"))[:180]), None
+
+    # ---- react / delete / mute / archive / mark-read
+    if re.search(r"\breact\b", low):
+        emo = re.search(r"(?:with|using|:)\s*([\U0001F000-\U0001FAFF\u2600-\u27BF]{1,4}|[:;8xX][-^']?[)(/DPpOo])\s*$", text or "")
+        r = wa_gateway("/api/wa/action", email, {"kind": "react", "to": cmd_to or _wa_pick_target(text),
+                                                 "emoji": (emo.group(1) if emo else "") or "👍"})
+        return (r.get("message") or str(r.get("error"))[:180]), None
+    act_map = ((r"\b(delete|remove)\b", "delete"), (r"\bmute\b", "mute"),
+               (r"\barchive\b", "archive"), (r"\bmark\b[^.]{0,40}\bread\b|\bread mark\b|\bmarkread\b", "markread"))
+    for pat, kind in act_map:
+        if re.search(pat, low) and re.search(r"\bwhatsapp\b|\bchat\b", low):
+            tgt = cmd_to or _wa_pick_target(text)
+            if not tgt:
+                return "Which chat? Say for example: 'mute my whatsapp chat with +2348012345678'.", None
+            r = wa_gateway("/api/wa/action", email, {"kind": kind, "to": tgt})
+            return (r.get("message") or str(r.get("error"))[:180]), None
+
+    # ---- chats list
+    if (re.search(r"\b(chat|chats|conversation|conversations)\b", low) and re.search(r"\b(list|show|check|my|recent|open)\b", low)
+            and not re.search(r"\b(send|react|delete|mute|archive|mark|reply|read|message|about)\b", low)) :
         r = wa_gateway("/api/wa/chats", email, {})
         ch = r.get("chats") or []
         if not ch:
-            return "No WhatsApp chats are visible yet \u2014 messages from linked chats appear here after the account syncs.", None
+            return "No WhatsApp chats are visible yet \u2014 they appear after the linked account syncs.", None
         lines = []
         for c2 in ch[:10]:
             nm = (c2.get("name") or c2.get("id") or "").split("@")[0]
             lines.append("\u2022 " + nm[:40])
         return "Recent WhatsApp chats:\n" + "\n".join(lines), None
-    read_m = re.search(r"\b(?:read|show|get|check)\b[^a-z0-9]{0,24}(?:the\s+)?(?:whatsapp\s+)?(?:messages?\s+)?(?:from|with|on)\s+([+\d][\d\s().-]{6,22}|[\w .-]{2,36})",
-                       text or "", re.I)
-    if read_m and re.search(r"\b(message|messages|chat|whatsapp|read)\b", low):
-        to = read_m.group(1).strip()
-        digits = re.sub(r"\D", "", to) or to
-        r = wa_gateway("/api/wa/messages", email, {"to": digits})
+
+    # ---- read messages (names resolve too)
+    read_m = re.search(r"\b(?:read|show|get|check|open)\b.{0,34}?(?:from|with|on|in|between)\s+"
+                       r"([+\d][\d ().-]{7,22}\d|[A-Za-z][\w .-]{1,30})", text or "", re.I)
+    if read_m and re.search(r"\b(message|messages|chat|whatsapp|read|conversation)\b", low):
+        to = re.sub(r"\s+(?:on|in|via|through)\s+whatsapp$", "", read_m.group(1).strip(), flags=re.I)
+        r = wa_gateway("/api/wa/messages", email, {"to": to})
         msgs = r.get("messages") or []
         if not msgs:
             return "No recent messages found with " + to[:30] + " in the linked WhatsApp.", None
@@ -11443,7 +11550,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch101-wa-qr",
+        "build": "patch102-wa-bot",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -15218,7 +15325,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch101-wa-qr", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch102-wa-bot", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -16233,7 +16340,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/connectors/google/url":
                 self._send_json(connectors_google_url((body.get("email") or "").strip().lower()))
             elif path in ("/api/wa/qr", "/api/wa/link", "/api/wa/status", "/api/wa/chats",
-                          "/api/wa/messages", "/api/wa/send", "/api/wa/logout"):
+                          "/api/wa/messages", "/api/wa/send", "/api/wa/logout",
+                          "/api/wa/bot", "/api/wa/action"):
                 _wa_who = request_identity(self, body) or (body.get("email") or "").strip().lower()
                 if not _wa_who:
                     self._send_json({"ok": False, "error": "sign in to link WhatsApp"}, 401)
@@ -16776,7 +16884,11 @@ class Handler(BaseHTTPRequestHandler):
             "Forms: 'whatsapp :: send :: <number with country code> :: <message>', 'whatsapp :: chats', "
             "'whatsapp :: messages :: <number>'. Natural works too: 'send whatsapp to +2348012345678: hello'. "
             "If not linked yet, say in ONE line they scan the QR in Connectors \u2192 WhatsApp \u2192 Link with QR. "
-            "Never tell the user to open WhatsApp and do it themselves.\n"
+            "Never tell the user to open WhatsApp and do it themselves. TOTAL ACCESS on the linked WhatsApp: send text and "
+            "images, read chats and messages (names work: 'read my chat with Mum'), react, delete your own last message, "
+            "mute / archive / mark-read chats, set the profile about, and \u2014 ONLY when the user asks \u2014 an auto-reply "
+            "bot on their number: 'turn on my whatsapp bot replying: <text>', 'add whatsapp bot rule when they say "
+            "<word> reply <text>', 'turn off my whatsapp bot'. The bot never arms itself.\n"
             "CERTIFICATES & QR CODES (REAL, NEVER DECORATIVE): you can issue real, verifiable certificates "
             "and generate real, scannable QR codes for absolutely anything. To issue a certificate, output the "
             "command form exactly: 'certificate :: <recipient full name> :: <course or achievement title> :: "

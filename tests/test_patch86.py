@@ -21,7 +21,7 @@ def holo_layer(page):
 
 class TestPatch86Marker(unittest.TestCase):
     def test_marker_is_patch86(self):
-        self.assertEqual(SRV.count('"patch101-wa-qr"'), 2)
+        self.assertEqual(SRV.count('"patch102-wa-bot"'), 2)
 
 
 class TestPatch86Toggle(unittest.TestCase):

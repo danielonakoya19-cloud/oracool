@@ -51,7 +51,7 @@ def _fake_bridge(qr=REAL_QR_PAYLOAD, connected=False, calls=None):
 
 def test_marker_pinned():
     src = open("server.py").read()
-    assert src.count("patch101-wa-qr") == 2
+    assert src.count("patch102-wa-bot") == 2
 
 
 def test_wa_sid_stable_and_safe():
@@ -142,16 +142,18 @@ def test_wa_action_send_natural_and_command(monkeypatch):
     monkeypatch.setattr(server, "wa_gateway", fake_gw)
     t, extra = server._wa_action("a@b.c", "send whatsapp to +2348012345678: hello there",
                                  "send whatsapp to +2348012345678: hello there")
-    assert "sent to 2348012345678" in t and sent[-1][2]["text"] == "hello there"
+    assert "sent to +2348012345678" in t and sent[-1][2]["text"] == "hello there"
     t2, _ = server._wa_action("a@b.c", "whatsapp :: send :: +2348099999999 :: quick note",
                               "whatsapp :: send :: +2348099999999 :: quick note")
-    assert "sent to 2348099999999" in t2 and sent[-1][2]["text"] == "quick note"
+    assert "sent to +2348099999999" in t2 and sent[-1][2]["text"] == "quick note"
 
 
-def test_wa_action_needs_number_with_country_code(monkeypatch):
-    monkeypatch.setattr(server, "wa_gateway", lambda *a, **k: {"ok": True})
+def test_wa_action_names_resolve_via_bridge(monkeypatch):
+    sent = []
+    monkeypatch.setattr(server, "wa_gateway",
+                        lambda p, w, b: sent.append(b) or {"ok": True, "message": "WhatsApp message sent to " + str(b.get("to")) + "."})
     t, _ = server._wa_action("a@b.c", "send whatsapp to mum: hi", "send whatsapp to mum: hi")
-    assert "country code" in t
+    assert "sent to mum" in t and sent[-1]["to"] == "mum"  # bridge resolves names against synced chats
 
 
 def test_wa_action_link_and_unlink(monkeypatch):

@@ -199,4 +199,4 @@ def test_client_ios15_safe_and_marker_intact():
     seg = INDEX_SRC.split("function connOpen()")[1][:2400]
     assert "??" not in seg
     assert "?.(" not in seg
-    assert SERVER_SRC.count("patch101-wa-qr") == 2
+    assert SERVER_SRC.count("patch102-wa-bot") == 2

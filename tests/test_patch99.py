@@ -115,4 +115,4 @@ def test_prompt_never_leaks_patch_markers_in_new_blocks():
 # ---------------------------------------------------------------- marker
 
 def test_marker():
-    assert SERVER_SRC.count("patch101-wa-qr") == 2
+    assert SERVER_SRC.count("patch102-wa-bot") == 2
