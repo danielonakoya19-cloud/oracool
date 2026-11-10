@@ -51,7 +51,7 @@ def _fake_bridge(qr=REAL_QR_PAYLOAD, connected=False, calls=None):
 
 def test_marker_pinned():
     src = open("server.py").read()
-    assert src.count("patch102-wa-bot") == 2
+    assert src.count("patch103-wa-content") == 2
 
 
 def test_wa_sid_stable_and_safe():

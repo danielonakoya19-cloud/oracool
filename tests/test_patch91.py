@@ -11,7 +11,7 @@ APP = Path("index.html").read_text(encoding="utf-8")
 
 class TestPatch91Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch102-wa-bot"'), 2)
+        self.assertEqual(SRV.count('"patch103-wa-content"'), 2)
 
 
 class TestPatch91MediaJsonRendering(unittest.TestCase):

@@ -185,7 +185,7 @@ def test_write_layer_wired_into_dispatch():
 # ---------------------------------------------------------------- marker
 
 def test_marker():
-    assert SERVER_SRC.count("patch102-wa-bot") == 2
+    assert SERVER_SRC.count("patch103-wa-content") == 2
 
 
 # ---------------------------------------------------------------------------
