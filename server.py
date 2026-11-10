@@ -3807,7 +3807,10 @@ def _conn_http(url, method="GET", headers=None, json_body=None, timeout=25):
             data = {"raw": str(raw)[:400]}
         return st, data
     except Exception as e:
-        return 599, {"message": str(e)[:160]}
+        _es = str(e)
+        if "401" in _es or "credential" in _es.lower():
+            return 401, {"message": "token rejected"}
+        return 599, {"message": "service unreachable (" + _es[:80] + ")"}
 
 
 def _connector_verify(name, cred):
@@ -7392,7 +7395,9 @@ def _gh(email, path, method="GET", body=None, timeout=30):
                 continue
             return json.loads(raw), None
         except Exception as e:
-            last = "GitHub is unreachable right now (" + str(e)[:100] + ") — try again in a moment."
+            _es = str(e)
+            last = _GH_RELINK if ("401" in _es or "credential" in _es.lower() or "bad token" in _es.lower()) \
+                else "GitHub is unreachable right now (" + _es[:80] + ") — try again in a moment."
     return None, last
 
 def github_connect(email, pat):
