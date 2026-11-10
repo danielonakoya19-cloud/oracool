@@ -370,3 +370,9 @@
 - `_linked_accounts_block(email)` injected into the main system message (`_IDENTITY_LOCK + … + identity_prompt_head(...) + _linked_accounts_block(chat_email)`): lists live linked accounts with TOTAL read+write wording; when none, says users link right here in chat. The model no longer claims "GitHub is not connected" while it is.
 - auto_tools connector trigger widened: `issue|pull request|repo|repository|commit|branch` + action verbs fire the connector layer EVEN WITHOUT the word "github" (follow-ups like "close issue #1 in owner/repo"). `_connector_call` dispatch fallback `_gh_fallback`: no service keyword + repo words → github entry. Regression-pinned: unrelated text never fires.
 - Suite **900 passed**. Marker `patch100-conn-write`.
+
+
+## patch100d — mid-line command capture + owner/repo#N targets (SHIPPED)
+
+- `_PLAIN_CMD_RX` now captures commands ANYWHERE in a line (models write "commenting now... connector :: …"); example-skip guard tests the FULL line (quotes, 'you can say', e.g., …) so prompt examples can never fire actions. Issue numbers parse from `owner/repo#N` and `#N`/`/N` tails. Stream strip + non-stream `_exec_plain_now` share the pattern.
+- Suite **900 passed**. Marker `patch100-conn-write`.

@@ -3969,7 +3969,8 @@ def _connector_write(name, c, low, text, tok):
     if name == "github":
         repo_m = re.search(r"\b([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)\b", cmd_target or text or "")
         issue_m = (re.search(r"(?:issue|pr|pull request)\s*#?\s*(\d+)", cmd_action + " " + cmd_target + " " + (text or ""), re.I)
-                   or re.search(r"/(\d+)\s*$", cmd_target or ""))
+                   or re.search(r"[#/](\d+)\s*$", cmd_target or "")
+                   or re.search(r"[#/](\d+)\b", cmd_target or ""))
         act = cmd_action or re.sub(r"[_-]+", " ", low)
         body_txt = cmd_content or ""
         if not cmd_action:
@@ -17117,19 +17118,23 @@ def _strip_agent_markup(text):
     return t.strip()
 
 
-_PLAIN_CMD_RX = re.compile(r"(?m)^\s*(?:[-\u2022>]+\s*)?((?:connector|community|certificate|cert|qr|chart)\s*::[^\n]+)$", re.I)
-_PLAIN_CMD_SKIP = re.compile(r"e\.?g\b|example|for instance|looks like|format is|template", re.I)
+_PLAIN_CMD_RX = re.compile(r"(?m)(?:^|\s)((?:connector|community|certificate|cert|qr|chart)\s*::[^\n]+)", re.I)
+_PLAIN_CMD_SKIP = re.compile(r"e\.?g\b|example|for instance|looks like|format is|template|"
+                             r"you can (say|use|type|write|send|ask)|say (something )?like|such as|quote|for demo", re.I)
 
 
 def _plain_commands(txt):
-    """Standalone command lines the model wrote to EXECUTE (never display-only).
+    """Command lines the model wrote to EXECUTE (never display-only).
     Lines that read like examples are skipped so prompts never fire actions."""
+    txt = txt or ""
     out = []
-    for m in _PLAIN_CMD_RX.finditer(txt or ""):
-        line = m.group(1).strip()
-        if _PLAIN_CMD_SKIP.search(line):
+    for m in _PLAIN_CMD_RX.finditer(txt):
+        ls = txt.rfind("\n", 0, m.start()) + 1
+        le = txt.find("\n", m.end())
+        full = txt[ls:le if le >= 0 else len(txt)]
+        if _PLAIN_CMD_SKIP.search(full):
             continue
-        out.append(line[:300])
+        out.append(m.group(1).strip()[:300])
     return out[:3]
 
 
@@ -17138,7 +17143,7 @@ def _exec_plain_now(acc_full, tier, body, chat_email, tool_summary, chat_media):
     cmds = _plain_commands(acc_full)
     if not cmds:
         return acc_full
-    txt = re.sub(r"(?m)^\s*(?:[-\u2022>]+\s*)?(?:(?:connector|community|certificate|cert|qr|chart)\s*::[^\n]+)\n?", "", acc_full).strip()
+    txt = _PLAIN_CMD_RX.sub("", acc_full).strip()
     runs = []
     try:
         runs = auto_tools(" ; ".join(cmds), tier, ha_url=body.get("ha_url"),

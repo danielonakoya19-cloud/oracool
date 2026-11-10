@@ -194,7 +194,7 @@ def test_marker():
 
 def test_plain_command_lines_are_extracted_not_examples():
     import server
-    cmds = server._plain_commands("I made the issue.\nconnector :: github :: close issue :: me/app/5 :: \n\nDone \u2705")
+    cmds = server._plain_commands("I made the issue.\ncommenting now... connector :: github :: close issue :: me/app/5 :: \n\nDone \u2705")
     assert any("close issue" in x for x in cmds)
     # example-looking lines never fire actions
     assert server._plain_commands('You can say: "certificate :: John :: Course"') == []
