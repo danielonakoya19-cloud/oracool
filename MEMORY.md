@@ -437,3 +437,11 @@
 - Bridge: `syncFullHistory: true`; `rec.contacts` Map filled from `messaging-history.set` contacts (name/notify/verifiedName) + `messages.upsert` pushName; `/chats` resolves names (contacts → groupMetadata fallback fetch per unnamed g.us chat); NEW `/contacts?session=&q=` (searchable, top 50, sorted); `toJid` resolves names against contacts too (send/read by first name works).
 - `_wa_action`: `_wa_chat_label` (hoisted to TOP of the function — a mid-function nested def made earlier references UnboundLocalError) shows `Name [group]`/`[channel]`/`+number`, NEVER raw jids; NEW contacts intent ('list my whatsapp contacts', 'find John in my whatsapp contacts'); routes + gateway `/api/wa/contacts`; prompt teaches names for send/read + contacts commands.
 - Bundle REBUILT after bridge changes (7.7MB — always rebuild before shipping). Tests +3. **Suite 945 passed.**
+
+
+## patch106c — names persist across redeploys + forced app-state resync (SHIPPED)
+
+- Root cause of empty chats/contacts: the vault's `*-app-state-sync-key*` files tell WA "state already synced" → re-deliver NOTHING after a redeploy, while the in-memory maps died with the process. Files in `wa-bridge.mjs` note: the bridge uses `SESS_DIR`/`openSession`/`sendJson`/`doAction` (NOT `SDK_SESS`/`createSession`) — anchor edits to THAT structure.
+- Fix: `wa-names.json` persisted per session dir (debounced 3s) + loaded at `openSession`; `maybeWipeSyncKeys(dir)` deletes app-state-sync-keys ONCE (when wa-names.json missing) to force full re-delivery; NEW `/resync` bridge route wipes keys+names+recreates (server route `/api/wa/resync`).
+- `contacts.upsert`/`contacts.update`/`chats.upsert`/`chats.update` listeners (patch106b) fill names fast after connect.
+- Snapshot quirk: `node_modules` never persists → `npm install` before esbuild rebuilds; bundle grep for new symbols to CONFIRM the rebuild took (a same-size bundle was silently stale once).

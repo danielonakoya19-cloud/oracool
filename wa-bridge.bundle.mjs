@@ -149444,6 +149444,41 @@ var silent = { level: "silent", child: () => silent, trace() {
 }, error() {
 } };
 var sessions = /* @__PURE__ */ new Map();
+function persistNames(rec) {
+  try {
+    if (!rec.dir || rec._pt) return;
+    rec._pt = setTimeout(() => {
+      rec._pt = null;
+      try {
+        fs5.writeFileSync(path2.join(rec.dir, "wa-names.json"), JSON.stringify({
+          contacts: [...rec.contacts.entries()],
+          chats: [...rec.chats.entries()]
+        }));
+      } catch (e) {
+      }
+    }, 3e3);
+  } catch (e) {
+  }
+}
+function loadNames(rec) {
+  try {
+    const o = JSON.parse(fs5.readFileSync(path2.join(rec.dir, "wa-names.json"), "utf8"));
+    for (const kv of o.contacts || []) rec.contacts.set(kv[0], kv[1]);
+    for (const kv of o.chats || []) rec.chats.set(kv[0], kv[1]);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+function maybeWipeSyncKeys(dir) {
+  try {
+    if (fs5.existsSync(path2.join(dir, "wa-names.json"))) return;
+    for (const f of fs5.readdirSync(dir)) {
+      if (/app-state-sync-key/i.test(f)) fs5.unlinkSync(path2.join(dir, f));
+    }
+  } catch (e) {
+  }
+}
 function safeId(id) {
   return String(id || "").replace(/[^a-zA-Z0-9._-]/g, "").slice(0, 40);
 }
@@ -149458,6 +149493,10 @@ function toJid(rec, to) {
     for (const [jid, ch] of rec.chats) {
       const nm = String(ch.name || "").toLowerCase();
       if (nm && (nm.includes(want) || want.includes(nm))) return jid;
+    }
+    for (const [jid, nm] of rec.contacts || /* @__PURE__ */ new Map()) {
+      const n2 = String(nm || "").toLowerCase();
+      if (n2 && (n2.includes(want) || want.includes(n2))) return jid;
     }
     for (const jid of rec.msgs.keys()) {
       const who = jid.split("@")[0];
@@ -149487,6 +149526,7 @@ async function openSession(id) {
   if (sessions.has(id)) return sessions.get(id);
   const dir = path2.join(SESS_DIR, id);
   fs5.mkdirSync(dir, { recursive: true });
+  maybeWipeSyncKeys(dir);
   const { state, saveCreds } = await useMultiFileAuthState(dir);
   const { version: version3 } = await fetchLatestBaileysVersion();
   const rec = {
@@ -149496,18 +149536,21 @@ async function openSession(id) {
     user: null,
     chats: /* @__PURE__ */ new Map(),
     msgs: /* @__PURE__ */ new Map(),
+    contacts: /* @__PURE__ */ new Map(),
     bot: loadBot(id),
     lastReply: /* @__PURE__ */ new Map(),
-    saveCreds
+    saveCreds,
+    dir
   };
   sessions.set(id, rec);
+  loadNames(rec);
   const sock = lib_default({
     version: version3,
     auth: state,
     printQRInTerminal: false,
     logger: silent,
     markOnlineOnConnect: false,
-    syncFullHistory: false,
+    syncFullHistory: true,
     generateHighQualityLinkPreview: false
   });
   rec.sock = sock;
@@ -149562,8 +149605,50 @@ async function openSession(id) {
   });
   sock.ev.on("messaging-history.set", ({ chats, contacts, messages }) => {
     try {
-      for (const ch of chats || []) rec.chats.set(ch.id, { id: ch.id, name: ch.name || contacts.find((c) => c.id === ch.id)?.name || "", ts: ch.conversationTimestamp || 0 });
+      for (const c of contacts || []) {
+        const nm = String(c.name || c.notify || c.verifiedName || "").trim();
+        if (c.id && nm) rec.contacts.set(c.id, nm);
+      }
+      for (const ch of chats || []) {
+        const nm = String(ch.name || rec.contacts.get(ch.id) || "").trim();
+        rec.chats.set(ch.id, { id: ch.id, name: nm, ts: ch.conversationTimestamp || 0 });
+      }
       for (const m of messages || []) cacheMsg(rec, m);
+      persistNames(rec);
+    } catch (e) {
+    }
+  });
+  sock.ev.on("contacts.upsert", (cs) => {
+    try {
+      for (const c of cs || []) if (c && c.id) rec.contacts.set(c.id, c.name || c.notify || c.verifiedName || rec.contacts.get(c.id) || "");
+      persistNames(rec);
+    } catch (e) {
+    }
+  });
+  sock.ev.on("contacts.update", (cs) => {
+    try {
+      for (const c of cs || []) if (c && c.id) rec.contacts.set(c.id, c.name || c.notify || c.verifiedName || rec.contacts.get(c.id) || "");
+    } catch (e) {
+    }
+  });
+  sock.ev.on("chats.upsert", (chs) => {
+    try {
+      for (const c of chs || []) if (c && c.id) rec.chats.set(c.id, {
+        id: c.id,
+        name: c.name || (rec.chats.get(c.id) || {}).name || "",
+        ts: +(c.conversationTimestamp || Date.now())
+      });
+      persistNames(rec);
+    } catch (e) {
+    }
+  });
+  sock.ev.on("chats.update", (chs) => {
+    try {
+      for (const c of chs || []) {
+        if (!c || !c.id) continue;
+        const prev = rec.chats.get(c.id) || {};
+        rec.chats.set(c.id, { id: c.id, name: c.name || prev.name || "", ts: +(c.conversationTimestamp || prev.ts || Date.now()) });
+      }
     } catch (e) {
     }
   });
@@ -149581,6 +149666,15 @@ async function openSession(id) {
 }
 function cacheMsg(rec, m) {
   const j2 = m.key?.remoteJid;
+  try {
+    const pn = String(m.pushName || "").trim();
+    const who = !m.key?.fromMe && pn && j2 && !String(j2).endsWith("@g.us") ? j2 : "";
+    if (who && pn && !rec.contacts.has(who)) {
+      rec.contacts.set(who, pn);
+      persistNames(rec);
+    }
+  } catch (e) {
+  }
   if (!j2 || j2 === "status@broadcast") return;
   const list = rec.msgs.get(j2) || [];
   list.push({ fromMe: !!m.key?.fromMe, ts: Number(m.messageTimestamp || 0), text: msgText(m.message), id: m.key?.id || "" });
@@ -149690,6 +149784,25 @@ async function handle(req, res) {
   try {
     if (p === "/health") return sendJson(res, 200, { ok: true, sessions: sessions.size });
     if (!id) return sendJson(res, 400, { error: "session required" });
+    if (p === "/resync") {
+      try {
+        const old = sessions.get(id);
+        if (old) {
+          try {
+            old.sock?.end(void 0);
+          } catch (e) {
+          }
+          sessions.delete(id);
+        }
+        const dir = path2.join(SESS_DIR, id);
+        if (fs5.existsSync(dir)) for (const f of fs5.readdirSync(dir)) {
+          if (/app-state-sync-key/i.test(f) || f === "wa-names.json") fs5.unlinkSync(path2.join(dir, f));
+        }
+      } catch (e) {
+      }
+      const rec = await openSession(id);
+      return sendJson(res, 200, { ok: true, state: rec.state });
+    }
     if (p === "/new") {
       const rec = await openSession(id);
       return sendJson(res, 200, { state: rec.state, qr: rec.qr || "", connected: rec.state === "connected", user: rec.user });
@@ -149785,7 +149898,34 @@ async function handle(req, res) {
       const rec = sessions.get(id);
       if (!rec) return sendJson(res, 200, { chats: [] });
       const list = [...rec.chats.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 30);
+      for (const ch of list) {
+        if (!ch.name) ch.name = rec.contacts.get(ch.id) || "";
+        if (!ch.name && String(ch.id).endsWith("@g.us")) {
+          try {
+            const meta = await rec.sock.groupMetadata(ch.id);
+            if (meta && meta.subject) {
+              ch.name = meta.subject;
+              rec.chats.get(ch.id).name = meta.subject;
+            }
+          } catch (e) {
+          }
+        }
+      }
       return sendJson(res, 200, { chats: list });
+    }
+    if (p === "/contacts") {
+      const rec = sessions.get(id);
+      const q = String(u.searchParams.get("q") || "").toLowerCase();
+      const out = [];
+      if (rec) {
+        for (const [jid, nm] of rec.contacts) {
+          if (q && !String(nm).toLowerCase().includes(q) && !jid.includes(q)) continue;
+          out.push({ id: jid, name: nm });
+          if (out.length >= 50) break;
+        }
+      }
+      out.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      return sendJson(res, 200, { contacts: out });
     }
     if (p === "/messages") {
       const rec = sessions.get(id);

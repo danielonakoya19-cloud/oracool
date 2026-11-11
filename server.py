@@ -5178,6 +5178,9 @@ def wa_gateway(path2, who, body):
         if d.get("error") == "not connected":
             return {"ok": False, "error": "WhatsApp is reconnecting or not linked \u2014 try again in a few seconds, or scan the QR in Connectors \u2192 WhatsApp if it is not linked."}
         return {"ok": not d.get("error"), "message": d.get("message") or str(d.get("error"))[:180]}
+    if path2 == "/api/wa/resync":
+        d = _wa_http("/resync?session=" + sid, timeout=15)
+        return {"ok": True, "state": d.get("state")}
     if path2 == "/api/wa/contacts":
         q = str(body.get("q") or "").strip()
         d = _wa_http("/contacts?session=" + sid + ("&q=" + urllib.parse.quote(q) if q else ""), timeout=15)
@@ -16430,7 +16433,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(connectors_google_url((body.get("email") or "").strip().lower()))
             elif path in ("/api/wa/qr", "/api/wa/link", "/api/wa/status", "/api/wa/chats",
                           "/api/wa/messages", "/api/wa/send", "/api/wa/logout",
-                          "/api/wa/bot", "/api/wa/action", "/api/wa/contacts"):
+                          "/api/wa/bot", "/api/wa/action", "/api/wa/contacts", "/api/wa/resync"):
                 _wa_who = request_identity(self, body) or (body.get("email") or "").strip().lower()
                 if not _wa_who:
                     self._send_json({"ok": False, "error": "sign in to link WhatsApp"}, 401)

@@ -26,6 +26,37 @@ fs.mkdirSync(SESS_DIR, { recursive: true })
 const silent = { level: 'silent', child: () => silent, trace() {}, debug() {}, info() {}, warn() {}, error() {} }
 const sessions = new Map() // id -> { sock, qr, state, user, chats, msgs, bot, lastReply }
 
+// name persistence (survives redeploys) + one-time app-state resync
+function persistNames(rec) {
+  try {
+    if (!rec.dir || rec._pt) return
+    rec._pt = setTimeout(() => {
+      rec._pt = null
+      try {
+        fs.writeFileSync(path.join(rec.dir, 'wa-names.json'), JSON.stringify({
+          contacts: [...rec.contacts.entries()], chats: [...rec.chats.entries()],
+        }))
+      } catch (e) {}
+    }, 3000)
+  } catch (e) {}
+}
+function loadNames(rec) {
+  try {
+    const o = JSON.parse(fs.readFileSync(path.join(rec.dir, 'wa-names.json'), 'utf8'))
+    for (const kv of (o.contacts || [])) rec.contacts.set(kv[0], kv[1])
+    for (const kv of (o.chats || [])) rec.chats.set(kv[0], kv[1])
+    return true
+  } catch (e) { return false }
+}
+function maybeWipeSyncKeys(dir) {
+  try {
+    if (fs.existsSync(path.join(dir, 'wa-names.json'))) return
+    for (const f of fs.readdirSync(dir)) {
+      if (/app-state-sync-key/i.test(f)) fs.unlinkSync(path.join(dir, f))
+    }
+  } catch (e) {}
+}
+
 function safeId(id) { return String(id || '').replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 40) }
 
 function toJid(rec, to) {
@@ -71,14 +102,16 @@ async function openSession(id) {
   if (sessions.has(id)) return sessions.get(id)
   const dir = path.join(SESS_DIR, id)
   fs.mkdirSync(dir, { recursive: true })
+  maybeWipeSyncKeys(dir)
   const { state, saveCreds } = await useMultiFileAuthState(dir)
   const { version } = await fetchLatestBaileysVersion()
   const rec = {
     sock: null, qr: '', state: 'connecting', user: null,
     chats: new Map(), msgs: new Map(), contacts: new Map(),
-    bot: loadBot(id), lastReply: new Map(), saveCreds
+    bot: loadBot(id), lastReply: new Map(), saveCreds, dir
   }
   sessions.set(id, rec)
+  loadNames(rec)
   const sock = makeWASocket({
     version, auth: state, printQRInTerminal: false, logger: silent,
     markOnlineOnConnect: false, syncFullHistory: true,
@@ -127,11 +160,13 @@ async function openSession(id) {
         rec.chats.set(ch.id, { id: ch.id, name: nm, ts: ch.conversationTimestamp || 0 })
       }
       for (const m of messages || []) cacheMsg(rec, m)
+      persistNames(rec)
     } catch (e) {}
   })
   sock.ev.on('contacts.upsert', (cs) => {
     try {
       for (const c of (cs || [])) if (c && c.id) rec.contacts.set(c.id, c.name || c.notify || c.verifiedName || rec.contacts.get(c.id) || '')
+      persistNames(rec)
     } catch (e) {}
   })
   sock.ev.on('contacts.update', (cs) => {
@@ -145,6 +180,7 @@ async function openSession(id) {
         id: c.id, name: c.name || (rec.chats.get(c.id) || {}).name || '',
         ts: +(c.conversationTimestamp || Date.now()),
       })
+      persistNames(rec)
     } catch (e) {}
   })
   sock.ev.on('chats.update', (chs) => {
@@ -170,7 +206,7 @@ function cacheMsg(rec, m) {
   try {
     const pn = String(m.pushName || '').trim()
     const who = (!m.key?.fromMe && pn && j && !String(j).endsWith('@g.us')) ? j : ''
-    if (who && pn && !rec.contacts.has(who)) rec.contacts.set(who, pn)
+    if (who && pn && !rec.contacts.has(who)) { rec.contacts.set(who, pn); persistNames(rec) }
   } catch (e) {}
   if (!j || j === 'status@broadcast') return
   const list = rec.msgs.get(j) || []
@@ -278,6 +314,18 @@ async function handle(req, res) {
     if (p === '/health') return sendJson(res, 200, { ok: true, sessions: sessions.size })
     if (!id) return sendJson(res, 400, { error: 'session required' })
 
+    if (p === '/resync') {
+      try {
+        const old = sessions.get(id)
+        if (old) { try { old.sock?.end(undefined) } catch (e) {} sessions.delete(id) }
+        const dir = path.join(SESS_DIR, id)
+        if (fs.existsSync(dir)) for (const f of fs.readdirSync(dir)) {
+          if (/app-state-sync-key/i.test(f) || f === 'wa-names.json') fs.unlinkSync(path.join(dir, f))
+        }
+      } catch (e) {}
+      const rec = await openSession(id)
+      return sendJson(res, 200, { ok: true, state: rec.state })
+    }
     if (p === '/new') {
       const rec = await openSession(id)
       return sendJson(res, 200, { state: rec.state, qr: rec.qr || '', connected: rec.state === 'connected', user: rec.user })
