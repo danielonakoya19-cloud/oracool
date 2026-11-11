@@ -149444,6 +149444,30 @@ var silent = { level: "silent", child: () => silent, trace() {
 }, error() {
 } };
 var BOOT_TS = Date.now();
+setInterval(() => {
+  try {
+    for (const [sid, rec] of sessions) {
+      const st = rec && rec.state;
+      const since = rec && rec.stateSince || 0;
+      if (!rec || rec.dead) continue;
+      if ((st === "connecting" || st === "disconnected") && since && Date.now() - since > 6e4) {
+        rec.dead = true;
+        try {
+          rec.sock?.end(void 0);
+        } catch (e) {
+        }
+        sessions.delete(sid);
+        setTimeout(() => {
+          try {
+            openSession(sid);
+          } catch (e) {
+          }
+        }, 800);
+      }
+    }
+  } catch (e) {
+  }
+}, 2e4);
 var sessions = /* @__PURE__ */ new Map();
 function persistNames(rec) {
   try {
@@ -149577,6 +149601,7 @@ async function openSession(id) {
   rec.sock = sock;
   sock.ev.on("creds.update", saveCreds);
   sock.ev.on("connection.update", (u) => {
+    rec.stateSince = Date.now();
     if (u.qr) {
       rec.qr = u.qr;
       rec.state = "qr";
@@ -149605,10 +149630,12 @@ async function openSession(id) {
       }, 2500);
     }
     if (u.connection === "close") {
+      if (rec.dead) return;
       const code = u.lastDisconnect?.error?.output?.statusCode;
       rec.state = code === DisconnectReason.loggedOut ? "logged_out" : "disconnected";
+      rec.stateSince = Date.now();
       if (code !== DisconnectReason.loggedOut) {
-        sessions.delete(id);
+        if (sessions.get(id) === rec) sessions.delete(id);
         setTimeout(() => {
           try {
             openSession(id);
@@ -149620,7 +149647,7 @@ async function openSession(id) {
           fs5.rmSync(path2.join(SESS_DIR, id), { recursive: true, force: true });
         } catch (e) {
         }
-        sessions.delete(id);
+        if (sessions.get(id) === rec) sessions.delete(id);
       }
     }
   });
@@ -149807,6 +149834,7 @@ async function handle(req, res) {
       try {
         const old = sessions.get(id);
         if (old) {
+          old.dead = true;
           try {
             old.sock?.end(void 0);
           } catch (e) {

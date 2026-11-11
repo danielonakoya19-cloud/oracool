@@ -25,6 +25,22 @@ fs.mkdirSync(SESS_DIR, { recursive: true })
 
 const silent = { level: 'silent', child: () => silent, trace() {}, debug() {}, info() {}, warn() {}, error() {} }
 const BOOT_TS = Date.now()
+// self-heal: recycle sockets stuck in 'connecting'/'disconnected' limbo
+setInterval(() => {
+  try {
+    for (const [sid, rec] of sessions) {
+      const st = rec && rec.state
+      const since = (rec && rec.stateSince) || 0
+      if (!rec || rec.dead) continue
+      if ((st === 'connecting' || st === 'disconnected') && since && Date.now() - since > 60000) {
+        rec.dead = true
+        try { rec.sock?.end(undefined) } catch (e) {}
+        sessions.delete(sid)
+        setTimeout(() => { try { openSession(sid) } catch (e) {} }, 800)
+      }
+    }
+  } catch (e) {}
+}, 20000)
 const sessions = new Map() // id -> { sock, qr, state, user, chats, msgs, bot, lastReply }
 
 // name persistence (survives redeploys) + one-time app-state resync
@@ -141,6 +157,7 @@ async function openSession(id) {
   rec.sock = sock
   sock.ev.on('creds.update', saveCreds)
   sock.ev.on('connection.update', (u) => {
+    rec.stateSince = Date.now()
     if (u.qr) { rec.qr = u.qr; rec.state = 'qr' }
     if (u.connection === 'open') {
       rec.state = 'connected'; rec.qr = ''
@@ -159,14 +176,16 @@ async function openSession(id) {
       }, 2500)
     }
     if (u.connection === 'close') {
+      if (rec.dead) return  // an intentional teardown (resync/logout) — do not respawn
       const code = u.lastDisconnect?.error?.output?.statusCode
       rec.state = code === DisconnectReason.loggedOut ? 'logged_out' : 'disconnected'
+      rec.stateSince = Date.now()
       if (code !== DisconnectReason.loggedOut) {
-        sessions.delete(id)
+        if (sessions.get(id) === rec) sessions.delete(id)
         setTimeout(() => { try { openSession(id) } catch (e) {} }, 1500)
       } else {
         try { fs.rmSync(path.join(SESS_DIR, id), { recursive: true, force: true }) } catch (e) {}
-        sessions.delete(id)
+        if (sessions.get(id) === rec) sessions.delete(id)
       }
     }
   })
@@ -336,7 +355,11 @@ async function handle(req, res) {
     if (p === '/resync') {
       try {
         const old = sessions.get(id)
-        if (old) { try { old.sock?.end(undefined) } catch (e) {} sessions.delete(id) }
+        if (old) {
+          old.dead = true
+          try { old.sock?.end(undefined) } catch (e) {}
+          sessions.delete(id)
+        }
         const dir = path.join(SESS_DIR, id)
         if (fs.existsSync(dir)) for (const f of fs.readdirSync(dir)) {
           if (/app-state-sync-key/i.test(f) || f === 'wa-names.json') fs.unlinkSync(path.join(dir, f))

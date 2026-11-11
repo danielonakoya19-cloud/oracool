@@ -394,3 +394,11 @@ def test_messages_survive_restarts_and_fetch_on_demand():
     assert "msgs," in b and "o.msgs" in b           # msgs persisted + loaded
     assert "fetchMessageHistory" in b                # cold cache pulls real history
     assert b.count("persistNames(rec)") >= 3         # names+msgs saved as they arrive
+
+
+def test_bridge_connection_watchdog_and_racefix():
+    b = open("wa-bridge.mjs").read()
+    assert "stateSince" in b and "60000" in b          # stuck-socket watchdog
+    assert "rec.dead" in b                             # intentional teardowns don't respawn
+    assert "if (sessions.get(id) === rec) sessions.delete(id)" in b  # dead rec never deletes a live one
+    assert "old.dead = true" in b                      # resync marks the old socket

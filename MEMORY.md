@@ -495,3 +495,9 @@
 - User: 'still the same nogood improvement' — probe confirmed EVERY chat read = 0 msgs (even Dr Albert, which had worked pre-restart). Root: wa-names.json persisted names but NOT rec.msgs — every bridge restart wiped the whole message cache, and app-state sync never re-delivers (sync keys say 'done').
 - Fixes (wa-bridge.mjs): persistNames now writes msgs (last 25/chat) into wa-names.json; loadNames restores them; cacheMsg persists (debounced); `/messages` with a cold cache pulls REAL history via `sock.fetchMessageHistory(30, jid)` (12s race cap) → cache → persist. After deploy: `/api/wa/resync` once to refill.
 - Suite 949 passed.
+
+
+## patch113 — connection watchdog (SHIPPED)
+
+- Probe: `state=connecting` for 125s+ and NEVER opens (zombie socket). Root: resync/close races — a dead socket's close-handler ran `sessions.delete(id)` against a NEWER live rec + respawned twins; sockets stuck in 'connecting' hung forever.
+- Fixes: `rec.stateSince` on every transition + 20s watchdog recycles any session stuck 'connecting'/'disconnected' >60s (mark dead → end → reopen); close handler ignores `rec.dead` recs and only deletes `sessions.get(id) === rec`; resync marks `old.dead = true`. Bundle rebuilt. Suite 950 passed.
