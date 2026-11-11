@@ -488,18 +488,19 @@ async function handle(req, res) {
       const to = u.searchParams.get('to') || ''
       const jj = rec ? toJid(rec, to) : null
       let list = rec ? (rec.msgs.get(jj || to) || []) : []
-      // cold cache (fresh boot) — pull the real history from WhatsApp on demand
+      // cold cache (fresh boot) — pull the real history from WhatsApp on demand.
+      // Baileys: fetchMessageHistory(count, oldestMsgKey, oldestMsgTimestamp)
+      // returns a query id; the messages then ARRIVE VIA EVENTS and land in
+      // cacheMsg -> rec.msgs, so poll briefly for them.
       if (rec && rec.sock && !list.length && jj) {
         try {
-          const hist = await Promise.race([
-            rec.sock.fetchMessageHistory(30, jj),
-            new Promise((res2) => setTimeout(() => res2(null), 12000)),
-          ])
-          const got = (hist && hist.messages) || []
-          got.slice().sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0))
-            .forEach((m) => { try { cacheMsg(rec, m) } catch (e) {} })
-          persistNames(rec)
+          await rec.sock.fetchMessageHistory(30, { remoteJid: jj, fromMe: false, id: '' },
+                                             Math.floor(Date.now() / 1000))
+          for (let w = 0; w < 12 && !(rec.msgs.get(jj) || []).length; w++) {
+            await new Promise((r2) => setTimeout(r2, 800))
+          }
           list = rec.msgs.get(jj) || []
+          if (list.length) persistNames(rec)
         } catch (e) {}
       }
       return sendJson(res, 200, { messages: list.slice(-20) })

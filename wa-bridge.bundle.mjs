@@ -150001,19 +150001,16 @@ async function handle(req, res) {
       let list = rec ? rec.msgs.get(jj || to) || [] : [];
       if (rec && rec.sock && !list.length && jj) {
         try {
-          const hist = await Promise.race([
-            rec.sock.fetchMessageHistory(30, jj),
-            new Promise((res2) => setTimeout(() => res2(null), 12e3))
-          ]);
-          const got = hist && hist.messages || [];
-          got.slice().sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0)).forEach((m) => {
-            try {
-              cacheMsg(rec, m);
-            } catch (e) {
-            }
-          });
-          persistNames(rec);
+          await rec.sock.fetchMessageHistory(
+            30,
+            { remoteJid: jj, fromMe: false, id: "" },
+            Math.floor(Date.now() / 1e3)
+          );
+          for (let w = 0; w < 12 && !(rec.msgs.get(jj) || []).length; w++) {
+            await new Promise((r2) => setTimeout(r2, 800));
+          }
           list = rec.msgs.get(jj) || [];
+          if (list.length) persistNames(rec);
         } catch (e) {
         }
       }
