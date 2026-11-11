@@ -149525,6 +149525,13 @@ function maybeWipeSyncKeys(dir) {
 function safeId(id) {
   return String(id || "").replace(/[^a-zA-Z0-9._-]/g, "").slice(0, 40);
 }
+function normName(s) {
+  try {
+    return String(s || "").normalize("NFKC").toLowerCase().replace(/[\u0000-\u001f\u200b-\u200f\u2060\ufe00-\ufe0f\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  } catch (e) {
+    return String(s || "").toLowerCase();
+  }
+}
 function toJid(rec, to) {
   const raw2 = String(to || "").trim();
   if (!raw2) return null;
@@ -149534,12 +149541,16 @@ function toJid(rec, to) {
   if (rec) {
     const want = raw2.toLowerCase();
     const hits = [];
-    const score = (nm) => nm && (nm.includes(want) || want.includes(nm)) ? 1 : 0;
+    const w2 = normName(raw2);
+    const score = (nm) => {
+      const n2 = normName(nm);
+      return n2 && w2 && (n2.includes(w2) || w2.includes(n2)) ? 1 : 0;
+    };
     for (const [jid, ch] of rec.chats) {
-      if (score(String(ch.name || "").toLowerCase())) hits.push(jid);
+      if (score(ch.name)) hits.push(jid);
     }
     for (const [jid, nm] of rec.contacts || /* @__PURE__ */ new Map()) {
-      if (score(String(nm || "").toLowerCase())) hits.push(jid);
+      if (score(nm)) hits.push(jid);
     }
     const best = hits.find((j2) => !String(j2).endsWith("@lid")) || hits.find((j2) => String(j2).endsWith("@s.whatsapp.net")) || hits[0];
     if (best) return best;
@@ -149981,8 +149992,9 @@ async function handle(req, res) {
       const out = [];
       if (rec) {
         const byName = /* @__PURE__ */ new Map();
+        const qn = normName(q);
         for (const [jid, nm] of rec.contacts) {
-          if (q && !String(nm).toLowerCase().includes(q) && !jid.includes(q)) continue;
+          if (q && !normName(nm).includes(qn) && !jid.includes(q)) continue;
           const prev = byName.get(nm);
           if (!prev || String(prev).endsWith("@lid") && String(jid).endsWith("@s.whatsapp.net")) byName.set(nm, jid);
         }
