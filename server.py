@@ -5057,7 +5057,9 @@ def _wa_ensure_bridge():
     if shutil.which("node") is None:
         return False, "Node.js is not installed on this server"
     base = os.path.dirname(os.path.abspath(__file__))
-    if not os.path.exists(os.path.join(base, "wa-bridge.mjs")):
+    bundle = os.path.join(base, "wa-bridge.bundle.mjs")
+    script = os.path.join(base, "wa-bridge.mjs")
+    if not os.path.exists(bundle) and not os.path.exists(script):
         return False, "the link service script is missing on this server"
     starting = False
     try:
@@ -5069,16 +5071,20 @@ def _wa_ensure_bridge():
         try:
             env2 = dict(os.environ)
             env2["WA_BRIDGE_PORT"] = str(_WA_BRIDGE_PORT)
+            if os.path.exists(bundle):
+                _cmd = "exec node wa-bridge.bundle.mjs"  # prebuilt — boots in ~1s, no npm
+            else:
+                _cmd = ("if [ ! -d node_modules ]; then npm install --no-audit --no-fund --omit=dev >/dev/null 2>&1; fi; "
+                        "exec node wa-bridge.mjs")
             _WA_PROC = subprocess.Popen(
-                "if [ ! -d node_modules ]; then npm install --no-audit --no-fund --omit=dev >/dev/null 2>&1; fi; exec node wa-bridge.mjs",
-                shell=True, cwd=base, env=env2,
+                _cmd, shell=True, cwd=base, env=env2,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             starting = True
         except Exception as e:
             return False, str(e)[:90]
-    # short grace only — warm restarts come up in ~1s
-    for _ in range(4):
-        time.sleep(0.5)
+    # short grace only — the prebuilt bundle is up in ~1s, npm path much later
+    for _ in range(6):
+        time.sleep(0.4)
         if _wa_http("/health", timeout=2).get("ok"):
             return True, ""
     return False, "starting"

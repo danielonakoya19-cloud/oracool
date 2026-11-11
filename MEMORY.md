@@ -421,3 +421,11 @@
 - patch103b: 'connecting/starting' states report 'reconnecting — still linked' (never 'not linked' + QR sheet mid-reconnect); send/action errors say 'reconnecting or not linked — try again'. The mystery 'ORA-COOL · PHONE WHATSAPP + JARVIS' header = the PHONE WHATSAPP core persona (`__cores`) + model placeholder, now always replaced by real content. Suite **939 passed**.
 
 - patch103c: model tool calls written as fenced JSON (`{"function": X, "tool_input": {...}}`) are now EXECUTED (`_json_tool_commands` → whatsapp/connector command forms, hooked into both stream intercept and non-stream sweep) and SCRUBBED from replies (server `_scrub_tool_placeholders` + client `_stripCmdLines`) so raw call JSON never reaches the user. Suite **941 passed**.
+
+
+## patch104 — instant bridge boot (prebuilt bundle) + bot panel is chat-only (SHIPPED)
+
+- **User screenshots:** (1) Link sheet stuck at "Preparing the live link code / Starting the link service" — the QR never appeared; (2) "what is that bot pls remove it it can be done on the chat box".
+- **QR fix root cause:** every deploy wiped node_modules and `_wa_ensure_bridge` ran `npm install` at boot = 60-90s of `starting` states; the sheet sat on "Preparing…" through the whole window. FIX: esbuild-prebuilt **`wa-bridge.bundle.mjs`** (7.7MB, committed) — `exec node wa-bridge.bundle.mjs` (ZERO npm at boot, up in ~1s); npm+source kept as fallback when the bundle is absent. esbuild gotchas: ESM bundle needs `--banner:js="import { createRequire as __mkReq } from 'module'; const require = __mkReq(import.meta.url);"` (renamed — `sharp` declares its own `createRequire` and collides). Bundle smoke-tested: /health ok + REAL pairing QR (277 chars) from the bundle alone. Sheet boot copy now "Warming up the link service…" + polls every 1.6s.
+- **Bot panel REMOVED from the QR sheet** (explicit user instruction) — `waBotBox`/`waBotLoad`/`waBotToggle` deleted from index.html. The auto-reply bot stays fully controllable IN THE CHAT ("turn on my whatsapp bot replying: …", "add whatsapp bot rule…", "turn off my whatsapp bot") + bridge engine unchanged.
+- Tests retargeted (client pins assert bot UI ABSENT + bundle pins). **Suite 942 passed.**

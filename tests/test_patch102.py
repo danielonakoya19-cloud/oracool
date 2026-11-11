@@ -158,9 +158,18 @@ def test_routes_and_client_pins():
     src = open("server.py").read()
     assert '"/api/wa/bot"' in src and '"/api/wa/action"' in src
     c = open("index.html").read()
-    assert "waBotBox" in c and "waBotToggle" in c and "waBotLoad" in c
-    assert "??=" not in c.split("function waBotLoad()")[1][:2500]
-    assert ":has(" not in c.split("function waBotLoad()")[1][:2500]
+    # the bot panel is CHAT-ONLY by user instruction: no bot controls in the QR sheet
+    assert "waBotBox" not in c and "waBotToggle" not in c and "waBotLoad" not in c
+    assert "function waQRSheet()" in c and "waQRStartPoll" in c
+
+
+def test_prebuilt_bridge_bundle_ships_and_is_preferred():
+    assert os.path.exists("wa-bridge.bundle.mjs")
+    b = open("wa-bridge.bundle.mjs").read()
+    assert "linked_devices" in b  # real pairing flow inside the bundle
+    src = open("server.py").read()
+    assert "wa-bridge.bundle.mjs" in src and "exec node wa-bridge.bundle.mjs" in src
+    assert "if [ ! -d node_modules ]" in src  # fallback kept for missing-bundle installs
 
 
 def test_bridge_ships_bot_and_actions():
