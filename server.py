@@ -5021,7 +5021,7 @@ border-radius:16px;padding:14px 18px;font-family:Inter,system-ui,sans-serif;font
 # in the key-value store so links survive redeploys.
 _WA_BRIDGE_PORT = os.environ.get("WA_BRIDGE_PORT", "8788")
 _WA_PROC = None
-_WA_RESTORED = set()
+_WA_RESTORED = {}  # sid -> bridge boot id
 _WA_VAULT_PREFIX = "wa_creds:"
 
 
@@ -5101,15 +5101,36 @@ def _wa_vault_push(sid):
 
 
 def _wa_vault_restore(sid):
-    if sid in _WA_RESTORED:
+    # re-restore whenever the BRIDGE process is new (crash/restart wiped its disk)
+    try:
+        boot = _wa_http("/health", timeout=2).get("boot") or 0
+    except Exception:
+        boot = 0
+    if boot and _WA_RESTORED.get(sid) == boot:
         return
-    _WA_RESTORED.add(sid)
+    _WA_RESTORED[sid] = boot
     try:
         files = supabase_kv_get(_WA_VAULT_PREFIX + sid)
     except Exception:
         files = None
     if files:
         _wa_http("/restore?session=" + sid, method="POST", obj={"files": files}, timeout=12)
+
+
+def _wa_vault_watcher():
+    """Keep vaulted sessions fresh even if nobody polls."""
+    while True:
+        time.sleep(90)
+        try:
+            for sid in list(_WA_RESTORED):
+                try:
+                    if _wa_http("/status?session=" + sid, timeout=5).get("connected"):
+                        _wa_vault_push(sid)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+threading.Thread(target=_wa_vault_watcher, daemon=True).start()
 
 
 def wa_gateway(path2, who, body):
@@ -5126,7 +5147,7 @@ def wa_gateway(path2, who, body):
             supabase_kv_put(_WA_VAULT_PREFIX + sid, {})
         except Exception:
             pass
-        _WA_RESTORED.discard(sid)
+        _WA_RESTORED.pop(sid, None)
         return {"ok": True, "message": "WhatsApp unlinked from OraCool."}
     _wa_vault_restore(sid)
     if path2 in ("/api/wa/qr", "/api/wa/link"):
@@ -5181,16 +5202,23 @@ def wa_gateway(path2, who, body):
     if path2 == "/api/wa/resync":
         d = _wa_http("/resync?session=" + sid, timeout=15)
         return {"ok": True, "state": d.get("state")}
+    def _pushed(d):
+        try:
+            _wa_vault_push(sid)
+        except Exception:
+            pass
+        return d
     if path2 == "/api/wa/contacts":
         q = str(body.get("q") or "").strip()
         d = _wa_http("/contacts?session=" + sid + ("&q=" + urllib.parse.quote(q) if q else ""), timeout=15)
-        return {"ok": True, "contacts": d.get("contacts") or []}
+        return _pushed({"ok": True, "contacts": d.get("contacts") or []})
     if path2 == "/api/wa/chats":
         d = _wa_http("/chats?session=" + sid, timeout=12)
-        return {"ok": True, "chats": d.get("chats") or []}
+        return _pushed({"ok": True, "chats": d.get("chats") or []})
     if path2 == "/api/wa/messages":
         to = str(body.get("to") or "").strip()
         d = _wa_http("/messages?session=" + sid + "&to=" + urllib.parse.quote(to), timeout=12)
+        _wa_vault_push(sid)
         return {"ok": True, "messages": d.get("messages") or []}
     return {"ok": False, "error": "unknown WhatsApp request"}
 

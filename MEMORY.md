@@ -445,3 +445,18 @@
 - Fix: `wa-names.json` persisted per session dir (debounced 3s) + loaded at `openSession`; `maybeWipeSyncKeys(dir)` deletes app-state-sync-keys ONCE (when wa-names.json missing) to force full re-delivery; NEW `/resync` bridge route wipes keys+names+recreates (server route `/api/wa/resync`).
 - `contacts.upsert`/`contacts.update`/`chats.upsert`/`chats.update` listeners (patch106b) fill names fast after connect.
 - Snapshot quirk: `node_modules` never persists → `npm install` before esbuild rebuilds; bundle grep for new symbols to CONFIRM the rebuild took (a same-size bundle was silently stale once).
+
+
+### patch106 VERIFIED (2026-09-08)
+
+- `/api/wa/resync` forced full app-state re-delivery. Live chats (named): '⬛RIVAILLE⸺LPFP.(⑘)' [group], 'Kofospecial — Am grateful', 'RESILIENCE 🎉' [group], '𝞎𝞝𝞝 𝞓𝞞𝞞' [group]. Live contacts (5+ and growing as sync delivers): Dr Albert (129622868029486@lid), GARFIELD JASEB OPEN, 'GÖDSPEED (FULL–SLOT)', 'Kofospecial <>Am grateful'. Contact search works ('albert' → Dr Albert).
+- AI end-to-end: "list my whatsapp chats" → named list with [group] tags; "list my whatsapp contacts" → 'Here are your synced WhatsApp contacts — 5 total: …'. /api/chat SSE shape: `{"choices":[{"delta":{"content":…}}]}` (NOT top-level delta) and body needs `messages[]` (not `message`).
+- Contact jids can be @lid (linked-device IDs) — name resolution falls back through chats+contacts; sync keeps delivering progressively; wa-names.json persists it all.
+
+
+## patch107 — session durability: bridge-restart-safe vault, honest partial lists (SHIPPED)
+
+- User: "this is fake is not my contact" — the 4-chats/5-contacts shown were post-restart TRICKLE (a few groups/statuses), not their real list. Linked account +2347052405515 ('Xyz') confirmed theirs (ask_user: "Yes it's mine, but the chats are wrong").
+- Root bugs: (1) `_WA_RESTORED` was per-PYTHON-process — when the Node bridge crashed/restarted, the vault was never re-restored to the fresh empty disk; (2) `_wa_vault_push` only ran on /qr+/status so wa-names.json often died before stashing; (3) `/chats` items had no last-message preview (table showed '—').
+- Fixes: `_WA_RESTORED = {sid: bridge_boot_id}` — `/health` now returns `boot: BOOT_TS`, restore re-runs when the bridge pid/boot changes; `_pushed(d)` wrapper pushes vault after chats/contacts/messages reads; `_wa_vault_watcher` daemon thread pushes every 90s for connected sessions; bridge /status exposes `contacts` count + `boot`; /chats items get `preview` (last cached msg text); logout uses `.pop(sid, None)` (dict not set).
+- The REAL fix for the user experience: after deploy call `/api/wa/resync` once → WA re-delivers the full app-state (chat list + contacts) → growth must be MONITORED over 10+ min (trickle rate observed: ~1 chat/min at first). Partial lists must be presented as "synced so far", never as complete.

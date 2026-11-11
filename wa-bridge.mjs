@@ -24,6 +24,7 @@ const PORT = parseInt(process.env.WA_BRIDGE_PORT || '8788', 10)
 fs.mkdirSync(SESS_DIR, { recursive: true })
 
 const silent = { level: 'silent', child: () => silent, trace() {}, debug() {}, info() {}, warn() {}, error() {} }
+const BOOT_TS = Date.now()
 const sessions = new Map() // id -> { sock, qr, state, user, chats, msgs, bot, lastReply }
 
 // name persistence (survives redeploys) + one-time app-state resync
@@ -311,7 +312,7 @@ async function handle(req, res) {
   const p = u.pathname
   const id = safeId(u.searchParams.get('session') || '')
   try {
-    if (p === '/health') return sendJson(res, 200, { ok: true, sessions: sessions.size })
+    if (p === '/health') return sendJson(res, 200, { ok: true, sessions: sessions.size, boot: BOOT_TS })
     if (!id) return sendJson(res, 400, { error: 'session required' })
 
     if (p === '/resync') {
@@ -337,7 +338,8 @@ async function handle(req, res) {
       const rec = sessions.get(id)
       return sendJson(res, 200, rec ? {
         state: rec.state, connected: rec.state === 'connected', user: rec.user,
-        chats: rec.chats.size, bot: { enabled: !!(rec.bot && rec.bot.enabled), rules: (rec.bot && rec.bot.rules || []).length }
+        chats: rec.chats.size, contacts: rec.contacts.size, boot: BOOT_TS,
+        bot: { enabled: !!(rec.bot && rec.bot.enabled), rules: (rec.bot && rec.bot.rules || []).length }
       } : { state: 'none', connected: false, bot: { enabled: false, rules: 0 } })
     }
     if (p === '/bot' && req.method === 'POST') {
@@ -406,6 +408,13 @@ async function handle(req, res) {
             if (meta && meta.subject) { ch.name = meta.subject; rec.chats.get(ch.id).name = meta.subject }
           } catch (e) {}
         }
+      }
+      for (const ch of list) {
+        try {
+          const msgs = rec.msgs.get(ch.id) || []
+          const last = msgs[msgs.length - 1]
+          if (last && last.text) ch.preview = String(last.text).slice(0, 90)
+        } catch (e) {}
       }
       return sendJson(res, 200, { chats: list })
     }
