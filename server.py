@@ -5244,9 +5244,9 @@ def wa_gateway(path2, who, body):
         return _pushed({"ok": True, "chats": d.get("chats") or []})
     if path2 == "/api/wa/messages":
         to = str(body.get("to") or "").strip()
-        d = _wa_http("/messages?session=" + sid + "&to=" + urllib.parse.quote(to), timeout=12)
+        d = _wa_http("/messages?session=" + sid + "&to=" + urllib.parse.quote(to), timeout=45)
         _wa_vault_push(sid)
-        return {"ok": True, "messages": d.get("messages") or []}
+        return {"ok": True, "messages": d.get("messages") or [], "fetched": d.get("fetched") or ""}
     return {"ok": False, "error": "unknown WhatsApp request"}
 
 

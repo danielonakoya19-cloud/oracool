@@ -492,18 +492,20 @@ async function handle(req, res) {
       // Baileys: fetchMessageHistory(count, oldestMsgKey, oldestMsgTimestamp)
       // returns a query id; the messages then ARRIVE VIA EVENTS and land in
       // cacheMsg -> rec.msgs, so poll briefly for them.
+      let fetched = 'no'
       if (rec && rec.sock && !list.length && jj) {
         try {
-          await rec.sock.fetchMessageHistory(30, { remoteJid: jj, fromMe: false, id: '' },
-                                             Math.floor(Date.now() / 1000))
-          for (let w = 0; w < 12 && !(rec.msgs.get(jj) || []).length; w++) {
-            await new Promise((r2) => setTimeout(r2, 800))
+          // NB: oldestMsgTimestampMs is MILLISECONDS (see baileys messages-recv.js)
+          await rec.sock.fetchMessageHistory(30, { remoteJid: jj, fromMe: false, id: '' }, Date.now())
+          fetched = 'requested'
+          for (let w = 0; w < 20 && !(rec.msgs.get(jj) || []).length; w++) {
+            await new Promise((r2) => setTimeout(r2, 900))
           }
           list = rec.msgs.get(jj) || []
-          if (list.length) persistNames(rec)
-        } catch (e) {}
+          if (list.length) { fetched = 'ok'; persistNames(rec) }
+        } catch (e) { fetched = 'err:' + String(e).slice(0, 80) }
       }
-      return sendJson(res, 200, { messages: list.slice(-20) })
+      return sendJson(res, 200, { messages: list.slice(-20), fetched })
     }
     if (p === '/logout' && req.method === 'POST') {
       const rec = sessions.get(id)
