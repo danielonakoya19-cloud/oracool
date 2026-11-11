@@ -5133,6 +5133,25 @@ def _wa_vault_watcher():
 threading.Thread(target=_wa_vault_watcher, daemon=True).start()
 
 
+_WA_NEEDS_CONN = ("/api/wa/send", "/api/wa/action", "/api/wa/messages", "/api/wa/chats", "/api/wa/contacts")
+
+
+def _wa_wait_connected(sid, budget=14):
+    """Poll the bridge until the linked socket is up (actions during a brief
+    reconnect should WAIT, not fail). Returns the last known state."""
+    state = "none"
+    for _ in range(max(1, budget // 2)):
+        try:
+            d = _wa_http("/status?session=" + sid, timeout=4)
+        except Exception:
+            d = {}
+        state = str(d.get("state") or "none")
+        if d.get("connected") or state in ("qr", "logged_out", "none"):
+            return state
+        time.sleep(2)
+    return state
+
+
 def wa_gateway(path2, who, body):
     """All WhatsApp QR-link endpoints in one testable place."""
     sid = _wa_sid(who)
@@ -5150,6 +5169,8 @@ def wa_gateway(path2, who, body):
         _WA_RESTORED.pop(sid, None)
         return {"ok": True, "message": "WhatsApp unlinked from OraCool."}
     _wa_vault_restore(sid)
+    if path2 in _WA_NEEDS_CONN:
+        _wa_wait_connected(sid)
     if path2 in ("/api/wa/qr", "/api/wa/link"):
         d = _wa_http("/new?session=" + sid, timeout=25)
         if d.get("connected"):
@@ -5174,7 +5195,10 @@ def wa_gateway(path2, who, body):
             return {"ok": False, "error": "to and text are required"}
         d = _wa_http("/send?session=" + sid, method="POST", obj={"to": to, "text": text2}, timeout=30)
         if d.get("error") == "not connected":
-            return {"ok": False, "error": "WhatsApp is reconnecting or not linked \u2014 try again in a few seconds, or scan the QR in Connectors \u2192 WhatsApp if it is not linked."}
+            return {"ok": False, "error": ("WhatsApp is not linked yet \u2014 tell the user to say 'link my whatsapp' and scan the QR."
+                if str((_wa_http("/status?session=" + sid, timeout=4).get("state") or "")) in ("qr", "logged_out", "none")
+                else "Your WhatsApp is reconnecting after a brief service restart \u2014 it stays linked, no QR needed. "
+                     "Tell the user to send that again in about 20 seconds.")}
         return {"ok": not d.get("error"), "id": d.get("id") or "",
                 "message": ("WhatsApp message sent to " + to + ".") if not d.get("error") else str(d.get("error"))[:160]}
     if path2 == "/api/wa/bot":
@@ -5197,7 +5221,10 @@ def wa_gateway(path2, who, body):
                      "minutes": body.get("minutes")}.items() if v is not None}
         d = _wa_http("/action?session=" + sid, method="POST", obj=_act_obj, timeout=30)
         if d.get("error") == "not connected":
-            return {"ok": False, "error": "WhatsApp is reconnecting or not linked \u2014 try again in a few seconds, or scan the QR in Connectors \u2192 WhatsApp if it is not linked."}
+            return {"ok": False, "error": ("WhatsApp is not linked yet \u2014 tell the user to say 'link my whatsapp' and scan the QR."
+                if str((_wa_http("/status?session=" + sid, timeout=4).get("state") or "")) in ("qr", "logged_out", "none")
+                else "Your WhatsApp is reconnecting after a brief service restart \u2014 it stays linked, no QR needed. "
+                     "Tell the user to send that again in about 20 seconds.")}
         return {"ok": not d.get("error"), "message": d.get("message") or str(d.get("error"))[:180]}
     if path2 == "/api/wa/resync":
         d = _wa_http("/resync?session=" + sid, timeout=15)
@@ -17012,6 +17039,8 @@ class Handler(BaseHTTPRequestHandler):
             "'list my whatsapp contacts', 'find John in my whatsapp contacts', 'my whatsapp chats' all work with names. "
             "Natural works too: 'send whatsapp to +2348012345678: hello'. "
             "If not linked yet, say in ONE line they scan the QR in Connectors \u2192 WhatsApp \u2192 Link with QR. "
+            "If WhatsApp is RECONNECTING (linked but briefly offline), say it stays linked and to try again in about "
+            "20 seconds \u2014 NEVER tell them to scan a QR while a linked session exists. "
             "Never tell the user to open WhatsApp and do it themselves. TOTAL ACCESS on the linked WhatsApp: send text and "
             "images, read chats and messages (names work: 'read my chat with Mum'), react, delete your own last message, "
             "mute / archive / mark-read chats, set the profile about, and \u2014 ONLY when the user asks \u2014 an auto-reply "

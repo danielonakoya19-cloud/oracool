@@ -344,3 +344,31 @@ def test_bridge_syncs_full_history_and_contacts():
     assert "'/contacts'" in b or '"/contacts"' in b
     src = open("server.py").read()
     assert '"/api/wa/contacts"' in src
+
+
+# ---------------------------------------------------------------------------
+# whatsapp reliability: actions wait for reconnect, honest copy, phone-jid sends
+# ---------------------------------------------------------------------------
+
+def test_wa_actions_wait_for_connection_and_copy_is_honest(monkeypatch):
+    src = open("server.py").read()
+    assert "_wa_wait_connected" in src and "_WA_NEEDS_CONN" in src
+    assert '"/api/wa/send"' in src[src.index("_WA_NEEDS_CONN = ("):src.index("_WA_NEEDS_CONN = (") + 220]
+    assert "it stays linked, no QR needed" in src
+    assert "NEVER tell them to scan a QR while a linked session exists" in src
+    # waiter polls the bridge and stops early on qr/none
+    calls = []
+    def fake_http(p2, method="GET", obj=None, timeout=8):
+        calls.append(p2)
+        return {"state": "connecting", "connected": False}
+    monkeypatch.setattr(server, "_wa_http", fake_http)
+    st = server._wa_wait_connected("wa:a@b.c", budget=4)
+    assert st == "connecting" and len(calls) >= 1
+
+
+def test_bridge_contact_phone_jids_and_lid_preference():
+    b = open("wa-bridge.mjs").read()
+    assert "function recContact(rec, c)" in b
+    assert "phoneNumber" in b  # phone jid mapped alongside @lid
+    assert "@lid" in b and "hits.find((j) => !String(j).endsWith('@lid'))" in b
+    assert "byName" in b  # /contacts dedupes preferring phone jid

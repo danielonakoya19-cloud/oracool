@@ -49,6 +49,20 @@ function loadNames(rec) {
     return true
   } catch (e) { return false }
 }
+function recContact(rec, c) {
+  try {
+    if (!c || !c.id) return
+    const nm = String(c.name || c.notify || c.verifiedName || '').trim() || rec.contacts.get(String(c.id)) || ''
+    if (!nm) return
+    rec.contacts.set(String(c.id), nm)
+    // linked-device ids (@lid) cannot receive sends — also map the phone jid
+    const phone = String(c.notify || c.phoneNumber || '').replace(/[^\d]/g, '')
+    if (phone.length >= 7) {
+      const pj = phone + '@s.whatsapp.net'
+      if (!rec.contacts.has(pj)) rec.contacts.set(pj, nm)
+    }
+  } catch (e) {}
+}
 function maybeWipeSyncKeys(dir) {
   try {
     if (fs.existsSync(path.join(dir, 'wa-names.json'))) return
@@ -66,17 +80,20 @@ function toJid(rec, to) {
   if (raw.includes('@g.us') || raw.includes('@s.whatsapp.net') || raw.includes('@lid')) return raw
   const digits = raw.replace(/[^\d]/g, '')
   if (digits.length >= 7) return digits + '@s.whatsapp.net'
-  // name resolution against synced chats AND saved contacts — "Mum", "John"
+  // name resolution against synced chats AND saved contacts — "Mum", "John".
+  // Prefer @s.whatsapp.net matches over @lid (linked-device ids cannot receive sends).
   if (rec) {
     const want = raw.toLowerCase()
+    const hits = []
+    const score = (nm) => (nm && (nm.includes(want) || want.includes(nm))) ? 1 : 0
     for (const [jid, ch] of rec.chats) {
-      const nm = String(ch.name || '').toLowerCase()
-      if (nm && (nm.includes(want) || want.includes(nm))) return jid
+      if (score(String(ch.name || '').toLowerCase())) hits.push(jid)
     }
     for (const [jid, nm] of (rec.contacts || new Map())) {
-      const n2 = String(nm || '').toLowerCase()
-      if (n2 && (n2.includes(want) || want.includes(n2))) return jid
+      if (score(String(nm || '').toLowerCase())) hits.push(jid)
     }
+    const best = hits.find((j) => !String(j).endsWith('@lid')) || hits.find((j) => String(j).endsWith('@s.whatsapp.net')) || hits[0]
+    if (best) return best
     for (const jid of rec.msgs.keys()) {
       const who = jid.split('@')[0]
       if (who.includes(digits) && digits) return jid
@@ -152,10 +169,7 @@ async function openSession(id) {
   })
   sock.ev.on('messaging-history.set', ({ chats, contacts, messages }) => {
     try {
-      for (const c of contacts || []) {
-        const nm = String(c.name || c.notify || c.verifiedName || '').trim()
-        if (c.id && nm) rec.contacts.set(c.id, nm)
-      }
+      for (const c of contacts || []) recContact(rec, c)
       for (const ch of chats || []) {
         const nm = String(ch.name || rec.contacts.get(ch.id) || '').trim()
         rec.chats.set(ch.id, { id: ch.id, name: nm, ts: ch.conversationTimestamp || 0 })
@@ -166,13 +180,13 @@ async function openSession(id) {
   })
   sock.ev.on('contacts.upsert', (cs) => {
     try {
-      for (const c of (cs || [])) if (c && c.id) rec.contacts.set(c.id, c.name || c.notify || c.verifiedName || rec.contacts.get(c.id) || '')
+      for (const c of (cs || [])) recContact(rec, c)
       persistNames(rec)
     } catch (e) {}
   })
   sock.ev.on('contacts.update', (cs) => {
     try {
-      for (const c of (cs || [])) if (c && c.id) rec.contacts.set(c.id, c.name || c.notify || c.verifiedName || rec.contacts.get(c.id) || '')
+      for (const c of (cs || [])) recContact(rec, c)
     } catch (e) {}
   })
   sock.ev.on('chats.upsert', (chs) => {
@@ -428,8 +442,13 @@ async function handle(req, res) {
       const q = String(u.searchParams.get('q') || '').toLowerCase()
       const out = []
       if (rec) {
+        const byName = new Map()
         for (const [jid, nm] of rec.contacts) {
           if (q && !String(nm).toLowerCase().includes(q) && !jid.includes(q)) continue
+          const prev = byName.get(nm)
+          if (!prev || (String(prev).endsWith('@lid') && String(jid).endsWith('@s.whatsapp.net'))) byName.set(nm, jid)
+        }
+        for (const [nm, jid] of byName) {
           out.push({ id: jid, name: nm })
           if (out.length >= 50) break
         }

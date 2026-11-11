@@ -474,3 +474,10 @@
 - User: 'delete this out of oracool ai just only cases while the create let it work in the chat box instead' + ask_user → **remove BOTH sidebar tabs** (🗂 Cases deleted entirely; ✨ Create becomes chat-only).
 - index.html cuts (13, all applied): sidebar items (1757/1760), #p-cases+#p-create panel divs, renderCreate hook, VIEW_TITLES create/cases entries, dispatch cases/create lines, PRO prompt 'Cases tab' copy reworded, intel '🔒 Preserve as evidence' button + handler removed (kept '🤖 Ask OraCool to analyze'), renderCreate() deleted, whole 'Case Files' block deleted (curCase/authBody/quickExtract/renderCases/renderDocVerify/renderCaseBody/renderLinkGraph/renderWatch). Backends (/api/case/*, /api/evidence/*, /api/media/list) left in place — harmless, no UI.
 - Chat creation already works via SSE `__media` + `mediaEl()` inline renderer + /api/image server flow. test_patch78/79 gallery pins retargeted: assert mediaEl/__media + `renderCreate` ABSENT. Suite 945 passed.
+
+
+## patch110 — whatsapp actions that actually work (SHIPPED)
+
+- User: 'the ai still can[']t chat and send message to my contact or do anything yet pls fix that it is just still giving me error'. Diagnosis: send pipe WORKS (self-send landed: fromMe:true + real msg id) but actions during 'connecting' windows failed and the model improvised 'scan the QR' advice; name→jid resolved to @lid (LIDs cannot receive sends).
+- server.py: `_wa_wait_connected(sid, budget=14)` polls the bridge for send/action/messages/chats/contacts BEFORE dispatch (`_WA_NEEDS_CONN`); 'not connected' errors are state-aware ('it stays linked, no QR needed — retry in ~20s' vs real 'link my whatsapp'); prompt: NEVER say scan QR while a linked session exists.
+- wa-bridge.mjs: `recContact` maps contacts under BOTH lid + phone jid (c.notify/c.phoneNumber); toJid collects hits and PREFERS non-@lid; /contacts dedupes by name preferring phone jid. Bundle rebuilt + grepped (8 symbol hits). Suite **947 passed**.

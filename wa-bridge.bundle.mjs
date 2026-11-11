@@ -149471,6 +149471,20 @@ function loadNames(rec) {
     return false;
   }
 }
+function recContact(rec, c) {
+  try {
+    if (!c || !c.id) return;
+    const nm = String(c.name || c.notify || c.verifiedName || "").trim() || rec.contacts.get(String(c.id)) || "";
+    if (!nm) return;
+    rec.contacts.set(String(c.id), nm);
+    const phone = String(c.notify || c.phoneNumber || "").replace(/[^\d]/g, "");
+    if (phone.length >= 7) {
+      const pj = phone + "@s.whatsapp.net";
+      if (!rec.contacts.has(pj)) rec.contacts.set(pj, nm);
+    }
+  } catch (e) {
+  }
+}
 function maybeWipeSyncKeys(dir) {
   try {
     if (fs5.existsSync(path2.join(dir, "wa-names.json"))) return;
@@ -149491,14 +149505,16 @@ function toJid(rec, to) {
   if (digits.length >= 7) return digits + "@s.whatsapp.net";
   if (rec) {
     const want = raw2.toLowerCase();
+    const hits = [];
+    const score = (nm) => nm && (nm.includes(want) || want.includes(nm)) ? 1 : 0;
     for (const [jid, ch] of rec.chats) {
-      const nm = String(ch.name || "").toLowerCase();
-      if (nm && (nm.includes(want) || want.includes(nm))) return jid;
+      if (score(String(ch.name || "").toLowerCase())) hits.push(jid);
     }
     for (const [jid, nm] of rec.contacts || /* @__PURE__ */ new Map()) {
-      const n2 = String(nm || "").toLowerCase();
-      if (n2 && (n2.includes(want) || want.includes(n2))) return jid;
+      if (score(String(nm || "").toLowerCase())) hits.push(jid);
     }
+    const best = hits.find((j2) => !String(j2).endsWith("@lid")) || hits.find((j2) => String(j2).endsWith("@s.whatsapp.net")) || hits[0];
+    if (best) return best;
     for (const jid of rec.msgs.keys()) {
       const who = jid.split("@")[0];
       if (who.includes(digits) && digits) return jid;
@@ -149606,10 +149622,7 @@ async function openSession(id) {
   });
   sock.ev.on("messaging-history.set", ({ chats, contacts, messages }) => {
     try {
-      for (const c of contacts || []) {
-        const nm = String(c.name || c.notify || c.verifiedName || "").trim();
-        if (c.id && nm) rec.contacts.set(c.id, nm);
-      }
+      for (const c of contacts || []) recContact(rec, c);
       for (const ch of chats || []) {
         const nm = String(ch.name || rec.contacts.get(ch.id) || "").trim();
         rec.chats.set(ch.id, { id: ch.id, name: nm, ts: ch.conversationTimestamp || 0 });
@@ -149621,14 +149634,14 @@ async function openSession(id) {
   });
   sock.ev.on("contacts.upsert", (cs) => {
     try {
-      for (const c of cs || []) if (c && c.id) rec.contacts.set(c.id, c.name || c.notify || c.verifiedName || rec.contacts.get(c.id) || "");
+      for (const c of cs || []) recContact(rec, c);
       persistNames(rec);
     } catch (e) {
     }
   });
   sock.ev.on("contacts.update", (cs) => {
     try {
-      for (const c of cs || []) if (c && c.id) rec.contacts.set(c.id, c.name || c.notify || c.verifiedName || rec.contacts.get(c.id) || "");
+      for (const c of cs || []) recContact(rec, c);
     } catch (e) {
     }
   });
@@ -149934,8 +149947,13 @@ async function handle(req, res) {
       const q = String(u.searchParams.get("q") || "").toLowerCase();
       const out = [];
       if (rec) {
+        const byName = /* @__PURE__ */ new Map();
         for (const [jid, nm] of rec.contacts) {
           if (q && !String(nm).toLowerCase().includes(q) && !jid.includes(q)) continue;
+          const prev = byName.get(nm);
+          if (!prev || String(prev).endsWith("@lid") && String(jid).endsWith("@s.whatsapp.net")) byName.set(nm, jid);
+        }
+        for (const [nm, jid] of byName) {
           out.push({ id: jid, name: nm });
           if (out.length >= 50) break;
         }
