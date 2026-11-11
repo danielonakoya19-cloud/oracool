@@ -467,3 +467,10 @@
 - User screenshot: "check my whatsapp for unread messages" → client error 'No answer from the brain in 45s — the provider is jammed' while the server answer was STILL COOKING (probe showed first byte at 160.6s, then a CORRECT answer). Root: client watchdog 45s < slow WA-read path (bridge /chats did serial groupMetadata fetches, up to 30!) + provider latency + the patch107b deploy restart at 03:21 PM.
 - Fixes: client race 45s→ SOFT hint 'still working — WhatsApp reads can take a moment…' (same promise, no double-fetch) then hard error at 150s; retry branch 150s too; test_patch35 pin updated 45s→150s + hint string. Bridge /chats: max 5 groupMetadata fetches, 3.5s Promise.race cap each.
 - Node modules vanish at EVERY turn boundary (snapshot) — always `npm install` in /home/user/oracool before esbuild; bundle must be grepped for new symbols after build.
+
+
+## patch109 — Create + Cases tabs removed (SHIPPED)
+
+- User: 'delete this out of oracool ai just only cases while the create let it work in the chat box instead' + ask_user → **remove BOTH sidebar tabs** (🗂 Cases deleted entirely; ✨ Create becomes chat-only).
+- index.html cuts (13, all applied): sidebar items (1757/1760), #p-cases+#p-create panel divs, renderCreate hook, VIEW_TITLES create/cases entries, dispatch cases/create lines, PRO prompt 'Cases tab' copy reworded, intel '🔒 Preserve as evidence' button + handler removed (kept '🤖 Ask OraCool to analyze'), renderCreate() deleted, whole 'Case Files' block deleted (curCase/authBody/quickExtract/renderCases/renderDocVerify/renderCaseBody/renderLinkGraph/renderWatch). Backends (/api/case/*, /api/evidence/*, /api/media/list) left in place — harmless, no UI.
+- Chat creation already works via SSE `__media` + `mediaEl()` inline renderer + /api/image server flow. test_patch78/79 gallery pins retargeted: assert mediaEl/__media + `renderCreate` ABSENT. Suite 945 passed.

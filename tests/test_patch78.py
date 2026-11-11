@@ -85,8 +85,12 @@ class Client(unittest.TestCase):
         self.assertLessEqual(APP.count("(?<"), 0)  # iOS 15.8: no lookbehind anywhere
 
     def test_gallery_collects_all_kinds(self):
-        self.assertIn("m.kind==='audio'?`<audio src=", APP)
-        self.assertIn("m.provider==='upload'?(m.name||'upload')", APP)
+        # Create studio removed (user: create works in the chat box) — the inline
+        # media renderer is now the single place every kind must survive.
+        self.assertIn("function mediaEl(kind, src, name)", APP)
+        self.assertIn("<audio", APP)
+        self.assertIn("__media", APP)          # chat stream delivers generated media
+        self.assertNotIn("renderCreate", APP)  # studio must be fully gone
 
     def test_honest_video_copy(self):
         self.assertIn("You cannot watch or hear video", APP)

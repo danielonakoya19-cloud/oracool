@@ -90,7 +90,7 @@ class Composer(unittest.TestCase):
     def test_history_and_gallery_intact(self):
         self.assertIn("function renderUserRich(box, content)", APP)   # patch78 survives
         self.assertEqual(APP.count("renderUserRich(b, m.content)"), 2)
-        self.assertIn("m.kind==='audio'?`<audio src=", APP)
+        self.assertIn("function mediaEl(kind, src, name)", APP)  # gallery gone with Create tab
         self.assertIn("MARKETS & FORECASTS:", APP)
         self.assertIn("the REASONS WHY", APP)
 
