@@ -15,7 +15,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 
 class Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count("patch103-wa-content"), 2)
+        self.assertEqual(SRV.count("patch105-wa-instant"), 2)
 
 
 class HoloBoot(unittest.TestCase):

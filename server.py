@@ -11606,7 +11606,7 @@ def get_config():
         "tracker_domain": (key("TRACKER_DOMAIN") or "").strip(),
         "app_launch": True,
         "verify_mode": "none",
-        "build": "patch103-wa-content",
+        "build": "patch105-wa-instant",
         "free_mode": free_mode(),
         "smart_home": {"configured": bool(key("HA_URL") and key("HA_TOKEN"))},
         "cores_total": _cores_total(),
@@ -15381,7 +15381,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         elif path == "/api/health":
-            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch103-wa-content", "free_mode": free_mode(),
+            self._send_json({"status": "online", "name": "OraCool AI", "version": "2.0", "build": "patch105-wa-instant", "free_mode": free_mode(),
                              "persist": ("cloud" if _PERSIST.get("enabled") else "local"), "up_s": int(time.time() - _BOOT_TS),
                              "restored": _PERSIST.get("restored", 0), "brains": brain_status(),
                              "time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())})
@@ -19762,6 +19762,11 @@ def main():
         pass
     _log_line("boot", "OraCool server starting on http://%s:%s" % (HOST, PORT))
     server = ThreadingHTTPServer((HOST, PORT), Handler)
+    try:
+        # warm the WhatsApp link bridge at boot so the QR is live before anyone asks
+        threading.Thread(target=_wa_ensure_bridge, daemon=True).start()
+    except Exception:
+        pass
     print(f"OraCool AI server (v2) running on http://{HOST}:{PORT}")
     print("Keys loaded:", sum(1 for v in KEYS.values() if isinstance(v, str) and v.strip() and not v.startswith('_')))
     server.serve_forever()

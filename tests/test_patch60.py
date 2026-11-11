@@ -27,7 +27,7 @@ def _no_cloud():
 
 class Marker(unittest.TestCase):
     def test_build_bumped(self):
-        self.assertEqual(SRV.count('"patch103-wa-content"'), 2)
+        self.assertEqual(SRV.count('"patch105-wa-instant"'), 2)
 
     def test_openai_compat_routes(self):
         self.assertIn('path == "/v1/chat/completions"', SRV)

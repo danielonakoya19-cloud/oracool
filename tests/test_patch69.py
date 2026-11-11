@@ -11,7 +11,7 @@ SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
 APP = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
 SW = open(os.path.join(ROOT, "sw.js"), encoding="utf-8").read()
 
-MARK = "patch103-wa-content"
+MARK = "patch105-wa-instant"
 
 
 class Marker(unittest.TestCase):

@@ -10,7 +10,7 @@ os.chdir(ROOT)
 import server as s  # noqa: E402
 
 SRV = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
-MARK = "patch103-wa-content"
+MARK = "patch105-wa-instant"
 
 
 class Marker(unittest.TestCase):

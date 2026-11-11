@@ -10,7 +10,7 @@ import server  # noqa: E402
 
 def test_marker_pinned():
     src = open("server.py").read()
-    assert src.count("patch103-wa-content") == 2
+    assert src.count("patch105-wa-instant") == 2
 
 
 # ---------------------------------------------------------------------------

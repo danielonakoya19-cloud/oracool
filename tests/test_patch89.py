@@ -13,7 +13,7 @@ LAND = Path("landing.html").read_text(encoding="utf-8")
 
 class TestPatch89Marker(unittest.TestCase):
     def test_marker(self):
-        self.assertEqual(SRV.count('"patch103-wa-content"'), 2)
+        self.assertEqual(SRV.count('"patch105-wa-instant"'), 2)
 
 
 class TestPatch89PrivateNeverPersists(unittest.TestCase):

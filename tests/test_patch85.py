@@ -21,7 +21,7 @@ def holo_layer(page):
 
 class TestPatch85Marker(unittest.TestCase):
     def test_marker_is_patch85(self):
-        self.assertEqual(SRV.count('"patch103-wa-content"'), 2)
+        self.assertEqual(SRV.count('"patch105-wa-instant"'), 2)
 
 
 class TestPatch85AllSurfaces(unittest.TestCase):
