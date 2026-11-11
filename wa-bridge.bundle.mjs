@@ -149843,7 +149843,7 @@ async function handle(req, res) {
         }
         const dir = path2.join(SESS_DIR, id);
         if (fs5.existsSync(dir)) for (const f of fs5.readdirSync(dir)) {
-          if (/app-state-sync-key/i.test(f) || f === "wa-names.json") fs5.unlinkSync(path2.join(dir, f));
+          if (/app-state-sync-key/i.test(f)) fs5.unlinkSync(path2.join(dir, f));
         }
       } catch (e) {
       }

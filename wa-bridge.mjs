@@ -362,7 +362,8 @@ async function handle(req, res) {
         }
         const dir = path.join(SESS_DIR, id)
         if (fs.existsSync(dir)) for (const f of fs.readdirSync(dir)) {
-          if (/app-state-sync-key/i.test(f) || f === 'wa-names.json') fs.unlinkSync(path.join(dir, f))
+          // keep wa-names.json — accumulated names/messages must survive resyncs
+          if (/app-state-sync-key/i.test(f)) fs.unlinkSync(path.join(dir, f))
         }
       } catch (e) {}
       const rec = await openSession(id)
