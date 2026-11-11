@@ -372,3 +372,18 @@ def test_bridge_contact_phone_jids_and_lid_preference():
     assert "phoneNumber" in b  # phone jid mapped alongside @lid
     assert "@lid" in b and "hits.find((j) => !String(j).endsWith('@lid'))" in b
     assert "byName" in b  # /contacts dedupes preferring phone jid
+
+
+def test_natural_whatsapp_asks_reach_the_wa_tool_and_cores_dont_hijack(monkeypatch):
+    src = open("server.py").read()
+    # the outer gate no longer requires the literal word "whatsapp"
+    assert "_wa_natural" in src and "_wa_said" in src
+    # core personas never steal a message that already ran a live tool
+    assert "if last_user and not tool_runs and not re.search" in src
+    seen = {}
+    def fake_gw(path2, who, body):
+        seen['to'] = body.get('to')
+        return {"ok": True, "messages": [{"fromMe": False, "text": "hi", "ts": 1}]}
+    monkeypatch.setattr(server, "wa_gateway", fake_gw)
+    t, _ = server._wa_action("a@b.c", "read my last chat with resilience", "read my last chat with RESILIENCE")
+    assert seen.get("to") == "RESILIENCE" and "hi" in t

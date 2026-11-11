@@ -12817,8 +12817,17 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     # patch41: "generate a video" must never be treated as an IMAGE of "a video"
     _video_words = bool(re.search(r"\b(?:videos?|clips?|animations?|films?|movies?|reels?|footage)\b", low))
     _image_words = bool(re.search(r"\b(?:images?|pictures?|photos?|art|artwork|logos?|wallpapers?|posters?|banners?|illustrations?|drawings?)\b", low))
-    # linked personal WhatsApp (QR link) — send/read on the user's own number
-    if email and re.search(r"\bwhatsapp\b", low) and re.search(
+    # linked personal WhatsApp (QR link) — send/read on the user's own number.
+    # The word "whatsapp" is NOT required: "read my last chat with X", "reply to
+    # X", "my unread messages" are WhatsApp asks too (their contact chats live
+    # ONLY in the linked WhatsApp).
+    _wa_said = bool(re.search(r"\bwhatsapp\b|\bwa\b", low))
+    _wa_natural = bool(re.search(
+        r"\b(?:my|our|the)\s+(?:last\s+|recent\s+|latest\s+|old\s+|whole\s+)?"
+        r"(?:chat|chats|message|messages|conversation|conversations|inbox)\b"
+        r"|\b(?:chat|message|reply|text|dm)\s+(?:with|to|from)\s+[A-Za-z0-9+]"
+        r"|\bunread\b|\bmy\s+(?:chats?|messages?)\b", low))
+    if email and (_wa_said or _wa_natural) and re.search(
             r"\b(send|text|message|reply|write|tell|chat|chats|read|check|list|link|connect|pair|scan|unlink|disconnect|log ?out)\b", low):
         try:
             _wt, _wx = _wa_action(email, low, t)
@@ -17208,7 +17217,7 @@ class Handler(BaseHTTPRequestHandler):
         # ---- cores: auto-engage the most relevant intelligence cores on every message
         core_names = []
         try:
-            if last_user and not re.search(r"[@#][A-Za-z0-9_]+", last_user):
+            if last_user and not tool_runs and not re.search(r"[@#][A-Za-z0-9_]+", last_user):
                 cr = cores.route(last_user)
                 personas = []
                 for c in (cr.get("cores") or [])[:2]:

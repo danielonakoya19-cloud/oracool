@@ -481,3 +481,10 @@
 - User: 'the ai still can[']t chat and send message to my contact or do anything yet pls fix that it is just still giving me error'. Diagnosis: send pipe WORKS (self-send landed: fromMe:true + real msg id) but actions during 'connecting' windows failed and the model improvised 'scan the QR' advice; name→jid resolved to @lid (LIDs cannot receive sends).
 - server.py: `_wa_wait_connected(sid, budget=14)` polls the bridge for send/action/messages/chats/contacts BEFORE dispatch (`_WA_NEEDS_CONN`); 'not connected' errors are state-aware ('it stays linked, no QR needed — retry in ~20s' vs real 'link my whatsapp'); prompt: NEVER say scan QR while a linked session exists.
 - wa-bridge.mjs: `recContact` maps contacts under BOTH lid + phone jid (c.notify/c.phoneNumber); toJid collects hits and PREFERS non-@lid; /contacts dedupes by name preferring phone jid. Bundle rebuilt + grepped (8 symbol hits). Suite **947 passed**.
+
+
+## patch111 — whatsapp asks never hijacked by core personas (SHIPPED)
+
+- User: every WA ask returns an empty/wrong card ("read my last chat with RESILIENCE" → 'ORA-COOL · RESILIENCE' card with 'I do not have access to your chat history… port_scan tool'). Root: (1) the outer WA gate required the LITERAL word 'whatsapp' — natural asks ("read my last chat with X") never reached `_wa_action`; (2) `cores.route(last_user)` matched the GROUP NAME "RESILIENCE" to a core persona and hijacked the reply (`__cores: ["RESILIENCE"]`).
+- Fixes: gate broadened (`_wa_said` = whatsapp|wa, `_wa_natural` = my/our/the + chat/messages/conversation/inbox, chat|message|reply|text|dm + with|to|from + name, unread, my chats) ANDed with the action-verb list; core routing now requires `not tool_runs` (tool intents always beat core personas).
+- Test added: "read my last chat with RESILIENCE" → `_wa_action` resolves to + replies with content; source pins for the gate + cores guard. Suite **948 passed**.
