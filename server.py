@@ -5232,6 +5232,8 @@ def _wa_action(email, low, text):
 
     def _wa_chat_label(c2):
         jid = str(c2.get("id") or "")
+        if jid == "status@broadcast":
+            return ""
         nm = str(c2.get("name") or "").strip()
         if nm:
             return nm[:40] + (" [group]" if jid.endswith("@g.us") else (" [channel]" if "newsletter" in jid else ""))
@@ -5265,8 +5267,9 @@ def _wa_action(email, low, text):
             ch = r.get("chats") or []
             if not ch:
                 return "No WhatsApp chats are visible yet \u2014 they appear after the linked account syncs.", None
+            ch = [c2 for c2 in ch if str(c2.get("id") or "") != "status@broadcast"]
             lines = ["\u2022 " + _wa_chat_label(c2) for c2 in ch[:10]]
-            return "Recent WhatsApp chats:\n" + "\n".join(lines), None
+            return "Recent WhatsApp chats (synced so far — WhatsApp keeps syncing the rest in the background):\n" + "\n".join(lines), None
         elif re.search(r"messages|read|history", _v1) and cmd_to:
             r = wa_gateway("/api/wa/messages", email, {"to": cmd_to})
             msgs = r.get("messages") or []
@@ -5410,7 +5413,9 @@ def _wa_action(email, low, text):
         if ch:
             lines.append("Recent chats:")
             for c2 in ch[:6]:
-                lines.append("\u2022 " + _wa_chat_label(c2))
+                lab = _wa_chat_label(c2)
+                if lab:
+                    lines.append("\u2022 " + lab)
         else:
             lines.append("No chats have synced yet \u2014 they appear within a minute of linking.")
         lines.append("Say the word and I will send, read, react, mute or run the bot for you.")
@@ -5440,10 +5445,11 @@ def _wa_action(email, low, text):
         ch = r.get("chats") or []
         if not ch:
             return "No WhatsApp chats are visible yet \u2014 they appear after the linked account syncs.", None
+        ch = [c2 for c2 in ch if str(c2.get("id") or "") != "status@broadcast"]
         lines = []
         for c2 in ch[:10]:
             lines.append("\u2022 " + _wa_chat_label(c2))
-        return "Recent WhatsApp chats:\n" + "\n".join(lines), None
+        return "Recent WhatsApp chats (synced so far — WhatsApp keeps syncing the rest in the background):\n" + "\n".join(lines), None
 
     return None, None
 
