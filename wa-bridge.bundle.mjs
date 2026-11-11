@@ -149443,6 +149443,7 @@ var silent = { level: "silent", child: () => silent, trace() {
 }, warn() {
 }, error() {
 } };
+var BOOT_TS = Date.now();
 var sessions = /* @__PURE__ */ new Map();
 function persistNames(rec) {
   try {
@@ -149782,7 +149783,7 @@ async function handle(req, res) {
   const p = u.pathname;
   const id = safeId(u.searchParams.get("session") || "");
   try {
-    if (p === "/health") return sendJson(res, 200, { ok: true, sessions: sessions.size });
+    if (p === "/health") return sendJson(res, 200, { ok: true, sessions: sessions.size, boot: BOOT_TS });
     if (!id) return sendJson(res, 400, { error: "session required" });
     if (p === "/resync") {
       try {
@@ -149820,6 +149821,8 @@ async function handle(req, res) {
         connected: rec.state === "connected",
         user: rec.user,
         chats: rec.chats.size,
+        contacts: rec.contacts.size,
+        boot: BOOT_TS,
         bot: { enabled: !!(rec.bot && rec.bot.enabled), rules: (rec.bot && rec.bot.rules || []).length }
       } : { state: "none", connected: false, bot: { enabled: false, rules: 0 } });
     }
@@ -149898,17 +149901,30 @@ async function handle(req, res) {
       const rec = sessions.get(id);
       if (!rec) return sendJson(res, 200, { chats: [] });
       const list = [...rec.chats.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 30);
+      let metaFetches = 0;
       for (const ch of list) {
         if (!ch.name) ch.name = rec.contacts.get(ch.id) || "";
-        if (!ch.name && String(ch.id).endsWith("@g.us")) {
+        if (!ch.name && String(ch.id).endsWith("@g.us") && metaFetches < 5) {
+          metaFetches++;
           try {
-            const meta = await rec.sock.groupMetadata(ch.id);
+            const meta = await Promise.race([
+              rec.sock.groupMetadata(ch.id),
+              new Promise((res2) => setTimeout(() => res2(null), 3500))
+            ]);
             if (meta && meta.subject) {
               ch.name = meta.subject;
               rec.chats.get(ch.id).name = meta.subject;
             }
           } catch (e) {
           }
+        }
+      }
+      for (const ch of list) {
+        try {
+          const msgs = rec.msgs.get(ch.id) || [];
+          const last = msgs[msgs.length - 1];
+          if (last && last.text) ch.preview = String(last.text).slice(0, 90);
+        } catch (e) {
         }
       }
       return sendJson(res, 200, { chats: list });

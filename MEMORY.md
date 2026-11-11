@@ -460,3 +460,10 @@
 - Root bugs: (1) `_WA_RESTORED` was per-PYTHON-process — when the Node bridge crashed/restarted, the vault was never re-restored to the fresh empty disk; (2) `_wa_vault_push` only ran on /qr+/status so wa-names.json often died before stashing; (3) `/chats` items had no last-message preview (table showed '—').
 - Fixes: `_WA_RESTORED = {sid: bridge_boot_id}` — `/health` now returns `boot: BOOT_TS`, restore re-runs when the bridge pid/boot changes; `_pushed(d)` wrapper pushes vault after chats/contacts/messages reads; `_wa_vault_watcher` daemon thread pushes every 90s for connected sessions; bridge /status exposes `contacts` count + `boot`; /chats items get `preview` (last cached msg text); logout uses `.pop(sid, None)` (dict not set).
 - The REAL fix for the user experience: after deploy call `/api/wa/resync` once → WA re-delivers the full app-state (chat list + contacts) → growth must be MONITORED over 10+ min (trickle rate observed: ~1 chat/min at first). Partial lists must be presented as "synced so far", never as complete.
+
+
+## patch108 — reply patience + fast chat reads (SHIPPED)
+
+- User screenshot: "check my whatsapp for unread messages" → client error 'No answer from the brain in 45s — the provider is jammed' while the server answer was STILL COOKING (probe showed first byte at 160.6s, then a CORRECT answer). Root: client watchdog 45s < slow WA-read path (bridge /chats did serial groupMetadata fetches, up to 30!) + provider latency + the patch107b deploy restart at 03:21 PM.
+- Fixes: client race 45s→ SOFT hint 'still working — WhatsApp reads can take a moment…' (same promise, no double-fetch) then hard error at 150s; retry branch 150s too; test_patch35 pin updated 45s→150s + hint string. Bridge /chats: max 5 groupMetadata fetches, 3.5s Promise.race cap each.
+- Node modules vanish at EVERY turn boundary (snapshot) — always `npm install` in /home/user/oracool before esbuild; bundle must be grepped for new symbols after build.

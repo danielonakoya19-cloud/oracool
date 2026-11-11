@@ -400,11 +400,16 @@ async function handle(req, res) {
       const rec = sessions.get(id)
       if (!rec) return sendJson(res, 200, { chats: [] })
       const list = [...rec.chats.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 30)
+      let metaFetches = 0
       for (const ch of list) {
         if (!ch.name) ch.name = rec.contacts.get(ch.id) || ''
-        if (!ch.name && String(ch.id).endsWith('@g.us')) {
+        if (!ch.name && String(ch.id).endsWith('@g.us') && metaFetches < 5) {
+          metaFetches++
           try {
-            const meta = await rec.sock.groupMetadata(ch.id)
+            const meta = await Promise.race([
+              rec.sock.groupMetadata(ch.id),
+              new Promise((res) => setTimeout(() => res(null), 3500)),
+            ])
             if (meta && meta.subject) { ch.name = meta.subject; rec.chats.get(ch.id).name = meta.subject }
           } catch (e) {}
         }

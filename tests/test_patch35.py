@@ -61,7 +61,8 @@ class LockWiringTests(unittest.TestCase):
     def test_client_wiring(self):
         for k in ("if(j.error){ _streamErr=new Error",
                   "if(_streamErr) throw _streamErr;",
-                  "No answer from the brain in 45s",
+                  "No answer from the brain in 150s",
+                  "still working — WhatsApp reads can take a moment",
                   "_wd=setInterval(()=>{ if(Date.now()-lastByte>120000)",
                   "⏱ The provider timed out with no answer",
                   "IDENTITY: you are always OraCool AI",
