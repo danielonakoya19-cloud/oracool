@@ -34,8 +34,10 @@ function persistNames(rec) {
     rec._pt = setTimeout(() => {
       rec._pt = null
       try {
+        const msgs = []
+        for (const [k, v] of rec.msgs) msgs.push([k, (v || []).slice(-25)])
         fs.writeFileSync(path.join(rec.dir, 'wa-names.json'), JSON.stringify({
-          contacts: [...rec.contacts.entries()], chats: [...rec.chats.entries()],
+          contacts: [...rec.contacts.entries()], chats: [...rec.chats.entries()], msgs,
         }))
       } catch (e) {}
     }, 3000)
@@ -46,6 +48,7 @@ function loadNames(rec) {
     const o = JSON.parse(fs.readFileSync(path.join(rec.dir, 'wa-names.json'), 'utf8'))
     for (const kv of (o.contacts || [])) rec.contacts.set(kv[0], kv[1])
     for (const kv of (o.chats || [])) rec.chats.set(kv[0], kv[1])
+    for (const kv of (o.msgs || [])) if (kv[0] && (kv[1] || []).length) rec.msgs.set(kv[0], kv[1])
     return true
   } catch (e) { return false }
 }
@@ -231,6 +234,7 @@ function cacheMsg(rec, m) {
   const nm = rec.chats.get(j) || { id: j, name: '', ts: 0 }
   nm.ts = Math.max(nm.ts, Number(m.messageTimestamp || 0))
   rec.chats.set(j, nm)
+  persistNames(rec)
 }
 
 async function maybeBotReply(rec, id, m) {
@@ -460,7 +464,21 @@ async function handle(req, res) {
       const rec = sessions.get(id)
       const to = u.searchParams.get('to') || ''
       const jj = rec ? toJid(rec, to) : null
-      const list = rec ? (rec.msgs.get(jj || to) || []) : []
+      let list = rec ? (rec.msgs.get(jj || to) || []) : []
+      // cold cache (fresh boot) — pull the real history from WhatsApp on demand
+      if (rec && rec.sock && !list.length && jj) {
+        try {
+          const hist = await Promise.race([
+            rec.sock.fetchMessageHistory(30, jj),
+            new Promise((res2) => setTimeout(() => res2(null), 12000)),
+          ])
+          const got = (hist && hist.messages) || []
+          got.slice().sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0))
+            .forEach((m) => { try { cacheMsg(rec, m) } catch (e) {} })
+          persistNames(rec)
+          list = rec.msgs.get(jj) || []
+        } catch (e) {}
+      }
       return sendJson(res, 200, { messages: list.slice(-20) })
     }
     if (p === '/logout' && req.method === 'POST') {

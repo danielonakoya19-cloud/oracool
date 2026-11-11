@@ -387,3 +387,10 @@ def test_natural_whatsapp_asks_reach_the_wa_tool_and_cores_dont_hijack(monkeypat
     monkeypatch.setattr(server, "wa_gateway", fake_gw)
     t, _ = server._wa_action("a@b.c", "read my last chat with resilience", "read my last chat with RESILIENCE")
     assert seen.get("to") == "RESILIENCE" and "hi" in t
+
+
+def test_messages_survive_restarts_and_fetch_on_demand():
+    b = open("wa-bridge.mjs").read()
+    assert "msgs," in b and "o.msgs" in b           # msgs persisted + loaded
+    assert "fetchMessageHistory" in b                # cold cache pulls real history
+    assert b.count("persistNames(rec)") >= 3         # names+msgs saved as they arrive

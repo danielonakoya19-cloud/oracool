@@ -488,3 +488,10 @@
 - User: every WA ask returns an empty/wrong card ("read my last chat with RESILIENCE" → 'ORA-COOL · RESILIENCE' card with 'I do not have access to your chat history… port_scan tool'). Root: (1) the outer WA gate required the LITERAL word 'whatsapp' — natural asks ("read my last chat with X") never reached `_wa_action`; (2) `cores.route(last_user)` matched the GROUP NAME "RESILIENCE" to a core persona and hijacked the reply (`__cores: ["RESILIENCE"]`).
 - Fixes: gate broadened (`_wa_said` = whatsapp|wa, `_wa_natural` = my/our/the + chat/messages/conversation/inbox, chat|message|reply|text|dm + with|to|from + name, unread, my chats) ANDed with the action-verb list; core routing now requires `not tool_runs` (tool intents always beat core personas).
 - Test added: "read my last chat with RESILIENCE" → `_wa_action` resolves to + replies with content; source pins for the gate + cores guard. Suite **948 passed**.
+
+
+## patch112 — messages survive + on-demand history (SHIPPED)
+
+- User: 'still the same nogood improvement' — probe confirmed EVERY chat read = 0 msgs (even Dr Albert, which had worked pre-restart). Root: wa-names.json persisted names but NOT rec.msgs — every bridge restart wiped the whole message cache, and app-state sync never re-delivers (sync keys say 'done').
+- Fixes (wa-bridge.mjs): persistNames now writes msgs (last 25/chat) into wa-names.json; loadNames restores them; cacheMsg persists (debounced); `/messages` with a cold cache pulls REAL history via `sock.fetchMessageHistory(30, jid)` (12s race cap) → cache → persist. After deploy: `/api/wa/resync` once to refill.
+- Suite 949 passed.
