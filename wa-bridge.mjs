@@ -34,12 +34,16 @@ function toJid(rec, to) {
   if (raw.includes('@g.us') || raw.includes('@s.whatsapp.net') || raw.includes('@lid')) return raw
   const digits = raw.replace(/[^\d]/g, '')
   if (digits.length >= 7) return digits + '@s.whatsapp.net'
-  // name resolution against synced chats — "Mum", "Dad", work group names
+  // name resolution against synced chats AND saved contacts — "Mum", "John"
   if (rec) {
     const want = raw.toLowerCase()
     for (const [jid, ch] of rec.chats) {
       const nm = String(ch.name || '').toLowerCase()
       if (nm && (nm.includes(want) || want.includes(nm))) return jid
+    }
+    for (const [jid, nm] of (rec.contacts || new Map())) {
+      const n2 = String(nm || '').toLowerCase()
+      if (n2 && (n2.includes(want) || want.includes(n2))) return jid
     }
     for (const jid of rec.msgs.keys()) {
       const who = jid.split('@')[0]
@@ -71,12 +75,13 @@ async function openSession(id) {
   const { version } = await fetchLatestBaileysVersion()
   const rec = {
     sock: null, qr: '', state: 'connecting', user: null,
-    chats: new Map(), msgs: new Map(), bot: loadBot(id), lastReply: new Map(), saveCreds
+    chats: new Map(), msgs: new Map(), contacts: new Map(),
+    bot: loadBot(id), lastReply: new Map(), saveCreds
   }
   sessions.set(id, rec)
   const sock = makeWASocket({
     version, auth: state, printQRInTerminal: false, logger: silent,
-    markOnlineOnConnect: false, syncFullHistory: false,
+    markOnlineOnConnect: false, syncFullHistory: true,
     generateHighQualityLinkPreview: false
   })
   rec.sock = sock
@@ -113,7 +118,14 @@ async function openSession(id) {
   })
   sock.ev.on('messaging-history.set', ({ chats, contacts, messages }) => {
     try {
-      for (const ch of chats || []) rec.chats.set(ch.id, { id: ch.id, name: ch.name || (contacts.find(c => c.id === ch.id)?.name) || '', ts: ch.conversationTimestamp || 0 })
+      for (const c of contacts || []) {
+        const nm = String(c.name || c.notify || c.verifiedName || '').trim()
+        if (c.id && nm) rec.contacts.set(c.id, nm)
+      }
+      for (const ch of chats || []) {
+        const nm = String(ch.name || rec.contacts.get(ch.id) || '').trim()
+        rec.chats.set(ch.id, { id: ch.id, name: nm, ts: ch.conversationTimestamp || 0 })
+      }
       for (const m of messages || []) cacheMsg(rec, m)
     } catch (e) {}
   })
@@ -128,6 +140,11 @@ async function openSession(id) {
 
 function cacheMsg(rec, m) {
   const j = m.key?.remoteJid
+  try {
+    const pn = String(m.pushName || '').trim()
+    const who = (!m.key?.fromMe && pn && j && !String(j).endsWith('@g.us')) ? j : ''
+    if (who && pn && !rec.contacts.has(who)) rec.contacts.set(who, pn)
+  } catch (e) {}
   if (!j || j === 'status@broadcast') return
   const list = rec.msgs.get(j) || []
   list.push({ fromMe: !!m.key?.fromMe, ts: Number(m.messageTimestamp || 0), text: msgText(m.message), id: m.key?.id || '' })
@@ -306,7 +323,30 @@ async function handle(req, res) {
       const rec = sessions.get(id)
       if (!rec) return sendJson(res, 200, { chats: [] })
       const list = [...rec.chats.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 30)
+      for (const ch of list) {
+        if (!ch.name) ch.name = rec.contacts.get(ch.id) || ''
+        if (!ch.name && String(ch.id).endsWith('@g.us')) {
+          try {
+            const meta = await rec.sock.groupMetadata(ch.id)
+            if (meta && meta.subject) { ch.name = meta.subject; rec.chats.get(ch.id).name = meta.subject }
+          } catch (e) {}
+        }
+      }
       return sendJson(res, 200, { chats: list })
+    }
+    if (p === '/contacts') {
+      const rec = sessions.get(id)
+      const q = String(u.searchParams.get('q') || '').toLowerCase()
+      const out = []
+      if (rec) {
+        for (const [jid, nm] of rec.contacts) {
+          if (q && !String(nm).toLowerCase().includes(q) && !jid.includes(q)) continue
+          out.push({ id: jid, name: nm })
+          if (out.length >= 50) break
+        }
+      }
+      out.sort((a, b) => String(a.name).localeCompare(String(b.name)))
+      return sendJson(res, 200, { contacts: out })
     }
     if (p === '/messages') {
       const rec = sessions.get(id)

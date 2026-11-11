@@ -429,3 +429,11 @@
 - **QR fix root cause:** every deploy wiped node_modules and `_wa_ensure_bridge` ran `npm install` at boot = 60-90s of `starting` states; the sheet sat on "Preparing…" through the whole window. FIX: esbuild-prebuilt **`wa-bridge.bundle.mjs`** (7.7MB, committed) — `exec node wa-bridge.bundle.mjs` (ZERO npm at boot, up in ~1s); npm+source kept as fallback when the bundle is absent. esbuild gotchas: ESM bundle needs `--banner:js="import { createRequire as __mkReq } from 'module'; const require = __mkReq(import.meta.url);"` (renamed — `sharp` declares its own `createRequire` and collides). Bundle smoke-tested: /health ok + REAL pairing QR (277 chars) from the bundle alone. Sheet boot copy now "Warming up the link service…" + polls every 1.6s.
 - **Bot panel REMOVED from the QR sheet** (explicit user instruction) — `waBotBox`/`waBotLoad`/`waBotToggle` deleted from index.html. The auto-reply bot stays fully controllable IN THE CHAT ("turn on my whatsapp bot replying: …", "add whatsapp bot rule…", "turn off my whatsapp bot") + bridge engine unchanged.
 - Tests retargeted (client pins assert bot UI ABSENT + bundle pins). **Suite 942 passed.**
+
+
+## patch106 — real contacts + named chats (SHIPPED)
+
+- User: "the numbers and chat oracool ai is bringing out doesnt relate with my whatsapp contacts and chat" — the list showed nameless group IDs (2-3 items) instead of their real chats/contacts. Cause: `syncFullHistory: false` (only live traffic + tiny initial sync) and no contact-name map.
+- Bridge: `syncFullHistory: true`; `rec.contacts` Map filled from `messaging-history.set` contacts (name/notify/verifiedName) + `messages.upsert` pushName; `/chats` resolves names (contacts → groupMetadata fallback fetch per unnamed g.us chat); NEW `/contacts?session=&q=` (searchable, top 50, sorted); `toJid` resolves names against contacts too (send/read by first name works).
+- `_wa_action`: `_wa_chat_label` (hoisted to TOP of the function — a mid-function nested def made earlier references UnboundLocalError) shows `Name [group]`/`[channel]`/`+number`, NEVER raw jids; NEW contacts intent ('list my whatsapp contacts', 'find John in my whatsapp contacts'); routes + gateway `/api/wa/contacts`; prompt teaches names for send/read + contacts commands.
+- Bundle REBUILT after bridge changes (7.7MB — always rebuild before shipping). Tests +3. **Suite 945 passed.**

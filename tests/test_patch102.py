@@ -291,3 +291,56 @@ def test_json_tool_blocks_scrubbed_from_replies():
     assert server._reply_is_junk(only) or not only
     c = open("index.html").read()
     assert '"function"' in c.split("function _stripCmdLines")[1][:900]
+
+
+# ---------------------------------------------------------------------------
+# real contacts + named chats (user: "numbers and chat doesnt relate with my
+# whatsapp contacts and chat")
+# ---------------------------------------------------------------------------
+
+def test_contacts_endpoint_and_intent(monkeypatch):
+    calls = []
+    def fake_http(p2, method="GET", obj=None, timeout=8):
+        calls.append(p2)
+        if p2.startswith("/contacts"):
+            return {"contacts": [{"id": "2348012345678@s.whatsapp.net", "name": "John Doe"},
+                                 {"id": "2348099999999@s.whatsapp.net", "name": "Mum"}]}
+        return {"ok": True}
+    monkeypatch.setattr(server, "_wa_ensure_bridge", lambda: (True, ""))
+    monkeypatch.setattr(server, "_wa_http", fake_http)
+    monkeypatch.setattr(server, "_wa_vault_restore", lambda sid: None)
+    r = server.wa_gateway("/api/wa/contacts", "a@b.c", {})
+    assert r["contacts"][0]["name"] == "John Doe"
+    monkeypatch.setattr(server, "wa_gateway",
+                        lambda p, w, b: {"ok": True, "contacts": [{"id": "2348012345678@s.whatsapp.net", "name": "John Doe"}]})
+    t, _ = server._wa_action("a@b.c", "list my whatsapp contacts", "list my whatsapp contacts")
+    assert "John Doe" in t
+    t2, _ = server._wa_action("a@b.c", "find John in my whatsapp contacts", "find John in my whatsapp contacts")
+    assert "John Doe" in t2 and "+2348012345678" in t2
+
+
+def test_chat_labels_show_names_numbers_and_tags(monkeypatch):
+    labels = {}
+    def fake_gw(path2, who, body):
+        return {"ok": True, "chats": [
+            {"id": "2348012345678@s.whatsapp.net", "name": "John Doe", "ts": 3},
+            {"id": "120363411665436262@g.us", "name": "", "ts": 2},
+            {"id": "120363407446052054@newsletter", "name": "", "ts": 1}]}
+    monkeypatch.setattr(server, "wa_gateway", fake_gw)
+    import re as _re
+    t, _ = server._wa_action("a@b.c", "list my whatsapp chats", "list my whatsapp chats")
+    assert "John Doe" in t and "[group" in t and "[channel]" in t
+    # unnamed p2p shows as +number, never a raw jid
+    monkeypatch.setattr(server, "wa_gateway",
+                        lambda p, w, b: {"ok": True, "chats": [{"id": "2348099999999@s.whatsapp.net", "name": "", "ts": 1}]})
+    t2, _ = server._wa_action("a@b.c", "list my whatsapp chats", "list my whatsapp chats")
+    assert "+2348099999999" in t2 and "@s.whatsapp.net" not in t2
+
+
+def test_bridge_syncs_full_history_and_contacts():
+    b = open("wa-bridge.mjs").read()
+    assert "syncFullHistory: true" in b
+    assert "rec.contacts" in b and "pushName" in b
+    assert "'/contacts'" in b or '"/contacts"' in b
+    src = open("server.py").read()
+    assert '"/api/wa/contacts"' in src

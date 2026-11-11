@@ -5178,6 +5178,10 @@ def wa_gateway(path2, who, body):
         if d.get("error") == "not connected":
             return {"ok": False, "error": "WhatsApp is reconnecting or not linked \u2014 try again in a few seconds, or scan the QR in Connectors \u2192 WhatsApp if it is not linked."}
         return {"ok": not d.get("error"), "message": d.get("message") or str(d.get("error"))[:180]}
+    if path2 == "/api/wa/contacts":
+        q = str(body.get("q") or "").strip()
+        d = _wa_http("/contacts?session=" + sid + ("&q=" + urllib.parse.quote(q) if q else ""), timeout=15)
+        return {"ok": True, "contacts": d.get("contacts") or []}
     if path2 == "/api/wa/chats":
         d = _wa_http("/chats?session=" + sid, timeout=12)
         return {"ok": True, "chats": d.get("chats") or []}
@@ -5194,6 +5198,19 @@ def _wa_action(email, low, text):
     mark read, profile about, and the auto-reply bot (only when the user asks)."""
     if not email:
         return None, None
+
+    def _wa_chat_label(c2):
+        jid = str(c2.get("id") or "")
+        nm = str(c2.get("name") or "").strip()
+        if nm:
+            return nm[:40] + (" [group]" if jid.endswith("@g.us") else (" [channel]" if "newsletter" in jid else ""))
+        if jid.endswith("@g.us"):
+            return "[group " + jid.split("@")[0][:12] + "]"
+        if "newsletter" in jid:
+            return "[channel]"
+        digits = re.sub(r"\D", "", jid.split("@")[0])
+        return ("+" + digits) if digits else jid[:24]
+
     cmd_to = cmd_text = ""
     cmd_parts = [x.strip() for x in (text or "").split("::")] if re.match(r"\s*whatsapp\s*::", low) else []
     if cmd_parts:
@@ -5217,7 +5234,7 @@ def _wa_action(email, low, text):
             ch = r.get("chats") or []
             if not ch:
                 return "No WhatsApp chats are visible yet \u2014 they appear after the linked account syncs.", None
-            lines = ["\u2022 " + ((c2.get("name") or c2.get("id") or "").split("@")[0][:40]) for c2 in ch[:10]]
+            lines = ["\u2022 " + _wa_chat_label(c2) for c2 in ch[:10]]
             return "Recent WhatsApp chats:\n" + "\n".join(lines), None
         elif re.search(r"messages|read|history", _v1) and cmd_to:
             r = wa_gateway("/api/wa/messages", email, {"to": cmd_to})
@@ -5362,11 +5379,28 @@ def _wa_action(email, low, text):
         if ch:
             lines.append("Recent chats:")
             for c2 in ch[:6]:
-                lines.append("\u2022 " + ((c2.get("name") or c2.get("id") or "").split("@")[0][:40]))
+                lines.append("\u2022 " + _wa_chat_label(c2))
         else:
             lines.append("No chats have synced yet \u2014 they appear within a minute of linking.")
         lines.append("Say the word and I will send, read, react, mute or run the bot for you.")
         return "\n".join(lines), None
+
+    # ---- contacts (their real address book as synced by WhatsApp)
+    if re.search(r"\b(contact|contacts|address book|phonebook|phone book)\b", low):
+        find_m = re.search(r"\b(?:find|search|look for|do i have|is)\s+([\w .-]{2,30}?)\s*(?:in\s+(?:my\s+)?(?:whatsapp\s+)?contacts?)?\s*$",
+                           (text or "").strip(), re.I)
+        q = find_m.group(1).strip() if find_m else ""
+        r = wa_gateway("/api/wa/contacts", email, {"q": q})
+        cs = r.get("contacts") or []
+        if not cs:
+            return (("No contact named '" + q[:24] + "' in your synced WhatsApp contacts." if q
+                     else "No WhatsApp contacts have synced yet \u2014 they appear shortly after linking."), None)
+        if q:
+            lines = ["\u2022 " + str(c3.get("name") or "")[:30] + " (+" + re.sub(r"\D", "", str(c3.get("id") or "").split("@")[0]) + ")"
+                     for c3 in cs[:5]]
+            return "WhatsApp contacts matching '" + q[:24] + "':\n" + "\n".join(lines), None
+        lines = ["\u2022 " + str(c3.get("name") or "")[:30] for c3 in cs[:12]]
+        return "Your WhatsApp contacts (" + str(len(cs)) + " synced, showing first " + str(len(lines)) + "):\n" + "\n".join(lines), None
 
     # ---- chats list
     if (re.search(r"\b(chat|chats|conversation|conversations)\b", low) and re.search(r"\b(list|show|check|my|recent|open)\b", low)
@@ -5377,8 +5411,7 @@ def _wa_action(email, low, text):
             return "No WhatsApp chats are visible yet \u2014 they appear after the linked account syncs.", None
         lines = []
         for c2 in ch[:10]:
-            nm = (c2.get("name") or c2.get("id") or "").split("@")[0]
-            lines.append("\u2022 " + nm[:40])
+            lines.append("\u2022 " + _wa_chat_label(c2))
         return "Recent WhatsApp chats:\n" + "\n".join(lines), None
 
     return None, None
@@ -16397,7 +16430,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(connectors_google_url((body.get("email") or "").strip().lower()))
             elif path in ("/api/wa/qr", "/api/wa/link", "/api/wa/status", "/api/wa/chats",
                           "/api/wa/messages", "/api/wa/send", "/api/wa/logout",
-                          "/api/wa/bot", "/api/wa/action"):
+                          "/api/wa/bot", "/api/wa/action", "/api/wa/contacts"):
                 _wa_who = request_identity(self, body) or (body.get("email") or "").strip().lower()
                 if not _wa_who:
                     self._send_json({"ok": False, "error": "sign in to link WhatsApp"}, 401)
@@ -16937,8 +16970,10 @@ class Handler(BaseHTTPRequestHandler):
             "\u2014 use it when a natural request would be ambiguous. "
             "LINKED WHATSAPP (QR link \u2014 the user's OWN number, linked like WhatsApp Web): when linked, you can "
             "send and read messages on their WhatsApp directly \u2014 total access like every linked account. "
-            "Forms: 'whatsapp :: send :: <number with country code> :: <message>', 'whatsapp :: chats', "
-            "'whatsapp :: messages :: <number>'. Natural works too: 'send whatsapp to +2348012345678: hello'. "
+            "Forms: 'whatsapp :: send :: <number or contact name> :: <message>', 'whatsapp :: chats', "
+            "'whatsapp :: messages :: <number or name>'. Their real contacts and chat names are synced \u2014 "
+            "'list my whatsapp contacts', 'find John in my whatsapp contacts', 'my whatsapp chats' all work with names. "
+            "Natural works too: 'send whatsapp to +2348012345678: hello'. "
             "If not linked yet, say in ONE line they scan the QR in Connectors \u2192 WhatsApp \u2192 Link with QR. "
             "Never tell the user to open WhatsApp and do it themselves. TOTAL ACCESS on the linked WhatsApp: send text and "
             "images, read chats and messages (names work: 'read my chat with Mum'), react, delete your own last message, "
