@@ -129,6 +129,33 @@ async function openSession(id) {
       for (const m of messages || []) cacheMsg(rec, m)
     } catch (e) {}
   })
+  sock.ev.on('contacts.upsert', (cs) => {
+    try {
+      for (const c of (cs || [])) if (c && c.id) rec.contacts.set(c.id, c.name || c.notify || c.verifiedName || rec.contacts.get(c.id) || '')
+    } catch (e) {}
+  })
+  sock.ev.on('contacts.update', (cs) => {
+    try {
+      for (const c of (cs || [])) if (c && c.id) rec.contacts.set(c.id, c.name || c.notify || c.verifiedName || rec.contacts.get(c.id) || '')
+    } catch (e) {}
+  })
+  sock.ev.on('chats.upsert', (chs) => {
+    try {
+      for (const c of (chs || [])) if (c && c.id) rec.chats.set(c.id, {
+        id: c.id, name: c.name || (rec.chats.get(c.id) || {}).name || '',
+        ts: +(c.conversationTimestamp || Date.now()),
+      })
+    } catch (e) {}
+  })
+  sock.ev.on('chats.update', (chs) => {
+    try {
+      for (const c of (chs || [])) {
+        if (!c || !c.id) continue
+        const prev = rec.chats.get(c.id) || {}
+        rec.chats.set(c.id, { id: c.id, name: c.name || prev.name || '', ts: +(c.conversationTimestamp || prev.ts || Date.now()) })
+      }
+    } catch (e) {}
+  })
   sock.ev.on('messages.upsert', ({ messages }) => {
     for (const m of messages || []) {
       try { cacheMsg(rec, m) } catch (e) {}
