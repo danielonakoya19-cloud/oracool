@@ -150053,6 +150053,7 @@ async function handle(req, res) {
           fs5.mkdirSync(dir, { recursive: true });
           for (const [f, content] of Object.entries(j2.files || {})) {
             if (f.includes("/") || f.includes("..")) continue;
+            if (f === "wa-names.json" && fs5.existsSync(path2.join(dir, "wa-names.json"))) continue;
             fs5.writeFileSync(path2.join(dir, f), String(content));
           }
           return sendJson(res, 200, { ok: true });

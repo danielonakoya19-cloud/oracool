@@ -533,6 +533,8 @@ async function handle(req, res) {
           fs.mkdirSync(dir, { recursive: true })
           for (const [f, content] of Object.entries(j.files || {})) {
             if (f.includes('/') || f.includes('..')) continue
+            // never clobber fresher accumulated names/messages with a stale vault copy
+            if (f === 'wa-names.json' && fs.existsSync(path.join(dir, 'wa-names.json'))) continue
             fs.writeFileSync(path.join(dir, f), String(content))
           }
           return sendJson(res, 200, { ok: true })
