@@ -428,9 +428,17 @@ def test_advice_never_builds_but_slide_requests_build_decks(monkeypatch):
     runs2 = server.auto_tools("build me a website for Becfom Hotel with a booking form",
                               tier="enterprise", email="a@x.com", history=[])
     assert calls and any(r.get("tool") == "build" for r in runs2)
-    # slides build through the same builder with a deck brief
+    # the deck builder itself always produces a real presentation (patch117)
+    r = server.build_deck("a@x.com", "how people can make money with websites")
+    assert r.get("ok") and r.get("slides", 0) >= 6
+    html = open("/home/user/oracool/data/builds/" + r["slug"] + "/index.html").read()
+    assert html.count("<section class=\"slide") >= 8 and "ArrowRight" in html
+    # slides route to the dedicated deck builder — never the site builder
+    deck_calls = []
+    monkeypatch.setattr(server, "build_deck",
+                        lambda email, topic: deck_calls.append(topic) or {"ok": True, "url": "/builds/x/", "slides": 10})
     calls.clear()
     runs3 = server.auto_tools("create slides for my presentation on how people can make money with websites",
                               tier="enterprise", email="a@x.com", history=[])
     assert any(r.get("tool") == "build" for r in runs3)
-    assert calls and "SLIDE DECK" in calls[0][1]
+    assert deck_calls and not calls, "slides must use build_deck, never build_site"

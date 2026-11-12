@@ -522,3 +522,10 @@
 
 - User screenshot: asked for SPEAKING POINTS ("i want to speak on how people can make money if you create a website for them") and the builder hijacked it ("Building my-site…"). The _wants gate saw 'create a website' inside a QUESTION.
 - Fix: `_advice` guard (i want to speak/talk/present, my presentation/speech, talking/key points, help me understand/learn/speak + the combined how-(people|to)-can pattern that loses only to a real build+website shape); `_slides` intent (slides|slide deck|presentation deck|pitch deck + create/make/generate verbs) routes into `build_site` with a 'presentation SLIDE DECK (self-contained HTML slides…)' brief — decks BEAT the advice guard. Suite 952.
+
+
+## patch117 — decks are presentations, not websites (SHIPPED)
+
+- patch116 routed "create slides" through build_site and produced a generic site (game hero!). User: make slides like Gemini.
+- `build_deck(email, topic)` now: model writes a strict-JSON slide outline (fallback: 8-slide generic outline — a deck NEVER fails), then a proven template renders real slides — title + numbered content slides + closing, arrow keys/click/swipe, counter + progress bar, holographic presenter design. Saved to data/builds/<slug>/ like any build (same card, edit, publish). `_slides` intent routes to build_deck; regular briefs still use build_site.
+- Gotcha: inserting code with python triple-quoted strings eats \" escapes — double-quoted python strings with raw quotes inside break silently. Use edit_file or single-quoted strings.

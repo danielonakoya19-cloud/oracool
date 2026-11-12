@@ -7515,6 +7515,180 @@ def _creative_direction(prompt, name):
     return ""
 
 
+def build_deck(email, topic):
+    """patch117 — Gemini-style presentations. A deck is NOT a website: the model
+    writes a slide outline (JSON) and a proven slide template renders it, so the
+    result is always a real presentation — one slide per screen, arrow keys /
+    click / swipe, counter + progress, title slide and closing slide. Saved to
+    data/builds/<slug>/ exactly like a site build (same card, edit and publish)."""
+    import html as _h, json as _json
+    email = (email or "").strip().lower()
+    topic = (topic or "presentation").strip()[:240] or "presentation"
+    _bp_reset(email, "Presentation")
+    _bp_step(email, "Reading the topic", topic[:80])
+    outline = None
+    try:
+        _m = _select_model("creative")
+        _msgs = [{"role": "user", "content": (
+            "Write a presentation slide-deck outline about: " + topic + "\n"
+            "STRICT JSON ONLY — no markdown, no code fences, no commentary. Shape:\n"
+            '{"title": "...", "subtitle": "...", "slides": [{"title": "...", "bullets": ["...", "..."]}]}\n'
+            "9-11 content slides. Each slide: one sharp title + 3-5 short punchy bullets "
+            "(max 12 words each). Teach the topic like a great presenter: hook, opportunity, "
+            "how it works, concrete strategies, real examples, mistakes to avoid, action steps.")}]
+        _b = _chat_build(_m, _msgs)
+        raw = str((_b or {}).get("content") or "")
+        i, j = raw.find("{"), raw.rfind("}")
+        if 0 <= i < j:
+            cand = _json.loads(raw[i:j + 1])
+            if isinstance(cand, dict) and isinstance(cand.get("slides"), list) and cand["slides"]:
+                outline = cand
+    except Exception:
+        outline = None
+    if not outline:
+        _tt = topic[:90].rstrip(".!").title() or "Presentation"
+        outline = {"title": _tt, "subtitle": "A practical walkthrough", "slides": [
+            {"title": "Why This Matters", "bullets": ["The world is changing fast", "Early movers win the most", "The tools are finally affordable"]},
+            {"title": "The Opportunity", "bullets": ["Huge demand, thin supply", "Businesses will pay for real results", "You can start with zero inventory"]},
+            {"title": "How It Works", "bullets": ["Simple steps, done consistently", "Show value first, charge second", "Systems beat one-off hustle"]},
+            {"title": "Key Strategies", "bullets": ["Pick one niche and own it", "Show proof, not promises", "Package your service clearly"]},
+            {"title": "Real Examples", "bullets": ["Small offers that outsell big ones", "Local businesses going digital", "Creators turning skills into income"]},
+            {"title": "Mistakes to Avoid", "bullets": ["Chasing every trend at once", "Competing on price instead of value", "Starting before you start selling"]},
+            {"title": "Your Action Plan", "bullets": ["Choose your lane this week", "Build one real deliverable", "Get your first paying customer"]},
+            {"title": "Key Takeaways", "bullets": ["Execution beats perfection", "Speed and consistency win", "The best time to start is now"]},
+        ]}
+    slides = [x for x in outline.get("slides") or [] if isinstance(x, dict)][:14]
+
+    def _esc(x):
+        return _h.escape(str(x or ""), quote=True)
+
+    _bp_step(email, "Designing the slides", str(len(slides)) + " slides · presenter layout")
+    parts = []
+    _title = _esc(outline.get("title") or topic[:90])
+    _sub = _esc(outline.get("subtitle") or "Built with OraCool AI")
+    parts.append(
+        '<section class="slide title-slide active"><div class="chip">\u25b6 PRESENTATION</div>'
+        '<h1>' + _title + '</h1><p class="sub">' + _sub + '</p>'
+        '<p class="hint">Use <b>\u2190 \u2192</b> arrow keys, click the arrows, or swipe</p></section>')
+    for n, sl in enumerate(slides, 1):
+        bl = "".join("<li>" + _esc(b) + "</li>" for b in (sl.get("bullets") or [])[:6])
+        parts.append(
+            '<section class="slide"><div class="chip">' + str(n).zfill(2) + '</div>'
+            "<h2>" + _esc(sl.get("title") or ("Slide " + str(n))) + "</h2>"
+            '<ul class="bullets">' + bl + "</ul></section>")
+    parts.append(
+        '<section class="slide closing"><div class="chip">\u2713 WRAP-UP</div>'
+        '<h1>Thank You</h1><p class="sub">' + _title + '</p>'
+        '<p class="hint">Questions? Let\'s talk.</p></section>')
+    body = "".join(parts)
+    total = len(slides) + 2
+    doc = """<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>""" + _title + """</title><style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden;background:#0c0a24;color:#fff;
+font-family:'Segoe UI',system-ui,-apple-system,sans-serif}
+.blob{position:fixed;border-radius:50%;filter:blur(90px);opacity:.5;z-index:0}
+.b1{width:46vw;height:46vw;min-width:380px;min-height:380px;background:radial-gradient(circle,#8b5cf6,#4c1d95);top:-14vh;left:-10vw}
+.b2{width:40vw;height:40vw;min-width:320px;min-height:320px;background:radial-gradient(circle,#c4b5fd,#6d28d9);bottom:-16vh;right:-8vw}
+.slide{position:absolute;inset:0;display:none;flex-direction:column;justify-content:center;
+padding:7vh 9vw;z-index:2}
+.slide.active{display:flex}
+.chip{display:inline-block;align-self:flex-start;padding:.42em 1.1em;border-radius:999px;
+background:rgba(167,139,250,.18);border:1px solid rgba(196,181,253,.45);color:#e9d5ff;
+font-size:clamp(11px,1.4vw,14px);letter-spacing:.18em;font-weight:700;margin-bottom:2.2vh}
+h1{font-size:clamp(34px,6.2vw,84px);line-height:1.06;font-weight:800;letter-spacing:-.02em;
+background:linear-gradient(92deg,#fff 30%,#c4b5fd);-webkit-background-clip:text;background-clip:text;color:transparent}
+h2{font-size:clamp(26px,4.6vw,58px);line-height:1.1;font-weight:800;letter-spacing:-.015em;margin-bottom:3.2vh;color:#fff}
+.sub{margin-top:2.4vh;font-size:clamp(16px,2.3vw,28px);color:#c9c4e8;font-weight:500;max-width:42ch;line-height:1.45}
+.hint{margin-top:4.2vh;font-size:clamp(13px,1.6vw,17px);color:#8d86b8}
+.hint b{color:#c4b5fd}
+.bullets{list-style:none;display:grid;gap:clamp(10px,1.8vh,20px);max-width:62ch}
+.bullets li{position:relative;padding:clamp(12px,1.9vh,22px) clamp(16px,2.2vw,28px) clamp(12px,1.9vh,22px) clamp(46px,4.6vw,62px);
+background:rgba(255,255,255,.055);border:1px solid rgba(196,181,253,.16);border-radius:16px;
+font-size:clamp(15px,2.1vw,25px);line-height:1.42;color:#efedff;font-weight:500}
+.bullets li::before{content:'';position:absolute;left:clamp(16px,2vw,26px);top:1.05em;
+width:.55em;height:.55em;border-radius:50%;background:linear-gradient(135deg,#a78bfa,#7c3aed);
+box-shadow:0 0 14px rgba(167,139,250,.8)}
+.hud{position:fixed;right:3vw;bottom:4.5vh;display:flex;align-items:center;gap:14px;z-index:5}
+.hud button{width:52px;height:52px;border-radius:50%;border:1px solid rgba(196,181,253,.4);
+background:rgba(139,92,246,.22);color:#fff;font-size:22px;cursor:pointer;backdrop-filter:blur(8px);
+transition:transform .15s ease}
+.hud button:hover{transform:scale(1.1)}
+.counter{font-size:15px;color:#c4b5fd;font-weight:700;letter-spacing:.12em;min-width:64px;text-align:center}
+.progress{position:fixed;left:0;top:0;width:100%;height:4px;background:rgba(255,255,255,.08);z-index:6}
+.progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,#8b5cf6,#c4b5fd);transition:width .3s ease}
+@media (max-width:640px){.slide{padding:6vh 7vw}.hud{right:5vw;bottom:3vh}.hud button{width:44px;height:44px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style></head>
+<body>
+<div class="blob b1"></div><div class="blob b2"></div>
+""" + body + """
+<div class="progress"><i id="bar"></i></div>
+<div class="hud"><button id="prev" aria-label="Previous slide">\u2039</button>
+<span class="counter" id="counter">1 / """ + str(total) + """</span>
+<button id="next" aria-label="Next slide">\u203a</button></div>
+<script>
+(function(){
+var slides=document.querySelectorAll('.slide'),cur=0,total=slides.length;
+function show(i){cur=Math.max(0,Math.min(total-1,i));
+for(var k=0;k<slides.length;k++)slides[k].classList.toggle('active',k===cur);
+document.getElementById('counter').textContent=(cur+1)+' / '+total;
+document.getElementById('bar').style.width=((cur+1)/total*100)+'%';}
+document.getElementById('prev').onclick=function(){show(cur-1)};
+document.getElementById('next').onclick=function(){show(cur+1)};
+document.addEventListener('keydown',function(e){
+if(['ArrowRight','ArrowDown',' ','PageDown','Enter'].indexOf(e.key)>-1){e.preventDefault();show(cur+1)}
+else if(['ArrowLeft','ArrowUp','PageUp',' '].indexOf(e.key)>-1&&e.key!==' '){e.preventDefault();show(cur-1)}
+else if(e.key==='Home'){show(0)}else if(e.key==='End'){show(total-1)}});
+var x0=null;
+document.addEventListener('touchstart',function(e){x0=e.touches[0].clientX},{passive:true});
+document.addEventListener('touchend',function(e){if(x0===null)return;
+var dx=e.changedTouches[0].clientX-x0;if(Math.abs(dx)>40){show(cur+(dx<0?1:-1))}x0=null},{passive:true});
+show(0);
+})();
+</script></body></html>"""
+
+    slug0 = _build_slug("presentation")
+    slug, i = slug0, 2
+    while slug in _builds_load():
+        slug = slug0 + "-" + str(i); i += 1
+    dest = os.path.join(_BUILDS_DIR, slug)
+    try:
+        os.makedirs(dest, exist_ok=True)
+        with open(os.path.join(dest, "index.html"), "w", encoding="utf-8") as fh:
+            fh.write(doc)
+        with open(os.path.join(dest, "README.md"), "w", encoding="utf-8") as fh:
+            fh.write("# " + (outline.get("title") or "Presentation") + "\n\n"
+                     "Presentation deck built with **OraCool AI**. Open `index.html` and use the arrow keys.\n")
+    except Exception as e:
+        _bp_done(email, False, "could not save")
+        return {"error": "Could not save the deck: " + str(e)[:120]}
+    _bp_step(email, "Deck ready", "/builds/" + slug + "/")
+    _bp_done(email, True, "/builds/" + slug + "/")
+    meta = _builds_load()
+    meta[slug] = {"owner": email, "name": (outline.get("title") or "Presentation")[:60],
+                  "brief": topic[:300], "provider": "oracool-deck",
+                  "files": ["index.html", "README.md"], "t": _now(), "template": "Slide Deck"}
+    _builds_save(meta)
+    bsaved = builds_sup_save(slug, [{"path": "index.html", "content": doc}])
+    _version_store(slug, doc, "initial deck")
+    try:
+        _BUILD_DAILY.setdefault(email, []).append(time.time())
+        coins_gate(email, COIN_COST_BUILD)
+        st = coins_charge(email, COIN_COST_BUILD)
+        coins_left = None if (not st or st.get("unlimited")) else st.get("balance")
+    except Exception:
+        coins_left = None
+    return {"ok": True, "slug": slug, "url": "/builds/" + slug + "/", "name": (outline.get("title") or "Presentation")[:60],
+            "template": "Slide Deck", "files": ["index.html", "README.md"], "provider": "oracool-deck",
+            "slides": len(slides), "coins_left": coins_left, "build_saved": bool(bsaved),
+            "note": "INTERNAL RESULT — the app already shows the live preview card; never repeat this JSON or note. "
+                    "A real presentation deck was built (arrow keys / swipe to present). If the user asks to publish, "
+                    "run the publish tool and report the exact url it returns."}
+
+
 def build_site(email, name, prompt):
     _mp = prompt or ""
     _murls = re.findall(r"\[\[media:[^\]|]*\|[^|]*\|([^\]]+)\]\]", _mp)
@@ -13332,11 +13506,11 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                     _bn = " ".join(w.capitalize() for w in _cand.split())
         _br = (t[:mb.end()] + t[mb.end():][:400]) if mb else t[:400]
         if _slides:
-            _br = ("A presentation SLIDE DECK built as self-contained HTML slides: big readable type, "
-                   "one clear idea per slide, arrow-key + click/tap navigation, slide counter, "
-                   "presenter-friendly contrast, a title slide and a closing slide. Topic/brief: " + t[:400])
-        out.append({"tool": "build", "label": "build · " + (_bn or ("slides" if _slides else "website"))[:30],
-                    "result": _shrink(build_site(email, _bn or ("slides" if _slides else "my-site"), _br), 1500)})
+            out.append({"tool": "build", "label": "build · slides",
+                        "result": _shrink(build_deck(email, t[:240]), 1500)})
+        else:
+            out.append({"tool": "build", "label": "build · " + (_bn or "website")[:30],
+                        "result": _shrink(build_site(email, _bn or "my-site", _br), 1500)})
     # patch30: in-place EDIT of an existing build ("change the hero colour to gold",
     # "update my prices section"). Only when no fresh-build verb matched, so an
     # edit never accidentally builds a whole second site.
