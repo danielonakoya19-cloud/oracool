@@ -7524,6 +7524,17 @@ def build_deck(email, topic):
     import html as _h, json as _json
     email = (email or "").strip().lower()
     topic = (topic or "presentation").strip()[:240] or "presentation"
+    # strip the request verbs so the deck is titled with the SUBJECT
+    # ("create slides for my presentation on X" -> "X")
+    _topic0 = re.sub(r"^(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?"
+                     r"(?:create|make|build|generate|design|prepare|give\s+me|write)\s+"
+                     r"(?:me\s+)?(?:a\s+|an\s+|the\s+)?"
+                     r"(?:slide\s+decks?|pitch\s+decks?|presentation\s+decks?|decks?|presentations?|slides?)\s*"
+                     r"(?:presentation\s+)?(?:for\s+)?(?:my\s+)?"
+                     r"(?:presentation\s+|talk\s+|speech\s+)?(?:about|on|of|for)?\s*",
+                     "", topic, flags=re.I).strip(" .,:")
+    if 2 < len(_topic0):
+        topic = _topic0
     _stage = "start"
     try:
         _bp_reset(email, "Presentation")
