@@ -501,3 +501,18 @@
 
 - Probe: `state=connecting` for 125s+ and NEVER opens (zombie socket). Root: resync/close races — a dead socket's close-handler ran `sessions.delete(id)` against a NEWER live rec + respawned twins; sockets stuck in 'connecting' hung forever.
 - Fixes: `rec.stateSince` on every transition + 20s watchdog recycles any session stuck 'connecting'/'disconnected' >60s (mark dead → end → reopen); close handler ignores `rec.dead` recs and only deletes `sessions.get(id) === rec`; resync marks `old.dead = true`. Bundle rebuilt. Suite 950 passed.
+
+
+## patch114 — VERIFIED: reads return real messages (SHIPPED)
+
+- The last two killers: (1) message caches died on restarts (patch112 persistence + restore guard patch113e fixed it — Odd Dealer's msgs survived a deploy); (2) stylized Unicode names ('𝐎𝐝𝐝 𝐃𝐞𝐚𝐥𝐞𝐫') never matched plain typing ('Odd Dealer') — `normName()` NFKC-folds mathematical alphabets + strips emoji/zero-width/accents before matching (toJid + contacts search).
+- Also learned: `fetchMessageHistory(count, oldestMsgKey, oldestMsgTimestampMs)` — timestamp is MILLISECONDS, result arrives via events later; resyncs must NOT delete wa-names.json (patch113d) and my repeated resyncs were resetting the progressive sync — STOP resyncing unless sync keys are corrupt.
+- VERIFIED end-to-end: "read my chat with Odd Dealer" → real transcript (I want game / Account detail / I need game). Suite 950.
+
+
+## patch115 — presentation polish (SHIPPED)
+
+- Mobile composer (user screenshot: 'too tight for the screen'): <760px hides Agent/Private/Call/Links pills + hint, shrinks the mode chip to its icon; <420px hides mic+emoji too. Chat input font 16px (iOS zoom guard).
+- Video creation in chat: the TWO patch41 `gen_video()` sync call sites ran a MINUTES-long render inside the HTTP request → client timeout = 'errors'. Both now start `media_job_start` ASYNC jobs (result {job,status,prompt,audio}); client `videoJobCard(x)` hooks `__tools` tool==='video' and polls /api/media/job/status every 6s → drops the <video> into the chat. test_patch41 retargeted to the async contract (suite 951).
+- Custom domains: routes WORK (live-tested /api/sites action=domain + domain_status). Blocker = RENDER_API_KEY/RENDER_SERVICE_ID unset → _render_register_domain can't register the domain at the Render edge. Panel copy now self-serve: 'your Render dashboard → service → Settings → Custom Domains → add this domain → tap Check DNS'.
+- Live smoke (prod): /api/image 200 (agnes-free), /api/media/job/start 200 (job running), sites list ok (user's 'children-of-different-ages-2' published).

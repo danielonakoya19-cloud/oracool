@@ -13460,7 +13460,10 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         if _pk == "video":
             if tier_gte(tier, "ultra") or free_mode():  # patch84/74: video is FREE while growing
                 _want_aud = bool(re.search(r"\b(?:voice|narration|narrated|sound|audio|speech|talking)\b", (_pstyle + " " + _psub), re.I))
-                out.append({"tool": "video", "label": "video · " + _psub[:40], "result": _shrink(gen_video(_pprompt, want_audio=_want_aud), 1200)})
+                _vr = media_job_start(email, "video", {"prompt": _pprompt, "email": email, "want_audio": _want_aud})
+                out.append({"tool": "video", "label": "video · " + _psub[:40],
+                            "result": ({"job": _vr.get("id", ""), "status": _vr.get("status") or "running",
+                                        "prompt": _pprompt[:80], "audio": bool(_want_aud)} if _vr.get("id") else _shrink(_vr, 600))})
             else:
                 out.append({"tool": "video", "label": "video · plan", "result": {"locked": True, "plan": "ultra",
                             "note": "Video creation is on the Professional plan - tell the user in one sentence and offer the upgrade."}})
@@ -13479,9 +13482,10 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
             if want_aud:
                 prompt = re.sub(r"\s*\b(?:with|having|have)\s+(?:sound|audio|voice|speech|voices)\b\s*", " ", prompt).strip()
             if prompt:
-                r = gen_video(prompt, want_audio=want_aud)
+                _vr = media_job_start(email, "video", {"prompt": prompt, "email": email, "want_audio": want_aud})
                 out.append({"tool": "video", "label": "video · " + prompt[:40],
-                            "result": _shrink(r, 1200)})
+                            "result": ({"job": _vr.get("id", ""), "status": _vr.get("status") or "running",
+                                        "prompt": prompt[:80], "audio": bool(want_aud)} if _vr.get("id") else _shrink(_vr, 600))})
         if "github" in low:
             q = re.sub(r"(?i)github|search|repos?|for|find|on", " ", t)
             q = " ".join(q.split())[:50] or "oracool"

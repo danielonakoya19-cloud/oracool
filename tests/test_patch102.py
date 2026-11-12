@@ -402,3 +402,13 @@ def test_bridge_connection_watchdog_and_racefix():
     assert "rec.dead" in b                             # intentional teardowns don't respawn
     assert "if (sessions.get(id) === rec) sessions.delete(id)" in b  # dead rec never deletes a live one
     assert "old.dead = true" in b                      # resync marks the old socket
+
+
+def test_video_creation_runs_in_chat_and_composer_fits_phones():
+    srv = open("server.py").read()
+    app = open("index.html").read()
+    assert '"tool": "video"' in srv and "media_job_start(email, \"video\"" in srv
+    assert "function videoJobCard(x)" in app and "x.tool==='video'" in app
+    assert "/api/media/job/status" in app                  # client polls the render
+    assert "#mmBtn, #privBtn, #callBtn, #connBtn" in app   # mobile composer hides the extras
+    assert "Render dashboard" in app                      # custom-domain self-serve step

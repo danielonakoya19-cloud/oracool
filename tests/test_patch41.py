@@ -85,7 +85,10 @@ class MediaIntents(unittest.TestCase):
                          ("video", "a lion walking through the savannah at sunset", "Video with voice narration"))
         runs = s.auto_tools("a lion walking through the savannah at sunset", tier="enterprise", email="a@x.com", history=hist)
         self.assertEqual(runs[0]["tool"], "video")
-        self.assertIn("savannah", runs[0]["result"]); self.assertIn('"audio": true', runs[0]["result"])
+        # async job contract (patch115): the result carries the render job + flags
+        self.assertIn("savannah", json.dumps(runs[0]["result"]))
+        self.assertIn('"audio": true', json.dumps(runs[0]["result"]))
+        self.assertTrue(runs[0]["result"].get("job"))
         # free tier: honest lock instead of silence
         runs = s.auto_tools("a lion walking through the savannah at sunset", tier="free", email="a@x.com", history=hist)
         self.assertEqual(runs[0]["tool"], "video"); self.assertIn("Professional", json.dumps(runs[0]["result"]))
