@@ -516,3 +516,9 @@
 - Video creation in chat: the TWO patch41 `gen_video()` sync call sites ran a MINUTES-long render inside the HTTP request → client timeout = 'errors'. Both now start `media_job_start` ASYNC jobs (result {job,status,prompt,audio}); client `videoJobCard(x)` hooks `__tools` tool==='video' and polls /api/media/job/status every 6s → drops the <video> into the chat. test_patch41 retargeted to the async contract (suite 951).
 - Custom domains: routes WORK (live-tested /api/sites action=domain + domain_status). Blocker = RENDER_API_KEY/RENDER_SERVICE_ID unset → _render_register_domain can't register the domain at the Render edge. Panel copy now self-serve: 'your Render dashboard → service → Settings → Custom Domains → add this domain → tap Check DNS'.
 - Live smoke (prod): /api/image 200 (agnes-free), /api/media/job/start 200 (job running), sites list ok (user's 'children-of-different-ages-2' published).
+
+
+## patch116 — questions are not briefs; slide decks build (SHIPPED)
+
+- User screenshot: asked for SPEAKING POINTS ("i want to speak on how people can make money if you create a website for them") and the builder hijacked it ("Building my-site…"). The _wants gate saw 'create a website' inside a QUESTION.
+- Fix: `_advice` guard (i want to speak/talk/present, my presentation/speech, talking/key points, help me understand/learn/speak + the combined how-(people|to)-can pattern that loses only to a real build+website shape); `_slides` intent (slides|slide deck|presentation deck|pitch deck + create/make/generate verbs) routes into `build_site` with a 'presentation SLIDE DECK (self-contained HTML slides…)' brief — decks BEAT the advice guard. Suite 952.

@@ -12801,7 +12801,21 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     # questions about building ("how do I make money with e-commerce") are NOT build commands
     _ask = bool(re.match(r"^\s*(?:(?:please|pls|hey|hi|hello|yo|ok|okay|so|now|also|and|just)[\s,]+)*"
                           r"(?:how|what|why|when|who|which|can|could|should|would|tell|explain|difference)\b", low))
-    _wants = (_mb or _site_ish) and not _ask
+    # patch116: TALKING about websites is not BRIEFING one. "i want to speak on
+    # how people can make money if you create a website for them" is a question
+    # for words — never a build job. Strong advice signals always win; the
+    # mid-sentence how-to pattern loses only to a real build+website shape.
+    _advice = bool(re.search(
+        r"\b(i (?:want|need|would like|am going) to (?:speak|talk|present|discuss)|speak(?:ing)? (?:on|about|for)|"
+        r"my (?:presentation|speech|talk|pitch)\b|talking points|key points|"
+        r"help me (?:understand|learn|explain|speak|present|prepare))\b", low)) or (
+        bool(re.search(r"\bhow (?:people|to|one|they|we) (?:can|could|do|make|earn|get|use|start)\b", low))
+        and not re.search(r"\b(?:build|create|make|design|generate|develop|code)\b[^.]{0,40}"
+                          r"\b(?:website|web ?site|web ?app|app|landing|store|page)\b", low))
+    # patch116: slide decks build through the same builder with a deck brief
+    _slides = bool(re.search(r"\b(slides?|slide deck|presentation deck|pitch deck)\b", low)) and bool(
+        re.search(r"\b(create|make|build|design|generate|prepare|need|want|give me)\b", low))
+    _wants = (_mb or _site_ish or _slides) and (not _ask or _slides) and (not _advice or _slides)
     if force_build and len(t) > 8:
         _wants = True  # patch43: the composer's Build mode — the message IS the brief, whatever the phrasing
     # patch30: "make my site's footer say 24/7" is an EDIT even though "make…site"
@@ -13317,8 +13331,12 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                 if 2 < len(_cand) <= 40 and not re.match(r"^(?:me|us|you|him|her|them|it|this|that|myself)$", _cand):
                     _bn = " ".join(w.capitalize() for w in _cand.split())
         _br = (t[:mb.end()] + t[mb.end():][:400]) if mb else t[:400]
-        out.append({"tool": "build", "label": "build · " + (_bn or "website")[:30],
-                    "result": _shrink(build_site(email, _bn or "my-site", _br), 1500)})
+        if _slides:
+            _br = ("A presentation SLIDE DECK built as self-contained HTML slides: big readable type, "
+                   "one clear idea per slide, arrow-key + click/tap navigation, slide counter, "
+                   "presenter-friendly contrast, a title slide and a closing slide. Topic/brief: " + t[:400])
+        out.append({"tool": "build", "label": "build · " + (_bn or ("slides" if _slides else "website"))[:30],
+                    "result": _shrink(build_site(email, _bn or ("slides" if _slides else "my-site"), _br), 1500)})
     # patch30: in-place EDIT of an existing build ("change the hero colour to gold",
     # "update my prices section"). Only when no fresh-build verb matched, so an
     # edit never accidentally builds a whole second site.

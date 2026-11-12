@@ -412,3 +412,25 @@ def test_video_creation_runs_in_chat_and_composer_fits_phones():
     assert "/api/media/job/status" in app                  # client polls the render
     assert "#mmBtn, #privBtn, #callBtn, #connBtn" in app   # mobile composer hides the extras
     assert "Render dashboard" in app                      # custom-domain self-serve step
+
+
+def test_advice_never_builds_but_slide_requests_build_decks(monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "build_site",
+                        lambda email, name, brief: calls.append((name, brief)) or {"ok": True, "url": "x"})
+    # the user's real message — talking points request, NOT a website brief
+    runs = server.auto_tools(
+        "i have a presentation as your creator i want to speak on how people can make money "
+        "if you create a website for them", tier="enterprise", email="a@x.com", history=[])
+    assert not calls and not any(r.get("tool") == "build" for r in runs)
+    # a real brief still builds
+    calls.clear()
+    runs2 = server.auto_tools("build me a website for Becfom Hotel with a booking form",
+                              tier="enterprise", email="a@x.com", history=[])
+    assert calls and any(r.get("tool") == "build" for r in runs2)
+    # slides build through the same builder with a deck brief
+    calls.clear()
+    runs3 = server.auto_tools("create slides for my presentation on how people can make money with websites",
+                              tier="enterprise", email="a@x.com", history=[])
+    assert any(r.get("tool") == "build" for r in runs3)
+    assert calls and "SLIDE DECK" in calls[0][1]
