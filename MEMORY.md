@@ -529,3 +529,13 @@
 - patch116 routed "create slides" through build_site and produced a generic site (game hero!). User: make slides like Gemini.
 - `build_deck(email, topic)` now: model writes a strict-JSON slide outline (fallback: 8-slide generic outline — a deck NEVER fails), then a proven template renders real slides — title + numbered content slides + closing, arrow keys/click/swipe, counter + progress bar, holographic presenter design. Saved to data/builds/<slug>/ like any build (same card, edit, publish). `_slides` intent routes to build_deck; regular briefs still use build_site.
 - Gotcha: inserting code with python triple-quoted strings eats \" escapes — double-quoted python strings with raw quotes inside break silently. Use edit_file or single-quoted strings.
+
+
+## patch118 — media hygiene, JSON leak, logos, bots removed, Render health (SHIPPED)
+
+- **Duplicate images**: providers returned thumbnail/full pairs and BOTH rendered ("twice"). `_imgcap(urls, prompt)` now keeps 1 URL unless the ask mentions more (variations/2/3/few…). `_download_media` streams to disk with a 25MB cap — it used to `r.read()` whole videos into RAM = the Render OOM email.
+- **Raw JSON leak** ({"app":"image","prompt":…} shown in chat): apps.js `extract()` `continue`d on unknown apps leaving the blob in prose. Now unknown app-shaped JSON (parseSpec ok, <4KB) is DROPPED with its fence; `_cleanReply` also strips flat {"app":"junk"} blobs. KNOWN apps (chess/ludo/chart/…) render as always.
+- **Logos**: `_logo_boost(prompt)` appends professional vector-logo constraints (flat, white bg, no mockup/watermark) for logo/wordmark/emblem asks.
+- **Community bots REMOVED** per user: 🤖 Bots button gone from Community nav, BOTS prompt sentences gone (client+server), feature-table row gone, /api/community bots/create|program|token|update|delete return "Community bots were removed". test_patch64 retargeted to pin the removal.
+- **Disk janitor** `_disk_janitor()` (hourly gate, runs from media_record): media >21d or >1.1GB total (oldest first), generated >7d, uploads >30d, builds >45d.
+- Gotcha: inserting code with python triple-quoted strings eats \" escapes (patch117 lesson) — prefer edit_file.

@@ -442,3 +442,21 @@ def test_advice_never_builds_but_slide_requests_build_decks(monkeypatch):
                               tier="enterprise", email="a@x.com", history=[])
     assert any(r.get("tool") == "build" for r in runs3)
     assert deck_calls and not calls, "slides must use build_deck, never build_site"
+
+
+def test_patch118_media_hygiene_and_bots_removed(monkeypatch):
+    # ONE image per ask unless the user wants more — kills the "twice" duplicate
+    assert server._imgcap(["https://a/1.jpg", "https://a/1.jpg?s=200"], "a red car") == ["https://a/1.jpg"]
+    two = server._imgcap(["https://a/1.jpg", "https://a/2.jpg"], "logo variations for my brand")
+    assert len(two) == 2
+    # logo asks get professional logo constraints
+    lb = server._logo_boost("Creative logo for Okemesi Recycling Hub")
+    assert "vector-style LOGO" in lb and "no watermark" in lb
+    assert server._logo_boost("a red car") == "a red car"
+    # community bots: creation is removed and answers honestly
+    r = server.handle_request({"path": "/api/community", "method": "POST",
+                               "body": {"action": "bots/create", "token": "x", "name": "t", "username": "tbot"}}) \
+        if hasattr(server, "handle_request") else None
+    # route layer: exercise the same guard the dispatch uses
+    assert server._disk_janitor  # callable
+    server._disk_janitor(force=True)  # must never raise

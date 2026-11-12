@@ -913,8 +913,21 @@
     while ((m = APP_RE.exec(s))) {
       if (m.index < last) continue;
       var end = matchBrace(s, m.index);
-      if (end < 0 || !KNOWN[m[1].toLowerCase()]) continue;
+      if (end < 0) continue;
       var body = s.slice(m.index, end + 1); // kept even if unparseable: render() shows a friendly error instead of raw JSON
+      if (!KNOWN[m[1].toLowerCase()]) {
+        // patch118: an invented app block ({"app":"image"…} tool echoes) is DROPPED —
+        // the real card/media already shows it; raw JSON must never reach the user
+        if (!parseSpec(body) || body.length > 4000) continue;
+        var pre0 = s.slice(last, m.index), dropFrom = m.index;
+        var fo0 = pre0.match(/\\?`{3,4}[^`{}]{0,40}$/);
+        if (fo0) dropFrom = m.index - fo0[0].length;
+        var cl0 = s.slice(end + 1).match(/^\s*\\?`{3,4}[ \t]*/);
+        out += s.slice(last, dropFrom);
+        last = end + 1 + (cl0 ? cl0[0].length : 0);
+        APP_RE.lastIndex = last;
+        continue;
+      }
       var pre = s.slice(last, m.index), closeLen = 0;
       var fo = pre.match(/\\?`{3,4}[^`{}]{0,40}$/); // "```oracool-app\n", "```\noracool-app\n", "```json\n", "``` ", "\```", "````" …
       if (fo) {

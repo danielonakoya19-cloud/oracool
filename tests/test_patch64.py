@@ -37,11 +37,13 @@ class Marker(unittest.TestCase):
         self.assertIn("def site_domain_set", SRV)
         self.assertIn("pubDomOpen", APP)  # patch70: domain portal button
 
-    def test_bots_present(self):
-        self.assertIn('path.startswith("/api/bot/v1/")', SRV)
-        self.assertIn("renderCommBots", APP)
-        self.assertIn("create table if not exists public.comm_bots", SQL)
-        self.assertIn("Create community bots (BotFather-style)", SRV)
+    def test_bots_creation_removed(self):
+        # patch118: community bot creation removed at the user's request
+        self.assertNotIn("Create community bots (BotFather-style)", SRV)
+        self.assertIn("Community bots were removed", SRV)
+        self.assertNotIn("BOTS (BotFather-style)", SRV)   # no server-side prompt either
+        self.assertNotIn("BOTS (BotFather-style)", APP)   # nor in the client prompt
+        self.assertNotIn('data-v="bots"', APP)            # the 🤖 Bots button is gone
 
 
 class _FakeStore:

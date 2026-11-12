@@ -544,7 +544,6 @@ FEATURE_MATRIX = [
         ("Refer & earn — 250,000 coins per friend · Advocate early access at 3", "✅", "✅", "✅", "✅", "✅"),
         ("Personal API keys — build on OraCool from any OpenAI-compatible app (/v1)", "100 req/day", "1,000/day", "5,000/day", "20,000/day", "Unlimited"),
         ("Community power features — host AMAs · Showcase your builds", "Ask & like", "Ask & like", "✅ host", "✅ host", "✅ host"),
-        ("Create community bots (BotFather-style) — token + bot API, replies on @mention", "✅", "✅", "✅", "✅", "✅"),
         ("AI video generation", "❌", "❌", "❌", "✅", "✅"),
         ("Licensed stock photos in builds (Pexels · Openverse · Wikimedia)", "✅", "✅", "✅", "✅", "✅"),
     ]),
@@ -9145,6 +9144,30 @@ def site_serve(self, sub, rel):
         pass
 
 
+def _logo_boost(prompt):
+    """patch118: logo asks get professional logo constraints — flat vector-style
+    marks on white, no mockups/watermarks — which any image model renders far
+    better than the raw 'make a logo' brief."""
+    if re.search(r"\b(logo|logos|wordmark|wordmarks|emblem|brand\s*mark|monogram|badge)\b", prompt or "", re.I):
+        return ((prompt or "").rstrip(". ") +
+                ", professional vector-style LOGO: flat clean shapes, centered composition on a plain "
+                "white background, balanced negative space, crisp edges, scalable vector look, high "
+                "contrast, minimal detail, print-ready brand mark, no mockup, no background scene, no "
+                "drop shadow on the background, no watermark, no photo realism, no extra text besides "
+                "the exact brand name")
+    return prompt
+
+
+def _imgcap(urls, prompt):
+    """patch118: ONE image per ask unless the user wants more — providers that
+    return thumbnail/full pairs made the chat show the same picture twice."""
+    urls = [u for u in dict.fromkeys([str(u or "").strip() for u in (urls or [])]) if u]
+    low = (prompt or "").lower()
+    many = re.search(r"\b(two|three|four|five|2|3|4|5|few|several|many|multiple|"
+                     r"variations?|options?|variants?|bunch|grid|couple|each|compare)\b", low)
+    return urls if many else urls[:1]
+
+
 def gen_image(prompt, aspect_ratio="1:1"):
     """Text-to-image cascade: NexaAPI (creator's primary) → HiAPI → TokenMix →
     Pollinations FLUX → CVRON flux. Provider capacity and free quotas vary;
@@ -9154,12 +9177,13 @@ def gen_image(prompt, aspect_ratio="1:1"):
         return {"error": "Describe the image you want, e.g. 'a neon city at night'."}
     if len(prompt) < 3:
         return {"error": "Prompt too short."}
+    prompt = _logo_boost(prompt)
     failures = []
     # 0) Agnes free multimodal gateway — currently the most reliably live image engine
     ag = _agnes_image(prompt)
     if ag.get("ok"):
         return {"ok": True, "provider": "agnes-free", "model": KEYS.get("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash"),
-                "prompt": prompt, "images": ag["urls"]}
+                "prompt": prompt, "images": _imgcap(ag["urls"], prompt)}
     if ag.get("error") and ag["error"] != "no key":
         failures.append("Agnes: " + str(ag["error"])[:120])
     # 0b) Google Gemini image (when the key is connected and the project is permitted)
@@ -9167,14 +9191,14 @@ def gen_image(prompt, aspect_ratio="1:1"):
         gi = _gemini_image(prompt)
         if gi.get("ok"):
             return {"ok": True, "provider": "gemini", "model": gi.get("model", "gemini-image"),
-                    "prompt": prompt, "images": gi["urls"]}
+                    "prompt": prompt, "images": _imgcap(gi["urls"], prompt)}
         if gi.get("error"):
             failures.append("Gemini: " + str(gi["error"])[:140])
     # 1) NexaAPI (sk- key; needs balance)
     nx = _nexa_image(prompt, aspect_ratio)
     if nx.get("ok"):
         return {"ok": True, "provider": "nexaapi", "model": nx.get("model", ""),
-                "prompt": prompt, "images": nx.get("urls", [])}
+                "prompt": prompt, "images": _imgcap(nx.get("urls", []), prompt)}
     if nx.get("error"):
         failures.append("NexaAPI: " + str(nx["error"])[:140])
     # 2) HiAPI — premium models (needs account balance)
@@ -9188,7 +9212,7 @@ def gen_image(prompt, aspect_ratio="1:1"):
             res = hiapi_poll(tid, k, budget=90)
             if res.get("ok"):
                 return {"ok": True, "provider": "hiapi", "model": model,
-                        "prompt": prompt, "images": res.get("urls", [])}
+                        "prompt": prompt, "images": _imgcap(res.get("urls", []), prompt)}
             failures.append("HiAPI: " + str(res.get("error"))[:140])
         else:
             failures.append("HiAPI: " + (err or "no task id"))
@@ -17161,11 +17185,6 @@ class Handler(BaseHTTPRequestHandler):
             "POWER COMMUNITY: members on Pro and above (and Advocates with early access) can host AMAs in the Community tab, "
             "and everyone can share their published builds in the Showcase — encourage word-of-mouth: 'host an AMA' / 'share "
             "your build'. "
-            "BOTS (BotFather-style): any member can create community bots in Community → 🤖 Bots — the flow mirrors "
-            "Telegram's BotFather: pick a name, pick a username that ends in 'bot', receive an HTTP API token shown "
-            "ONCE. Bots reply when @mentioned in any room, thinking with their creator's written brain; developers can "
-            "call POST /api/bot/v1/getMe and /api/bot/v1/sendMessage with the Bearer token. Help users build bots "
-            "step by step (suggest a purpose + brain text) and NEVER invent or repeat a bot token. "
             "REFERRAL PROGRAM (turn members into advocates): every signed-in member has a permanent referral link "
             "(Account → Refer & earn, oracoolai.com/app?ref=CODE). Each friend who creates an account through it pays the "
             "advocate +250,000 build coins instantly; 3 referrals = ADVOCATE status with EARLY ACCESS to new OraCool "
@@ -18225,17 +18244,80 @@ def _media_slug(email):
     return re.sub(r"[^a-z0-9]", "_", (email or "anon").lower())[:60]
 
 
-def _download_media(url, dest, timeout=22):
+_JANITOR_TS = [0.0]
+
+
+def _disk_janitor(force=False):
+    """patch118: keep Render's disk near-empty — generated media older than 21
+    days (or beyond ~1.1GB total, oldest first), generated files past 7 days and
+    uploads past 30 days are removed. Hourly gate so it costs nothing."""
+    now = time.time()
+    if not force and now - _JANITOR_TS[0] < 3600:
+        return
+    _JANITOR_TS[0] = now
+    try:
+        entries = []
+        for root, _dirs, files in os.walk(MEDIA_DIR):
+            for fn in files:
+                fp = os.path.join(root, fn)
+                try:
+                    st = os.stat(fp)
+                    entries.append((st.st_mtime, st.st_size, fp))
+                except Exception:
+                    pass
+        entries.sort()
+        total = sum(e[1] for e in entries)
+        for mt, sz, fp in entries:
+            if now - mt > 21 * 86400 or total > 1100 * 1024 * 1024:
+                try:
+                    os.remove(fp)
+                    total -= sz
+                except Exception:
+                    pass
+        for folder, days in ((os.path.join(DATA_DIR, "generated"), 7),
+                             (os.path.join(DATA_DIR, "uploads"), 30),
+                             (os.path.join(DATA_DIR, "builds"), 45)):
+            if not os.path.isdir(folder):
+                continue
+            for fn in os.listdir(folder):
+                fp = os.path.join(folder, fn)
+                try:
+                    if os.path.isfile(fp) and now - os.path.getmtime(fp) > days * 86400:
+                        os.remove(fp)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def _download_media(url, dest, timeout=22, max_bytes=25 * 1024 * 1024):
+    """patch118: stream to disk with a hard size cap — never hold a whole image
+    or video in RAM (this was blowing Render's memory limit)."""
     try:
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context()) as r:
-            data = r.read()
-        if not data or len(data) < 512:
-            return False
-        with open(dest, "wb") as f:
-            f.write(data)
-        return True
+            n = 0
+            with open(dest, "wb") as f:
+                while True:
+                    chunk = r.read(262144)
+                    if not chunk:
+                        break
+                    n += len(chunk)
+                    if n > max_bytes:
+                        f.close()
+                        try:
+                            os.remove(dest)
+                        except Exception:
+                            pass
+                        return False
+                    f.write(chunk)
+        return n >= 512
     except Exception:
+        try:
+            if os.path.exists(dest):
+                os.remove(dest)
+        except Exception:
+            pass
         return False
 
 
@@ -18254,6 +18336,7 @@ def media_record(email, kind, prompt, urls, provider="", model=""):
         os.makedirs(folder, exist_ok=True)
     except Exception:
         folder = ""
+    _disk_janitor()
     for u in list(urls)[:2]:
         u = str(u or "").strip()
         if not u:
@@ -19943,19 +20026,11 @@ def community_route(action, body, self_host=""):
         if action == "showcase/like":
             return svc.showcase_like(me, body.get("item_id"))
         if action == "bots":
-            return svc.bots(me)
-        if action == "bots/create":
-            return svc.bot_create(me, body.get("name"), body.get("username"),
-                                  body.get("brain") or "", body.get("greeting") or "")
-        if action == "bots/update":
-            return svc.bot_update(me, body.get("bot_id"), body.get("brain"), body.get("greeting"),
-                                  body.get("name"), body.get("enabled"))
-        if action == "bots/token":
-            return svc.bot_reset_token(me, body.get("bot_id"))
-        if action == "bots/program":
-            return svc.bot_program(me, body.get("token"), body.get("bot_id"), body.get("description"))
-        if action == "bots/delete":
-            return svc.bot_delete(me, body.get("bot_id"))
+            # patch118: community bot creation was removed — nothing to manage
+            return {"ok": True, "mine": [], "removed": True,
+                    "note": "Community bots were removed — the feature is no longer available."}
+        if action in ("bots/create", "bots/update", "bots/token", "bots/program", "bots/delete"):
+            return {"ok": False, "error": "Community bots were removed — this feature is no longer available."}
         if action == "badge":
             return verified_status(me)
         if action == "badge/pay":
