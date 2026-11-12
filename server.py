@@ -7524,8 +7524,12 @@ def build_deck(email, topic):
     import html as _h, json as _json
     email = (email or "").strip().lower()
     topic = (topic or "presentation").strip()[:240] or "presentation"
-    _bp_reset(email, "Presentation")
-    _bp_step(email, "Reading the topic", topic[:80])
+    _stage = "start"
+    try:
+        _bp_reset(email, "Presentation")
+        _bp_step(email, "Reading the topic", topic[:80])
+    except Exception:
+        pass
     outline = None
     try:
         _m = _select_model("creative")
@@ -7558,6 +7562,7 @@ def build_deck(email, topic):
             {"title": "Key Takeaways", "bullets": ["Execution beats perfection", "Speed and consistency win", "The best time to start is now"]},
         ]}
     slides = [x for x in outline.get("slides") or [] if isinstance(x, dict)][:14]
+    _stage = "render"
 
     def _esc(x):
         return _h.escape(str(x or ""), quote=True)
@@ -7650,30 +7655,35 @@ show(0);
 })();
 </script></body></html>"""
 
-    slug0 = _build_slug("presentation")
-    slug, i = slug0, 2
-    while slug in _builds_load():
-        slug = slug0 + "-" + str(i); i += 1
-    dest = os.path.join(_BUILDS_DIR, slug)
     try:
+        slug0 = _build_slug("presentation")
+        slug, i = slug0, 2
+        while slug in _builds_load():
+            slug = slug0 + "-" + str(i); i += 1
+        dest = os.path.join(_BUILDS_DIR, slug)
+        _stage = "save"
         os.makedirs(dest, exist_ok=True)
         with open(os.path.join(dest, "index.html"), "w", encoding="utf-8") as fh:
             fh.write(doc)
         with open(os.path.join(dest, "README.md"), "w", encoding="utf-8") as fh:
             fh.write("# " + (outline.get("title") or "Presentation") + "\n\n"
                      "Presentation deck built with **OraCool AI**. Open `index.html` and use the arrow keys.\n")
+        _stage = "register"
+        _bp_step(email, "Deck ready", "/builds/" + slug + "/")
+        _bp_done(email, True, "/builds/" + slug + "/")
+        meta = _builds_load()
+        meta[slug] = {"owner": email, "name": (outline.get("title") or "Presentation")[:60],
+                      "brief": topic[:300], "provider": "oracool-deck",
+                      "files": ["index.html", "README.md"], "t": _now(), "template": "Slide Deck"}
+        _builds_save(meta)
+        bsaved = builds_sup_save(slug, [{"path": "index.html", "content": doc}])
+        _version_store(slug, doc, "initial deck")
     except Exception as e:
-        _bp_done(email, False, "could not save")
-        return {"error": "Could not save the deck: " + str(e)[:120]}
-    _bp_step(email, "Deck ready", "/builds/" + slug + "/")
-    _bp_done(email, True, "/builds/" + slug + "/")
-    meta = _builds_load()
-    meta[slug] = {"owner": email, "name": (outline.get("title") or "Presentation")[:60],
-                  "brief": topic[:300], "provider": "oracool-deck",
-                  "files": ["index.html", "README.md"], "t": _now(), "template": "Slide Deck"}
-    _builds_save(meta)
-    bsaved = builds_sup_save(slug, [{"path": "index.html", "content": doc}])
-    _version_store(slug, doc, "initial deck")
+        try:
+            _bp_done(email, False, "deck failed: " + _stage)
+        except Exception:
+            pass
+        return {"error": "Could not build the deck (stage " + _stage + "): " + str(e)[:200]}
     try:
         _BUILD_DAILY.setdefault(email, []).append(time.time())
         coins_gate(email, COIN_COST_BUILD)
