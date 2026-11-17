@@ -89,7 +89,7 @@ var SID="__SID__";
 var pc=null, dc=null, stream=null, facing="environment";
 var rtcReady=false, frameTimer=null, pendingIce=[], started=false;
 function log(m){ var l=document.getElementById('log'); if(l){ l.textContent=(m+'\n'+l.textContent).slice(0,300); } }
-function setStatus(t,on){ var s=document.getElementById('status'); if(s){ s.textContent=t; s.className=on?'on':''; } }
+function setStatus(t,on){ window._pstat=t; var s=document.getElementById('status'); if(s){ s.textContent=t; s.className=on?'on':''; } }
 function diag(m){ var e=document.getElementById('diag'); if(e) e.textContent=m; }
 try{ document.getElementById('pairCode').textContent=String(SID).slice(-4).toUpperCase(); }catch(e){}
 function escapeHtml(x){ return String(x==null?'':x).replace(/[&<>"']/g,function(c){
@@ -102,8 +102,16 @@ function webview(){
 }
 if(webview()){ document.getElementById('webwarn').style.display='block'; }
 var netFail=0;
+function capsObj(){
+  var chr=(navigator.userAgent.match(/Chrome\/(\d+)/)||['',''])[1];
+  return {display:!!(navigator.mediaDevices&&navigator.mediaDevices.getDisplayMedia),
+          webrtc:(typeof RTCPeerConnection!=='undefined'),
+          camera:!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia),
+          secure:!!window.isSecureContext, chrome:chr};
+}
 async function post(path,body){ body=body||{}; body.sid=SID;
   body.ua=navigator.userAgent; body.sw=screen.width; body.sh=screen.height; body.dpr=window.devicePixelRatio||1;
+  body.caps=capsObj(); body.pstat=(window._pstat||'');
   try{
     var r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     netFail=0;
@@ -306,6 +314,13 @@ if(isIPhone){
     camBtn.className='ghost'; camBtn.style.width='100%'; camBtn.textContent='📷 project my camera instead';
   } else {
     document.getElementById('screenHelp').style.display='block';
+    document.getElementById('screenHelp').innerHTML =
+      '\u26a0\ufe0f <b>This browser cannot share the screen.</b> Detected: ' +
+      escapeHtml((navigator.userAgent.match(/(Chrome|SamsungBrowser|Firefox)\/([0-9.]+)/)||['browser','?']).slice(1).join(' ')) +
+      '. Screen capture needs <b>Chrome 105+</b> \u2014 update Chrome in the Play Store (\u22ee \u2192 Help \u2192 About Chrome). ' +
+      'It never works inside WhatsApp/Instagram \u2014 open in Chrome first. If no Chrome update exists for this phone, ' +
+      'the laptop guide (\ud83d\udcd6 Setup &amp; remote-control guide) shows the free tools that mirror ANY Android (scrcpy / Phone Link). ' +
+      'Camera mode below always works.';
     var camBtn2=document.getElementById('startCam');
     camBtn2.className='ghost'; camBtn2.style.width='100%';
   }

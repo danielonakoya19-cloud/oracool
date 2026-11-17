@@ -3697,6 +3697,12 @@ def _device_touch(st, role, device):
     if dev.get("ip"): d["ip"] = dev["ip"]
     for k in ("platform", "browser", "kind", "label", "model", "in_app", "screen"):
         if dev.get(k): d[k] = dev[k]
+    if isinstance(dev.get("caps"), dict):
+        d["caps"] = {k: bool(v) for k, v in dev["caps"].items() if k in ("display", "webrtc", "camera", "secure")}
+        if dev["caps"].get("chrome"):
+            d["chrome"] = str(dev["caps"].get("chrome"))[:8]
+    if dev.get("pstat"):
+        d["pstat"] = str(dev["pstat"])[:140]
     if not d.get("label") and dev.get("ua"):
         d.update({k: v for k, v in _device_from_ua(dev.get("ua", "")).items() if v})
     d["last_seen"] = now
@@ -17544,12 +17550,16 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get("sw"):
                     dev["screen"] = str(body.get("sw")) + "x" + str(body.get("sh") or "")
                 dev["ip"] = _client_ip(self)
+                dev["caps"] = body.get("caps") if isinstance(body.get("caps"), dict) else None
+                dev["pstat"] = body.get("pstat") or ""
                 self._send_json(remote_signal(str(body.get("sid") or ""), body.get("role"), body.get("payload"), dev))
             elif path == "/api/remote/pull":
                 dev = _device_from_ua(str(body.get("ua") or "") or self.headers.get("User-Agent", ""))
                 if body.get("sw"):
                     dev["screen"] = str(body.get("sw")) + "x" + str(body.get("sh") or "")
                 dev["ip"] = _client_ip(self)
+                dev["caps"] = body.get("caps") if isinstance(body.get("caps"), dict) else None
+                dev["pstat"] = body.get("pstat") or ""
                 self._send_json(remote_pull(str(body.get("sid") or ""), body.get("role"), dev))
             elif path == "/api/remote/cmd":
                 self._send_json(remote_cmd(str(body.get("sid") or ""), body.get("cmd")))

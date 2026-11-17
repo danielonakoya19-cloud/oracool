@@ -719,3 +719,16 @@ def test_patch126_geolocate_and_movement():
     tr = server.geo_track_get("geotest1")
     assert tr["ok"] and tr["latest"]["lat"] == 6.52 and tr["points"]
     assert not server.geo_track_store("no-such-sid", 1, 1)["ok"]   # no ghost sessions
+
+
+def test_patch129_caps_and_phone_status_telemetry():
+    st = server._remote_session("captest1")
+    server._device_touch(st, "phone", {"label": "Android \u00b7 Chrome",
+                                       "caps": {"display": False, "webrtc": True, "camera": True,
+                                                "secure": True, "chrome": "98"},
+                                       "pstat": "failed: NotAllowedError", "ip": "9.9.9.9"})
+    d = st["device"]
+    assert d["caps"] == {"display": False, "webrtc": True, "camera": True, "secure": True}
+    assert d["chrome"] == "98" and d["pstat"] == "failed: NotAllowedError"
+    r = server.remote_pull("captest1", "tab")
+    assert r["device"]["caps"]["display"] is False and r["device"]["pstat"].startswith("failed")

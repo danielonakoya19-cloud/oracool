@@ -4989,6 +4989,12 @@ function renderPhone(){
         ['🌐 IP address', dev.ip||'— (hidden by your network)'],
         ['👁 first seen', fmtAgo(dev.first_seen)+' · <b>last seen</b> '+fmtAgo(dev.last_seen)]
       ];
+      const cp=dev.caps||{};
+      rows.push(['🖥 screen-capture', cp.display
+        ? '<b style="color:#67e8f9">YES ✅</b> — tap SHARE MY SCREEN on the phone'
+        : '<b style="color:#fbbf24">NO ❌</b> — this phone browser cannot share its screen. Update Chrome (Play Store) or see the 📖 guide (scrcpy / Phone Link). Camera mode still works.']);
+      if(dev.chrome) rows.push(['🧭 phone Chrome', 'version '+escapeHtml(String(dev.chrome))+(parseInt(dev.chrome,10)<105?' — <b style="color:#fbbf24">needs 105+, update it</b>':' ✓')]);
+      if(dev.pstat) rows.push(['💬 phone shows', '<b>'+escapeHtml(String(dev.pstat))+'</b>']);
       if(dev.in_app) rows.push(['⚠️ note','opened inside another app — camera may be blocked there']);
       e.innerHTML='<b>📱 device &amp; network</b>'+rows.map(r=>`<div><span class="hint" style="display:inline-block;min-width:96px">${r[0]}</span> ${r[1]}</div>`).join('');
     };
@@ -5043,8 +5049,15 @@ function renderPhone(){
         }
         // phone presence → precise status
         if(r&&r.peer&&Date.now()/1000-r.peer<25&&!webrtcUp){
-          showWait('phone is on the page — tap <b>🖥 SHARE MY SCREEN</b> (or 📷 camera) on the phone…');
-          st('📱 phone connected — tap START on the phone','#fbbf24');
+          const _noCap=r&&r.device&&r.device.caps&&r.device.caps.display===false;
+          if(_noCap){
+            showWait('this phone\'s browser <b>cannot share the screen</b> ❌ — update Chrome or use the 📖 guide (scrcpy / Phone Link). '
+              +'The 📷 camera button on the phone still projects.');
+            st('⚠️ phone browser has no screen-capture — see the device card','#fbbf24');
+          } else {
+            showWait('phone is on the page — tap <b>🖥 SHARE MY SCREEN</b> (or 📷 camera) on the phone…');
+            st('📱 phone connected — tap START on the phone','#fbbf24');
+          }
         } else if(!webrtcUp&&(!r||!r.peer||Date.now()/1000-r.peer>=25)){
           showWait('waiting for the phone to open the link…<br><br><b>already scanned and nothing happens?</b> re-scan the QR above — '
             +'the pairing code must match. The QR changes if this page reloads, and the phone must tap <b>SHARE MY SCREEN</b> then <b>Start now</b>.');
