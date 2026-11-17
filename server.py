@@ -3671,10 +3671,19 @@ SPORTY_RX = re.compile(
 _SLIP_CACHE = [0.0]
 
 
-def _slip_pick(hname, aname):
-    """Lightweight analysis for the slip: schedules + the transparent model only."""
-    h = _resolve_team(hname)
-    a = _resolve_team(aname)
+def _slip_pick(hname, aname, league_hint=""):
+    """Lightweight analysis for the slip: schedules + the transparent model only.
+    Teams resolve across BOTH sports maps — today's slip may be NBA, not football."""
+    hint = (league_hint or "") + " " + (hname or "") + " " + (aname or "")
+    sports = (("basketball", "soccer") if re.search(r"\b(nba|wnba|basketball|lakers|knicks|cavaliers|wizards)\b", hint, re.I)
+              else ("soccer", "basketball"))
+    h = a = None
+    for sp in sports:
+        h = _resolve_team(hname, sp)
+        a = _resolve_team(aname, sp)
+        if h and a:
+            break
+        h = a = None
     if not h or not a:
         return None
     sport = "basketball" if (h[0] in _ESPN_BASKET_LEAGUES) else "soccer"
@@ -3719,7 +3728,7 @@ def sporty_slip(text):
     picks = []
     for m in cands[:6]:
         try:
-            pk = _slip_pick(m["home"], m["away"])
+            pk = _slip_pick(m["home"], m["away"], m.get("league") or "")
         except Exception:
             pk = None
         if pk:
