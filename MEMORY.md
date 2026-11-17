@@ -548,3 +548,11 @@
 - 'games today/tomorrow' → real fixture list (`_games_today`); 'analyze THE GAME tomorrow' (singular + verb) → clarifying question; 'python vs javascript' → stays silent (`saw_game` gate needs sport/intent words).
 - Trigger: `GAME_TRIGGER`/`GAME_VS` in auto_tools, mirrors the signal dispatch. Prompt doc added next to TRADE SIGNALS in index.html. TheSportsDB is NOT usable (test key 123 thin; eventshistory/lookuptable dead) — ESPN is the engine. Sofascore blocks (403).
 - Tests: canned `_espn_canned` fixtures (shared meeting ids for H2H), assert probs sum ~100, caps, silence on non-sport vs. Suite 954.
+
+
+## patch120 — live game feed (SHIPPED)
+
+- `live_games()`: scans ESPN scoreboards (16 soccer leagues + NBA/WNBA) → in-play (state 'in' with real clock/minute), just-finished, next-up. `_espn_get` now takes `ttl` (live path 45s); global `_LIVE_CACHE` throttle 20s protects ESPN from card polls.
+- Route `POST /api/games/live` (public scores, no tier gate). Trigger `LIVE_GAMES_RX` ("live games/scores", "games on now", "what's live", "in play"...) — fires tool `live`, BLOCKS the analysis path (`not _lgm`).
+- Client `liveScoreCard(x)`: chat card with 🔴 live / ✅ finished / 🕒 upcoming rows, auto-refreshes every 60s (max 90 pulls, stops when the card leaves the DOM). Hook on `x.tool==='live'` next to videoJobCard.
+- Honest empty state: 'Nothing is live right now' + next up. Suite 955.

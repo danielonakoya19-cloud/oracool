@@ -522,3 +522,46 @@ def test_patch119_game_analysis_is_real_and_honest(monkeypatch):
     assert not r3.get("ok") and r3.get("saw_game") is not True
     r4 = server.game_analyze("analyze the game tomorrow")
     assert not r4.get("ok") and r4.get("saw_game") is True and "which match" in r4.get("error", "").lower()
+
+
+def _espn_live_canned(url, timeout=11, ttl=1800):
+    if "scoreboard" in url and "eng.1" in url:
+        def ev(eid, hn, an, hs, as_, state, detail, clock, when):
+            return {"id": eid, "date": "2026-09-08T" + when + "Z", "league": {"name": "English Premier League"},
+                    "status": {"displayClock": clock, "type": {"state": state, "detail": detail, "description": detail}},
+                    "competitions": [{"competitors": [
+                        {"homeAway": "home", "team": {"displayName": hn}, "score": {"value": hs}},
+                        {"homeAway": "away", "team": {"displayName": an}, "score": {"value": as_}}]}]}
+        return {"events": [ev("l1", "Arsenal", "Chelsea", 2, 1, "in", "Second Half", "74'", "15:00"),
+                           ev("f1", "Leeds", "Villa", 3, 0, "post", "Final", "90:00", "12:00"),
+                           ev("p1", "Man City", "Fulham", None, None, "pre", "Scheduled", "", "19:00")]}
+    return {"events": []}
+
+
+def test_patch120_live_feed(monkeypatch):
+    monkeypatch.setattr(server, "_espn_get", _espn_live_canned)
+    monkeypatch.setattr(server, "_LIVE_CACHE", [0.0, None])
+    r = server.live_games()
+    assert r.get("ok") and r["counts"]["live"] == 1
+    m = r["live"][0]
+    assert m["home"] == "Arsenal" and m["hs"] == 2 and m["as"] == 1
+    assert m["clock"] == "74'" and "Second Half" in m["detail"]
+    assert r["finished"][0]["home"] == "Leeds" and r["upcoming"][0]["home"] == "Man City"
+    assert "auto-refreshes" in r["note"] or "auto-refresh" in r["note"]
+    # throttle: an immediate second call must NOT re-hit the feed
+    calls = []
+    def counted(url, timeout=11, ttl=1800):
+        calls.append(url)
+        return _espn_live_canned(url)
+    monkeypatch.setattr(server, "_espn_get", counted)
+    monkeypatch.setattr(server, "_LIVE_CACHE", [0.0, None])
+    server.live_games()
+    n = len(calls)
+    server.live_games()
+    assert len(calls) == n, "second call within 20s must be served from cache"
+    # "live games" fires the live tool and blocks the analysis path
+    monkeypatch.setattr(server, "_espn_get", _espn_live_canned)
+    monkeypatch.setattr(server, "_LIVE_CACHE", [0.0, None])
+    runs = server.auto_tools("live games", tier="enterprise", email="a@x.com", history=[])
+    assert any(x.get("tool") == "live" for x in runs)
+    assert not any(x.get("tool") == "game" for x in runs)

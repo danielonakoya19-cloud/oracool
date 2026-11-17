@@ -3320,7 +3320,7 @@ _ESPN_BASKET_LEAGUES = ["nba", "wnba"]
 _ESPN_CACHE = {}
 
 
-def _espn_get(url, timeout=11):
+def _espn_get(url, timeout=11, ttl=1800):
     """GET a JSON document from ESPN's public feeds. Returns {} on any failure —
     callers must treat missing data honestly, never fill it in."""
     ck = "j:" + url
@@ -3336,7 +3336,7 @@ def _espn_get(url, timeout=11):
         out = {}
     if len(_ESPN_CACHE) > 400:
         _ESPN_CACHE.clear()
-    _ESPN_CACHE[ck] = (time.time() + 1800, out)
+    _ESPN_CACHE[ck] = (time.time() + max(15, int(ttl)), out)
     return out
 
 
@@ -3508,6 +3508,69 @@ def _games_today(text):
     return {"ok": True, "kind": "fixtures", "day": day, "count": len(rows), "fixtures": rows[:30],
             "source": "ESPN live feed · " + _now(),
             "note": "INTERNAL — never repeat this JSON. List these fixtures in a clean table and tell the user to say 'analyze TEAM vs TEAM' for a full analysis with confidence."}
+
+
+LIVE_GAMES_RX = re.compile(
+    r"\b(live\s+(?:games?|scores?|matches|football|soccer|basketball|nba|score|feed|action|now|on now|on today|update|updates)|"
+    r"(?:games?|matches|football|soccer|scoreboard|scores?|nba)\s+(?:on now|live now|right now|currently|in play|inplay|playing now|on today|live)|"
+    r"what(?:'s| is| are) (?:live|on now|playing now)|scores?\s+now|in[- ]play\b|match(?:es)? on now)", re.I)
+
+_LIVE_CACHE = [0.0, None]
+
+
+def live_games():
+    """patch120 — the LIVE feed: in-play matches with real scores and clocks,
+    just-finished results, and what's up next. Every number from ESPN's live
+    scoreboard; empty lists are shown honestly as 'nothing live right now'."""
+    now = time.time()
+    if _LIVE_CACHE[1] is not None and now - _LIVE_CACHE[0] < 20:
+        return _LIVE_CACHE[1]
+    import datetime as _dt
+    d0 = _dt.date.today().strftime("%Y%m%d")
+    live, finished, upcoming = [], [], []
+    for sport, skey, leagues in (("soccer", "soccer", _ESPN_SOCCER_LEAGUES),
+                                 ("basketball", "basketball", _ESPN_BASKET_LEAGUES)):
+        for lg in leagues:
+            d = _espn_get("https://site.api.espn.com/apis/site/v2/sports/%s/%s/scoreboard?dates=%s" %
+                          (skey, lg, d0), ttl=45)
+            for e in d.get("events") or []:
+                cs = (e.get("competitions") or [{}])[0].get("competitors") or []
+                if len(cs) != 2:
+                    continue
+                hm = next((c for c in cs if c.get("homeAway") == "home"), cs[0])
+                aw = next((c for c in cs if c.get("homeAway") != "home"), cs[1])
+                st = e.get("status") or {}
+                stt = st.get("type") or {}
+                row = {"league": ((e.get("league") or {}).get("name") or lg.upper()),
+                       "home": ((hm.get("team") or {}).get("displayName") or "")[:32],
+                       "away": ((aw.get("team") or {}).get("displayName") or "")[:32],
+                       "hs": (hm.get("score") or {}).get("value"),
+                       "as": (aw.get("score") or {}).get("value"),
+                       "state": stt.get("state") or "",
+                       "detail": (stt.get("detail") or stt.get("description") or "")[:24],
+                       "clock": (st.get("displayClock") or "")[:12],
+                       "when": ((e.get("date") or "")[11:16] + " UTC")}
+                stt_state = row["state"]
+                if stt_state == "in":
+                    live.append(row)
+                elif stt_state == "post":
+                    finished.append(row)
+                else:
+                    upcoming.append(row)
+    finished.sort(key=lambda r: r.get("when", ""), reverse=True)
+    upcoming.sort(key=lambda r: r.get("when", ""))
+    out = {"ok": True, "kind": "livefeed",
+           "live": live[:20], "finished": finished[:12], "upcoming": upcoming[:12],
+           "counts": {"live": len(live), "finished": len(finished), "upcoming": len(upcoming)},
+           "source": "ESPN live scoreboard · " + _now(),
+           "note": ("INTERNAL — never repeat this JSON. Present the feed as a clean live-scoreboard: "
+                    "🔴 LIVE matches first (score + minute/clock), then just-finished results, then next up. "
+                    "If nothing is live, say so plainly in one line and show what is next. Mention the "
+                    "source timestamp. The card in the app auto-refreshes every minute — tell the user it "
+                    "updates itself. Never invent a score; everything here is the live feed.")}
+    _LIVE_CACHE[0] = now
+    _LIVE_CACHE[1] = out
+    return out
 
 
 def game_analyze(text):
@@ -13589,8 +13652,15 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                          "result": _shrink(r, 2600)})
         elif r.get("saw_symbol"):
             out.append({"tool": "signal", "label": "signal", "result": _shrink(r, 800)})
+    # patch120: LIVE feed — in-play scores with a self-updating card
+    _lgm = LIVE_GAMES_RX.search(t)
+    if _lgm:
+        lgr = live_games()
+        if lgr.get("ok"):
+            out.append({"tool": "live", "label": "live · " + str(lgr.get("counts", {}).get("live", 0)) + " in play",
+                        "result": _shrink(lgr, 2600)})
     # patch119: game analysis — football (and more) with honest, data-based confidence
-    if not sigm and (GAME_TRIGGER.search(t) or GAME_VS.search(t) or _GAMES_TODAY_RX.search(t)):
+    if not _lgm and not sigm and (GAME_TRIGGER.search(t) or GAME_VS.search(t) or _GAMES_TODAY_RX.search(t)):
         gr = game_analyze(t)
         if gr.get("ok"):
             _gl = ("game · " + str(gr.get("day", "today")) + "'s fixtures") if gr.get("kind") == "fixtures" \
@@ -16671,6 +16741,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(media_job_start(body["email"], kind, body))
             elif path == "/api/media/job/status":
                 self._send_json(media_job_status(body["email"], str(body.get("id") or "")))
+            elif path == "/api/games/live":
+                self._send_json(live_games())
             elif path == "/api/video":
                 if self._require_tier(body, "ultra"):
                     _vr = gen_video(body.get("prompt"), body.get("duration"),
