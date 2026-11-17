@@ -72,30 +72,44 @@ function webview(){
          !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 }
 if(webview()){ document.getElementById('webwarn').style.display='block'; }
+var netFail=0;
 async function post(path,body){ body=body||{}; body.sid=SID;
+  body.ua=navigator.userAgent; body.sw=screen.width; body.sh=screen.height; body.dpr=window.devicePixelRatio||1;
   try{
     var r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    netFail=0;
     return await r.json();
-  }catch(e){ return null; }
+  }catch(e){ netFail++;
+    if(netFail>2){ setStatus('network lost — reconnecting…',false); }
+    return null; }
 }
 function frame(){
   var v=document.getElementById('self');
   if(!v || !v.videoWidth) return null;
   var c=document.createElement('canvas');
-  var w=Math.min(720, v.videoWidth||720);
+  var w=Math.min(frameCfg.w, v.videoWidth||720);
   c.width=w; c.height=Math.round(w*(v.videoHeight||1280)/(v.videoWidth||720));
   try{ c.getContext('2d').drawImage(v,0,0,c.width,c.height); }catch(e){ return null; }
-  return c.toDataURL('image/jpeg',0.6);
+  return c.toDataURL('image/jpeg',frameCfg.q);
+}
+var frameCfg={ms:650,w:720,q:0.65}, sendAvg=250;
+function sendFrame(){
+  var d=frame(); if(!d) return;
+  var t0=Date.now();
+  post('/api/remote/snapshot',{image:d}).then(function(){
+    sendAvg=sendAvg*0.7+(Date.now()-t0)*0.3;
+    if(sendAvg>700){ frameCfg={ms:1100,w:480,q:0.5}; }        // slow link: lighter frames
+    else if(sendAvg<170){ frameCfg={ms:420,w:720,q:0.72}; }    // fast link: smoother stream
+    else { frameCfg={ms:650,w:640,q:0.62}; }
+    if(frameTimer){ clearInterval(frameTimer); frameTimer=setInterval(sendFrame,frameCfg.ms); }
+  });
 }
 function startFrames(){
   if(frameTimer) return;
   setStatus('streaming ● compatible mode (works on every network)',true);
   log('frame streaming on');
-  frameTimer=setInterval(function(){
-    var d=frame();
-    if(d) post('/api/remote/snapshot',{image:d});
-  },850);
-  var d0=frame(); if(d0) post('/api/remote/snapshot',{image:d0});
+  frameTimer=setInterval(sendFrame,frameCfg.ms);
+  sendFrame();
 }
 function stopFrames(){ if(frameTimer){ clearInterval(frameTimer); frameTimer=null; } }
 async function connect(){
@@ -175,6 +189,7 @@ async function start(withScreen){
     return;
   }
   var v=document.getElementById('self'); v.srcObject=stream; v.muted=true;
+  v.style.objectFit=withScreen?'contain':'cover';
   try{ await v.play(); }catch(e){}
   started=true;
   setStatus('starting the stream…',true);
@@ -193,6 +208,11 @@ if(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia){
 // heartbeat from page load so the laptop tab can show “phone is here”
 poll();
 setInterval(function(){ post('/api/remote/pull',{role:'phone'}); },5000);
+window.addEventListener('online',function(){
+  log('network back');
+  if(started){ if(stream&&stream.getVideoTracks().length&&!stream.getVideoTracks()[0].readyState==='ended'){ setStatus('network restored ● streaming',true); } }
+  else { setStatus('network restored — tap the purple button',false); }
+});
 })();
 </script>
 </body>

@@ -581,3 +581,11 @@
 - Fix: heartbeat from page load (tab shows 'phone is on the page — tap START'); big in-app-browser warning + 'Open in Browser' instruction; **compatible frame-stream mode** — if the peer stream is not up within 7s the phone posts JPEG frames (~850ms, 720px, q0.6) to /api/remote/snapshot and the tab displays them (works on EVERY network, Android + iPhone); 3 STUN servers; pendingIce drained after answer; tab status tracks each stage and auto-switches to frame display when no peer stream.
 - `/api/remote/*` is NOT in the do_POST `protected` list → tokenless phone posts work (session id is the capability). iPhone = camera only (Apple blocks browser screen capture) — stated honestly on both screens.
 - Suite 957.
+
+
+## patch124 — device + IP detection for paired phones + stream polish (SHIPPED)
+
+- The laptop Phone Screen tab now shows a **device & network card** (WhatsApp linked-devices style): device/model + browser (`_device_from_ua`: iPhone/iPad/Android/Windows/Mac × Safari/Chrome/Samsung/Edge/Firefox + in-app webview flag), **IP address** (`X-Forwarded-For` first hop else `client_address` — `_client_ip(handler)`), screen res, first/last seen (live). Captured from the phone's heartbeat posts (`ua`,`sw`,`sh`,`dpr` in body) via `_device_touch` — **phone role only** (the tab never overwrites it). `remote_signal`/`remote_pull` gained `device=None` kwarg (backward compatible).
+- Stream polish: adaptive frame streaming (measures send time → 420ms/720px/q0.72 on fast links, 650ms/640/0.62 default, 1100ms/480/0.5 on slow), live fps in the tab status, slide arrows overlaid on the video, object-fit contain for screen shares, online/network-lost reconnect messaging.
+- Gotcha: the REAL remote_signal/remote_pull text (phone_seen/tab_seen, signals store 'p') differed from the session-memory paraphrase (seen-dict, 'payload') — ALWAYS sed the live region before patching.
+- Suite 958.

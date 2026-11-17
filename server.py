@@ -3652,26 +3652,83 @@ def remote_new_session(owner=""):
             "note": "Scan the QR with the phone to pair. Camera or screen (where the phone browser supports screen capture) projects into the Phone Screen tab."}
 
 
-def remote_signal(sid, role, payload):
+def _device_from_ua(ua):
+    """patch124: identify the device that opens the pairing link (WhatsApp
+    linked-devices style) — platform, browser, in-app webview, model hint."""
+    ua = (ua or "")[:300]
+    if re.search(r"iP(hone|od)", ua): platform, kind = "iPhone", "phone"
+    elif re.search(r"iPad", ua): platform, kind = "iPad", "tablet"
+    elif re.search(r"Android", ua):
+        platform = "Android"
+        kind = "tablet" if re.search(r"Tablet|SM-T|Pad", ua) else "phone"
+    elif re.search(r"Windows", ua): platform, kind = "Windows", "computer"
+    elif re.search(r"Macintosh|Mac OS X", ua): platform, kind = "Mac", "computer"
+    else: platform, kind = "Unknown device", "device"
+    if re.search(r"SamsungBrowser", ua): browser = "Samsung Internet"
+    elif re.search(r"EdgA|EdgiOS|Edg/", ua): browser = "Edge"
+    elif re.search(r"OPR|Opera", ua): browser = "Opera"
+    elif re.search(r"FxiOS|Firefox", ua): browser = "Firefox"
+    elif re.search(r"CriOS|Chrome|Chromium", ua): browser = "Chrome"
+    elif re.search(r"Safari", ua): browser = "Safari"
+    else: browser = "Browser"
+    in_app = bool(re.search(r"Instagram|FBAN|FBAV|WhatsApp|Twitter|Line\/|Telegram|TikTok|Snapchat", ua))
+    model = ""
+    m = re.search(r"Android[^;)]*;\s*([^;)]+)", ua)
+    if m: model = m.group(1).strip()[:26]
+    return {"platform": platform, "browser": browser, "kind": kind,
+            "label": platform + " \u00b7 " + browser, "in_app": in_app, "model": model}
+
+
+def _client_ip(handler):
+    try:
+        xff = (handler.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        return xff or handler.client_address[0]
+    except Exception:
+        return ""
+
+
+def _device_touch(st, role, device):
+    """record the scanning device (phone side only) + its IP on the session"""
+    if role != "phone":
+        return
+    now = time.time()
+    d = st.get("device") or {}
+    dev = dict(device or {})
+    if dev.get("ip"): d["ip"] = dev["ip"]
+    for k in ("platform", "browser", "kind", "label", "model", "in_app", "screen"):
+        if dev.get(k): d[k] = dev[k]
+    if not d.get("label") and dev.get("ua"):
+        d.update({k: v for k, v in _device_from_ua(dev.get("ua", "")).items() if v})
+    d["last_seen"] = now
+    d.setdefault("first_seen", now)
+    st["device"] = d
+
+
+def remote_signal(sid, role, payload, device=None):
     st = _remote_session(sid)
     role = "phone" if str(role).lower().startswith("p") else "tab"
     st[role + "_seen"] = time.time()
+    if device is not None:
+        _device_touch(st, role, device)
     if payload:
         st["signals"].append({"role": role, "p": payload, "t": time.time()})
         st["signals"] = st["signals"][-40:]
     return {"ok": True}
 
 
-def remote_pull(sid, role):
+def remote_pull(sid, role, device=None):
     st = _remote_session(sid)
     role = "phone" if str(role).lower().startswith("p") else "tab"
     st[role + "_seen"] = time.time()
+    if device is not None:
+        _device_touch(st, role, device)
     mine = [x for x in st["signals"] if x["role"] != role]
     st["signals"] = [x for x in st["signals"] if x["role"] == role]
     cmds = st["cmds"] if role == "phone" else []
     st["cmds"] = [] if role == "phone" else st["cmds"]
     return {"ok": True, "signals": [x["p"] for x in mine], "cmds": cmds,
-            "peer": (st["tab_seen"] if role == "phone" else st["phone_seen"])}
+            "peer": (st["tab_seen"] if role == "phone" else st["phone_seen"]),
+            "device": dict(st.get("device") or {})}
 
 
 def remote_cmd(sid, cmd):
@@ -17275,9 +17332,17 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/remote/session":
                 self._send_json(remote_new_session(str(body.get("email") or "")))
             elif path == "/api/remote/signal":
-                self._send_json(remote_signal(str(body.get("sid") or ""), body.get("role"), body.get("payload")))
+                dev = _device_from_ua(str(body.get("ua") or "") or self.headers.get("User-Agent", ""))
+                if body.get("sw"):
+                    dev["screen"] = str(body.get("sw")) + "x" + str(body.get("sh") or "")
+                dev["ip"] = _client_ip(self)
+                self._send_json(remote_signal(str(body.get("sid") or ""), body.get("role"), body.get("payload"), dev))
             elif path == "/api/remote/pull":
-                self._send_json(remote_pull(str(body.get("sid") or ""), body.get("role")))
+                dev = _device_from_ua(str(body.get("ua") or "") or self.headers.get("User-Agent", ""))
+                if body.get("sw"):
+                    dev["screen"] = str(body.get("sw")) + "x" + str(body.get("sh") or "")
+                dev["ip"] = _client_ip(self)
+                self._send_json(remote_pull(str(body.get("sid") or ""), body.get("role"), dev))
             elif path == "/api/remote/cmd":
                 self._send_json(remote_cmd(str(body.get("sid") or ""), body.get("cmd")))
             elif path == "/api/remote/snapshot":

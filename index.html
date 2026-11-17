@@ -4924,6 +4924,8 @@ function renderPhone(){
             <div id="phWait" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
                  background:rgba(12,10,36,.72);color:#a9a3cf;font-size:13px;text-align:center;padding:18px">
               waiting for the phone stream…</div>
+            <button class="btn small" id="phPrev2" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);opacity:.85;font-size:17px;padding:9px 13px">◀</button>
+            <button class="btn small" id="phNext2" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);opacity:.85;font-size:17px;padding:9px 13px">▶</button>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
             <button class="btn small" id="phSnap">📸 Snapshot</button>
@@ -4932,6 +4934,9 @@ function renderPhone(){
             <button class="btn small" id="phPrev">◀ Prev</button>
             <button class="btn small" id="phNext">Next ▶</button>
             <button class="btn small ghost" id="phStop">⏹ Stop</button>
+          </div>
+          <div id="phDevice" style="margin-top:10px;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.35);border-radius:14px;padding:11px 14px;font-size:12px;line-height:1.9;color:#e9d5ff">
+            <b>📱 device &amp; network</b><div class="hint" style="margin:4px 0 0">waiting for the phone to open the link…</div>
           </div>
           <div class="hint" style="margin-top:8px">Works on <b>Android and iPhone</b>. iPhone shows the camera (Apple blocks
           screen capture in browsers); Android can share its real screen. Remote buttons control the shared view —
@@ -4949,6 +4954,21 @@ function renderPhone(){
     document.getElementById('phStop').onclick=()=>send('stop');
     document.getElementById('phNext').onclick=()=>send('next');
     document.getElementById('phPrev').onclick=()=>send('prev');
+    document.getElementById('phNext2').onclick=()=>send('next');
+    document.getElementById('phPrev2').onclick=()=>send('prev');
+    const fmtAgo=(ts)=>{ if(!ts) return '—'; const d=Math.round(Date.now()/1000-ts);
+      if(d<5) return 'just now'; if(d<60) return d+'s ago'; if(d<3600) return Math.round(d/60)+'m ago'; return Math.round(d/3600)+'h ago'; };
+    const devCard=(dev)=>{
+      const e=document.getElementById('phDevice'); if(!e) return;
+      if(!dev||!dev.label){ e.innerHTML='<b>📱 device &amp; network</b><div class="hint" style="margin:4px 0 0">waiting for the phone to open the link…</div>'; return; }
+      const rows=[
+        ['📱 device', (dev.model?dev.model+' — ':'')+(dev.label||'')+(dev.screen?(' · '+dev.screen+'px'):'')],
+        ['🌐 IP address', dev.ip||'— (hidden by your network)'],
+        ['👁 first seen', fmtAgo(dev.first_seen)+' · <b>last seen</b> '+fmtAgo(dev.last_seen)]
+      ];
+      if(dev.in_app) rows.push(['⚠️ note','opened inside another app — camera may be blocked there']);
+      e.innerHTML='<b>📱 device &amp; network</b>'+rows.map(r=>`<div><span class="hint" style="display:inline-block;min-width:96px">${r[0]}</span> ${r[1]}</div>`).join('');
+    };
     document.getElementById('phFull').onclick=()=>{ const v=document.getElementById('phoneVideo');
       const t=(v&&v.srcObject)?v:document.getElementById('phoneFrame'); if(t&&t.requestFullscreen) t.requestFullscreen(); };
     // ---- display: WebRTC peer stream when connected, frame stream otherwise ----
@@ -4978,6 +4998,7 @@ function renderPhone(){
             if(p.ice&&pc){ try{ await pc.addIceCandidate(p.ice); }catch(e){} }
           }
         }
+        if(r&&r.device) devCard(r.device);
         // phone presence → precise status
         if(r&&r.peer&&Date.now()/1000-r.peer<25&&!webrtcUp){
           showWait('phone is on the page — tap the purple <b>START</b> button there…');
@@ -4990,7 +5011,17 @@ function renderPhone(){
           if(q&&q.image){
             const im=document.getElementById('phoneFrame'), v=document.getElementById('phoneVideo');
             if(im){ im.src=q.image; im.style.display='block'; if(v) v.style.display='none'; }
-            hideWait(); st('● projecting (compatible mode — every network)','#67e8f9');
+            window._phFrames=(window._phFrames||0)+1;
+            hideWait();
+          }
+          if(!webrtcUp&&window._phFrames){
+            const now=Date.now();
+            if(!window._phFpsT) window._phFpsT=now;
+            if(now-window._phFpsT>5000){
+              const fps=Math.round(window._phFrames*1000/(now-window._phFpsT)*10)/10;
+              st('● projecting · compatible mode · ~'+fps+' fps · live','#67e8f9');
+              window._phFrames=0; window._phFpsT=now;
+            }
           }
         }
       }catch(e){}

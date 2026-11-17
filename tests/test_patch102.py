@@ -660,3 +660,22 @@ def test_patch122_selectivity_grading_and_remote(monkeypatch):
     assert got2["cmds"] == ["snap"]
     assert server.remote_snapshot(rs["sid"], "data:image/jpeg;base64,AAAA").get("ok")
     assert not server.remote_snapshot(rs["sid"], "x" * 3000000).get("ok")
+
+
+def test_patch124_device_and_ip_intel():
+    d = server._device_from_ua("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                               "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
+    assert d["platform"] == "iPhone" and d["browser"] == "Safari" and d["kind"] == "phone"
+    d = server._device_from_ua("Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 "
+                               "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+    assert d["platform"] == "Android" and d["browser"] == "Chrome" and "SM-S918B" in d["model"]
+    d = server._device_from_ua("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) [FBAN/FBIOS;FBAV/420.0]")
+    assert d["in_app"] is True
+    st = server._remote_session("devtest1")
+    server._device_touch(st, "phone", {"ua": "x", "label": "iPhone \u00b7 Safari",
+                                       "ip": "102.34.56.78", "screen": "390x844"})
+    assert st["device"]["ip"] == "102.34.56.78" and st["device"]["screen"] == "390x844"
+    r = server.remote_pull("devtest1", "tab")
+    assert r["device"]["ip"] == "102.34.56.78"      # tab sees the phone's identity
+    server._device_touch(st, "tab", {"label": "Mac \u00b7 Chrome", "ip": "1.2.3.4"})
+    assert st["device"]["ip"] == "102.34.56.78"     # tab side must not overwrite it
