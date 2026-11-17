@@ -3298,6 +3298,329 @@ def _win_label(minutes):
     return "last " + ("%.0f" % days) + " day" + ("s" if abs(days - 1) > 0.01 else "")
 
 
+# ==================== patch119: game analysis (football + more) ====================
+# Real match data (ESPN public feeds), transparent probability maths, and a
+# confidence level DERIVED from form margin and sample size — never invented.
+# The model refuses to guess: no data -> honest "cannot analyse", not a fake tip.
+
+GAME_TRIGGER = re.compile(
+    r"\b(analy[sz]e|analy[sz]ing|preview|predict|prediction|predictions|"
+    r"who (?:will|would|is going to )?win|who wins|what (?:are|is) the chance|"
+    r"chances? (?:of|for|to)|match ?analysis|game ?analysis|match ?preview|"
+    r"betting (?:tip|tips|analysis)|match ?break ?down|form check|scout)\b|"
+    r"\b(?:game|match|fixture)\b.{0,40}\b(?:analysis|preview|prediction|tips?|winner|confidence)\b",
+    re.I)
+GAME_VS = re.compile(r"\b([A-Za-z][A-Za-z0-9&.'\- ]{2,28}?)\s+(?:vs?\.?|versus)\s+([A-Za-z][A-Za-z0-9&.'\- ]{2,28})\b", re.I)
+_GAMES_TODAY_RX = re.compile(r"\b(?:games?|matches|fixtures)\s+(?:today|tonight|tomorrow|this week|on now|live now)\b|"
+                             r"\b(?:today|tonight|tomorrow)'?s?\s+(?:games?|matches|fixtures)\b", re.I)
+
+_ESPN_SOCCER_LEAGUES = ["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "por.1", "ned.1",
+                        "ucl", "eng.2", "mex.1", "bra.1", "arg.1", "usa.1", "tur.1", "bel.1", "sco.1"]
+_ESPN_BASKET_LEAGUES = ["nba", "wnba"]
+_ESPN_CACHE = {}
+
+
+def _espn_get(url, timeout=11):
+    """GET a JSON document from ESPN's public feeds. Returns {} on any failure —
+    callers must treat missing data honestly, never fill it in."""
+    ck = "j:" + url
+    hit = _ESPN_CACHE.get(ck)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    out = {}
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context()) as r:
+            out = json.loads(r.read(2000000).decode("utf-8", "replace"))
+    except Exception:
+        out = {}
+    if len(_ESPN_CACHE) > 400:
+        _ESPN_CACHE.clear()
+    _ESPN_CACHE[ck] = (time.time() + 1800, out)
+    return out
+
+
+def _norm_team(n):
+    n = (n or "").lower().strip()
+    n = re.sub(r"[^a-z0-9 ]+", " ", n)
+    n = re.sub(r"\b(fc|afc|cf|sc|ac|us|ssc|sv|rc|cd|the)\b", " ", n)
+    return re.sub(r"\s+", " ", n).strip()
+
+
+def _espn_team_map(sport="soccer"):
+    """name -> (league, team id, display) across the covered leagues. Cached 12h."""
+    ck = "tm:" + sport
+    hit = _ESPN_CACHE.get(ck)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    leagues = _ESPN_SOCCER_LEAGUES if sport == "soccer" else _ESPN_BASKET_LEAGUES
+    m = {}
+    for lg in leagues:
+        d = _espn_get("https://site.api.espn.com/apis/site/v2/sports/%s/%s/teams" %
+                      ("soccer" if sport == "soccer" else "basketball", lg))
+        for t in (d.get("sports") or [{}])[0].get("leagues", [{}])[0].get("teams", []):
+            tt = t.get("team") or {}
+            if tt.get("id") and tt.get("displayName"):
+                m[_norm_team(tt.get("displayName"))] = (lg, str(tt.get("id")), tt.get("displayName"))
+                short = _norm_team(tt.get("name") or tt.get("shortDisplayName") or "")
+                if short and short not in m:
+                    m[short] = (lg, str(tt.get("id")), tt.get("displayName"))
+    _ESPN_CACHE[ck] = (time.time() + 43200, m)
+    return m
+
+
+def _clean_ask(x):
+    """Strip command/noise words from a captured team name ('analyze the arsenal game' -> 'arsenal')."""
+    x = (x or "").strip()
+    for _ in range(3):
+        x2 = re.sub(r"^(?:please\s+|can you\s+|could you\s+)?"
+                    r"(?:analy[sz]e|analyse|analy[sz]ing|preview|predict|prediction|check|scout|watch|rate|assess|evaluate|"
+                    r"tell me|show me|give me|the|a|an|and|for|about|on|of|so|now|today'?s?|tonight'?s?|tomorrow'?s?|"
+                    r"upcoming|next|big|important|game|match)\s+", "", x, flags=re.I)
+        x2 = re.sub(r"\s+(?:game|match|fixture|tonight|today|tomorrow|please|now|analysis|preview|prediction|winner)\s*$",
+                    "", x2, flags=re.I)
+        if x2 == x:
+            break
+        x = x2
+    return x.strip(" .,:!?")
+
+
+def _resolve_team(name, sport="soccer"):
+    m = _espn_team_map(sport)
+    key = _norm_team(name)
+    if key in m:
+        return m[key]
+    for k, v in m.items():
+        if key and (k.startswith(key) or key.startswith(k) or (len(key) > 4 and key in k)):
+            return v
+    return None
+
+
+def _team_record(events, team_id):
+    """Form + scoring record from the team's own schedule (finished matches only)."""
+    rec = {"played": 0, "w": 0, "d": 0, "l": 0, "gf": 0, "ga": 0, "form": [], "matches": []}
+    for e in events or []:
+        comp = (e.get("competitions") or [{}])[0]
+        cs = comp.get("competitors") or []
+        if len(cs) != 2:
+            continue
+        done = bool((e.get("status") or {}).get("type", {}).get("completed"))
+        me = next((c for c in cs if str(c.get("id")) == str(team_id)), None)
+        opp = next((c for c in cs if str(c.get("id")) != str(team_id)), None)
+        if not me or not opp:
+            continue
+        sc_m = (me.get("score") or {}).get("value")
+        sc_o = (opp.get("score") or {}).get("value")
+        if not done or sc_m is None or sc_o is None:
+            continue
+        try:
+            sc_m = int(float(sc_m)); sc_o = int(float(sc_o))
+        except Exception:
+            continue
+        rec["played"] += 1
+        rec["gf"] += sc_m; rec["ga"] += sc_o
+        res = "W" if sc_m > sc_o else ("D" if sc_m == sc_o else "L")
+        rec["w" if res == "W" else ("d" if res == "D" else "l")] += 1
+        rec["form"].append(res)
+        rec["matches"].append({"date": (e.get("date") or "")[:10],
+                               "opponent": (opp.get("team") or {}).get("displayName") or "",
+                               "score": str(sc_m) + "-" + str(sc_o), "result": res,
+                               "home_away": me.get("homeAway") or "",
+                               "event_id": str(e.get("id") or "")})
+    return rec
+
+
+def _standings_row(league, sport, team_id):
+    base = "https://site.api.espn.com/apis/v2/sports/%s/%s/standings" % ("soccer" if sport == "soccer" else "basketball", league)
+    d = _espn_get(base)
+    for child in d.get("children") or [{}]:
+        for e in (child.get("standings") or {}).get("entries") or []:
+            if str((e.get("team") or {}).get("id")) == str(team_id):
+                st = {i.get("name"): i.get("value") for i in e.get("stats") or []}
+                return {"rank": st.get("rank") or st.get("playoffSeed"),
+                        "played": st.get("gamesPlayed"), "wins": st.get("wins"),
+                        "draws": st.get("ties"), "losses": st.get("losses"),
+                        "gd": st.get("pointDifferential") or st.get("pointsDifference"),
+                        "points": st.get("points")}
+    return None
+
+
+def _game_model(rec_h, rec_a):
+    """Transparent, documented model — every number in the output comes from here.
+    strength = 0.6 * PPG/3 + 0.4 * clamp(GD per game / 2, -1, 1); home edge +0.18;
+    draw band shrinks as the edge grows. No hidden weights, no vibes."""
+    def strength(r):
+        if not r["played"]:
+            return 0.5
+        ppg = (r["w"] * 3 + r["d"]) / r["played"]
+        gdpg = (r["gf"] - r["ga"]) / max(1, r["played"])
+        return 0.6 * (ppg / 3.0) + 0.4 * max(-1.0, min(1.0, gdpg / 2.0))
+    s_h, s_a = strength(rec_h), strength(rec_a)
+    edge = s_h - s_a + 0.18
+    p_h_raw = 1.0 / (1.0 + pow(2.718281828, -2.8 * edge))
+    d_p = max(0.12, min(0.32, 0.30 - 0.10 * abs(edge)))
+    p_h = round((1 - d_p) * p_h_raw * 100)
+    p_a = round((1 - d_p) * (1 - p_h_raw) * 100)
+    p_d = 100 - p_h - p_a
+    n = min(rec_h["played"], rec_a["played"])
+    if p_h >= p_a and p_h >= p_d:
+        pick, margin = "HOME WIN", p_h / 100.0
+    elif p_a >= p_h and p_a >= p_d:
+        pick, margin = "AWAY WIN", p_a / 100.0
+    else:
+        pick, margin = "DRAW", p_d / 100.0
+    conf = int(round(50 + 62 * (2 * margin - 1)))
+    conf = max(42, min(84, conf))
+    basis = ("confidence = form margin (PPG + goal difference) mapped through the probability "
+             "model, over the last " + str(max(rec_h["played"], rec_a["played"])) + " finished matches")
+    if n < 5:
+        conf = min(conf, 60)
+        basis += " — SMALL SAMPLE (fewer than 5 finished matches), confidence capped at 60"
+    if pick == "DRAW":
+        conf = min(conf, 60)
+        basis += " — draws are the least predictable outcome, capped at 60"
+    basis += "; hard cap 84 — upsets always happen."
+    return {"p_home": p_h, "p_draw": p_d, "p_away": p_a, "pick": pick,
+            "confidence_pct": conf, "confidence_basis": basis,
+            "strength_home": round(s_h, 3), "strength_away": round(s_a, 3)}
+
+
+def _games_today(text):
+    day = "today"
+    if re.search(r"tomorrow", text, re.I):
+        day = "tomorrow"
+    import datetime as _dt
+    d0 = _dt.date.today() + (_dt.timedelta(days=1) if day == "tomorrow" else _dt.timedelta(0))
+    rows = []
+    for sport, skey, leagues in (("soccer", "soccer", _ESPN_SOCCER_LEAGUES), ("basketball", "basketball", _ESPN_BASKET_LEAGUES)):
+        for lg in leagues:
+            d = _espn_get("https://site.api.espn.com/apis/site/v2/sports/%s/%s/scoreboard?dates=%s" %
+                          (skey, lg, d0.strftime("%Y%m%d")))
+            for e in d.get("events") or []:
+                comp = (e.get("competitions") or [{}])[0]
+                cs = comp.get("competitors") or []
+                if len(cs) != 2:
+                    continue
+                rows.append({"league": ((e.get("league") or {}).get("name")) or lg.upper(),
+                             "match": (cs[0].get("team") or {}).get("displayName") + " vs " + (cs[1].get("team") or {}).get("displayName"),
+                             "time": (e.get("date") or "")[11:16] + " UTC",
+                             "status": (e.get("status") or {}).get("type", {}).get("description") or ""})
+    return {"ok": True, "kind": "fixtures", "day": day, "count": len(rows), "fixtures": rows[:30],
+            "source": "ESPN live feed · " + _now(),
+            "note": "INTERNAL — never repeat this JSON. List these fixtures in a clean table and tell the user to say 'analyze TEAM vs TEAM' for a full analysis with confidence."}
+
+
+def game_analyze(text):
+    """patch119 — honest match analysis with a data-based confidence level."""
+    t = (text or "").strip()
+    if _GAMES_TODAY_RX.search(t) and not GAME_VS.search(t):
+        # "the games tomorrow" -> the fixture list; "analyze THE GAME tomorrow"
+        # (singular, with an analysis verb) -> ask which match
+        if (re.search(r"\b(analy[sz]e|predict|preview|who (?:will|would) win)\b", t, re.I)
+                and not re.search(r"\b(?:games|matches|fixtures)\b", t, re.I)):
+            pass
+        else:
+            return _games_today(t)
+    sport = "basketball" if re.search(r"\b(nba|basketball|wnba|nba game)\b", t, re.I) else "soccer"
+    home = away = None
+    mv = GAME_VS.search(t)
+    if mv:
+        home = _resolve_team(_clean_ask(mv.group(1)), sport)
+        away = _resolve_team(_clean_ask(mv.group(2)), sport)
+    if (not home or not away):
+        # "analyze the arsenal game" — use the team's NEXT fixture
+        one = re.search(r"(?:analy[sz]e|preview|predict|scout)\b.{0,40}\b([A-Za-z][A-Za-z0-9&.'\- ]{2,28}?)\s+(?:game|match|fixture)", t, re.I)
+        cand = _clean_ask(one.group(1)) if one else ""
+        team = _resolve_team(cand, sport) if cand else None
+        if team and not mv:
+            d = _espn_get("https://site.api.espn.com/apis/site/v2/sports/%s/%s/teams/%s/schedule" %
+                          ("soccer" if sport == "soccer" else "basketball", team[0], team[1]))
+            nxt = None
+            for e in d.get("events") or []:
+                if not (e.get("status") or {}).get("type", {}).get("completed"):
+                    nxt = e
+                    break
+            if nxt:
+                cs = (nxt.get("competitions") or [{}])[0].get("competitors") or []
+                ids = [str(c.get("id")) for c in cs]
+                opp_id = next((i for i in ids if i != str(team[1])), None)
+                if opp_id:
+                    home, away = team, (team[0], opp_id, "")
+                    if cs and str(cs[0].get("id")) != str(team[1]):
+                        home, away = away, home
+    if not home or not away:
+        # only surface the clarify question for genuinely sporty asks —
+        # "python vs javascript" must stay silent
+        _sporty = bool(GAME_TRIGGER.search(t) or re.search(
+            r"\b(game|games|match|matches|fixture|fixtures|football|soccer|fifa|nba|basketball|wnba|"
+            r"premier league|epl|la liga|serie a|bundesliga|ligue 1|champions league|ucl|world cup|league|cup final)\b",
+            t, re.I))
+        return {"ok": False, "saw_game": _sporty,
+                "error": "Tell me which match to analyse — for example 'analyze Arsenal vs Chelsea' or 'games today'."}
+    try:
+        sh = _espn_get("https://site.api.espn.com/apis/site/v2/sports/%s/%s/teams/%s/schedule" %
+                       ("soccer" if sport == "soccer" else "basketball", home[0], home[1]))
+        sa = _espn_get("https://site.api.espn.com/apis/site/v2/sports/%s/%s/teams/%s/schedule" %
+                       ("soccer" if sport == "soccer" else "basketball", away[0], away[1]))
+        eh = sh.get("events") or []
+        ea = sa.get("events") or []
+        rec_h = _team_record(eh, home[1])
+        rec_a = _team_record(ea, away[1])
+        st_h = _standings_row(home[0], sport, home[1])
+        st_a = _standings_row(away[0], sport, away[1])
+        # H2H: meetings recorded on either team's schedule
+        h2h_ids = {}
+        for e in list(eh) + list(ea):
+            comp = (e.get("competitions") or [{}])[0]
+            cs = comp.get("competitors") or []
+            ids = {str(c.get("id")) for c in cs}
+            if str(home[1]) in ids and str(away[1]) in ids and e.get("id"):
+                h2h_ids[str(e["id"])] = e
+        h2h = {"meetings": 0, "home_wins": 0, "draws": 0, "away_wins": 0, "recent": []}
+        for e in sorted(h2h_ids.values(), key=lambda x: str(x.get("date") or ""), reverse=True)[:6]:
+            cs = (e.get("competitions") or [{}])[0].get("competitors") or []
+            hm = next((c for c in cs if str(c.get("id")) == str(home[1])), None)
+            aw = next((c for c in cs if str(c.get("id")) == str(away[1])), None)
+            if not hm or not aw:
+                continue
+            try:
+                shs, sas = int(float((hm.get("score") or {}).get("value") or 0)), int(float((aw.get("score") or {}).get("value") or 0))
+            except Exception:
+                continue
+            if not (e.get("status") or {}).get("type", {}).get("completed"):
+                continue
+            h2h["meetings"] += 1
+            h2h["home_wins" if shs > sas else ("draws" if shs == sas else "away_wins")] += 1
+            h2h["recent"].append((e.get("date") or "")[:10] + ": " + home[2] + " " + str(shs) + "-" + str(sas) + " " + away[2])
+        m = _game_model(rec_h, rec_a)
+        reasons = []
+        reasons.append(home[2] + " form (last " + str(rec_h["played"]) + "): " + ("".join(rec_h["form"][-5:]) or "n/a") +
+                       " · " + ("%.1f" % (((rec_h["w"] * 3 + rec_h["d"]) / rec_h["played"]) if rec_h["played"] else 0)) + " pts/game, GD " + str(rec_h["gf"] - rec_h["ga"]))
+        reasons.append(away[2] + " form (last " + str(rec_a["played"]) + "): " + ("".join(rec_a["form"][-5:]) or "n/a") +
+                       " · " + ("%.1f" % (((rec_a["w"] * 3 + rec_a["d"]) / rec_a["played"]) if rec_a["played"] else 0)) + " pts/game, GD " + str(rec_a["gf"] - rec_a["ga"]))
+        if st_h:
+            reasons.append(home[2] + " table: #" + str(st_h.get("rank")) + " · " + str(st_h.get("points")) + " pts" + (" · GD " + str(st_h.get("gd")) if st_h.get("gd") is not None else ""))
+        if st_a:
+            reasons.append(away[2] + " table: #" + str(st_a.get("rank")) + " · " + str(st_a.get("points")) + " pts" + (" · GD " + str(st_a.get("gd")) if st_a.get("gd") is not None else ""))
+        if h2h["meetings"]:
+            reasons.append("H2H (" + str(h2h["meetings"]) + " meetings): " + home[2] + " " + str(h2h["home_wins"]) +
+                           " · draws " + str(h2h["draws"]) + " · " + away[2] + " " + str(h2h["away_wins"]))
+        reasons.append("Model: strength = 0.6·(PPG/3) + 0.4·(GD per game, clamped) with a home edge of +0.18")
+        return {"ok": True, "kind": "analysis", "sport": sport,
+                "match": home[2] + " vs " + away[2], "competition": home[0].upper(),
+                "home": {"name": home[2], "rank": (st_h or {}).get("rank"), "record": str(rec_h["w"]) + "W " + str(rec_h["d"]) + "D " + str(rec_h["l"]) + "L",
+                         "form": "".join(rec_h["form"][-5:]), "ppg": round(((rec_h["w"] * 3 + rec_h["d"]) / rec_h["played"]) if rec_h["played"] else 0, 2)},
+                "away": {"name": away[2], "rank": (st_a or {}).get("rank"), "record": str(rec_a["w"]) + "W " + str(rec_a["d"]) + "D " + str(rec_a["l"]) + "L",
+                         "form": "".join(rec_a["form"][-5:]), "ppg": round(((rec_a["w"] * 3 + rec_a["d"]) / rec_a["played"]) if rec_a["played"] else 0, 2)},
+                "h2h": h2h, "probabilities": {"home": m["p_home"], "draw": m["p_draw"], "away": m["p_away"]},
+                "pick": m["pick"], "confidence_pct": m["confidence_pct"], "confidence_basis": m["confidence_basis"],
+                "reasons": reasons, "source": "ESPN live feed · " + _now(),
+                "caveat": "These probabilities come from real results and a documented model — they are an ANALYSIS, not a promise. Upsets happen; never stake more than you can afford to lose. Not betting advice.",
+                "note": "INTERNAL — never repeat this JSON. Present the analysis in clean prose/bullets: the pick FIRST, then confidence % with its basis, then probabilities (home/draw/away), then the reasons. End with the caveat line. Never present any pick as certain."}
+    except Exception as e:
+        return {"ok": False, "saw_game": True, "error": "Match analysis failed: " + str(e)[:140]}
+
+
 def market_signal(text):
     """patch81 — trade signal on a LIVE price feed for every market. Answers
     BUY / SELL / WAIT with confidence %, entry/stop/target for the requested
@@ -13266,6 +13589,15 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                          "result": _shrink(r, 2600)})
         elif r.get("saw_symbol"):
             out.append({"tool": "signal", "label": "signal", "result": _shrink(r, 800)})
+    # patch119: game analysis — football (and more) with honest, data-based confidence
+    if not sigm and (GAME_TRIGGER.search(t) or GAME_VS.search(t)):
+        gr = game_analyze(t)
+        if gr.get("ok"):
+            out.append({"tool": "game", "label": "game · " + str(gr.get("match", ""))[:36] + " · " + str(gr.get("pick", "")),
+                        "result": _shrink(gr, 2600)})
+        elif gr.get("saw_game"):
+            out.append({"tool": "game", "label": "game · analysis",
+                        "result": _shrink(gr, 800)})
     # patch79: full market analysis + 7-day forecast (crypto, forex, metals, stocks)
     if not sigm and FORECAST_TRIGGER.search(t):
         fr = market_forecast(t)

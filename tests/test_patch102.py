@@ -460,3 +460,65 @@ def test_patch118_media_hygiene_and_bots_removed(monkeypatch):
     # route layer: exercise the same guard the dispatch uses
     assert server._disk_janitor  # callable
     server._disk_janitor(force=True)  # must never raise
+
+
+def _espn_canned(url):
+    """Canned ESPN responses for the game-analysis tests (no network)."""
+    if "/teams?" in url or url.endswith("/teams"):
+        teams = [{"team": {"id": "359", "displayName": "Arsenal", "name": "Arsenal"}},
+                 {"team": {"id": "363", "displayName": "Chelsea", "name": "Chelsea"}}]
+        return {"sports": [{"leagues": [{"teams": teams}]}]}
+    if "/standings" in url:
+        return {"children": [{"standings": {"entries": [
+            {"team": {"id": "359", "displayName": "Arsenal"},
+             "stats": [{"name": "rank", "value": 1}, {"name": "gamesPlayed", "value": 10}, {"name": "wins", "value": 9},
+                       {"name": "ties", "value": 0}, {"name": "losses", "value": 1}, {"name": "pointDifferential", "value": 10},
+                       {"name": "points", "value": 27}]},
+            {"team": {"id": "363", "displayName": "Chelsea"},
+             "stats": [{"name": "rank", "value": 8}, {"name": "gamesPlayed", "value": 10}, {"name": "wins", "value": 4},
+                       {"name": "ties", "value": 2}, {"name": "losses", "value": 4}, {"name": "pointDifferential", "value": -1},
+                       {"name": "points", "value": 14}]}]}}]}
+    def ev(eid, hid, hname, aid, aname, hg, ag):
+        return {"id": eid, "date": "2026-09-05", "status": {"type": {"completed": True}},
+                "competitions": [{"competitors": [
+                    {"id": hid, "homeAway": "home", "score": {"value": hg}, "team": {"displayName": hname}},
+                    {"id": aid, "homeAway": "away", "score": {"value": ag}, "team": {"displayName": aname}}]}]}
+    # three shared meetings (same ids on both schedules) + seven unique per team
+    meetings = [ev("m1", "359", "Arsenal", "363", "Chelsea", 2, 1),
+                ev("m2", "363", "Chelsea", "359", "Arsenal", 1, 2),
+                ev("m3", "359", "Arsenal", "363", "Chelsea", 2, 1)]
+    if "/teams/359/schedule" in url:
+        others = [ev("a%d" % i, "359", "Arsenal", "x%d" % i, "Team %d" % i, 2, 0) for i in range(6)]
+        others[0] = ev("a0", "359", "Arsenal", "x0", "Team 0", 0, 1)   # one loss
+        return {"events": meetings + others}
+    if "/teams/363/schedule" in url:
+        others = [ev("c%d" % i, "c%d" % i, "Team C%d" % i, "363", "Chelsea", 2, 1) for i in range(7)]
+        others[0] = ev("c0", "c0", "Team C0", "363", "Chelsea", 0, 1)  # one win
+        return {"events": meetings + others}
+    return {}
+
+
+def test_patch119_game_analysis_is_real_and_honest(monkeypatch):
+    monkeypatch.setattr(server, "_espn_get", _espn_canned)
+    monkeypatch.setitem(server._ESPN_CACHE, "tm:soccer", (9e12, {
+        "arsenal": ("eng.1", "359", "Arsenal"), "chelsea": ("eng.1", "363", "Chelsea")}))
+    r = server.game_analyze("analyze the arsenal vs chelsea game")
+    assert r.get("ok") and r.get("pick") in ("HOME WIN", "AWAY WIN", "DRAW")
+    pr = r["probabilities"]
+    assert 95 <= pr["home"] + pr["draw"] + pr["away"] <= 105
+    assert r["pick"] == "HOME WIN" and pr["home"] > pr["away"]   # 9W vs 4W canned form
+    assert 42 <= r["confidence_pct"] <= 84                        # honest hard cap
+    assert "hard cap 84" in r["confidence_basis"] and r.get("caveat")
+    assert r["home"]["form"].endswith("W") and r["h2h"]["meetings"] == 3
+    assert any("27" in x for x in r["reasons"])                   # real table points quoted
+    # small sample -> confidence capped at 60
+    empty = {"events": []}
+    monkeypatch.setattr(server, "_espn_get", lambda u, timeout=11: empty)
+    r2 = server.game_analyze("predict arsenal vs chelsea")
+    assert r2.get("ok") and r2["confidence_pct"] <= 60
+    # non-sport "vs" never hijacks; an unclear game ask gets ONE clarifying error
+    monkeypatch.setattr(server, "_espn_get", _espn_canned)
+    r3 = server.game_analyze("python vs javascript which is better")
+    assert not r3.get("ok") and r3.get("saw_game") is not True
+    r4 = server.game_analyze("analyze the game tomorrow")
+    assert not r4.get("ok") and r4.get("saw_game") is True and "which match" in r4.get("error", "").lower()

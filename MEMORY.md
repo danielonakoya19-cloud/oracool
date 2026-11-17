@@ -539,3 +539,12 @@
 - **Community bots REMOVED** per user: 🤖 Bots button gone from Community nav, BOTS prompt sentences gone (client+server), feature-table row gone, /api/community bots/create|program|token|update|delete return "Community bots were removed". test_patch64 retargeted to pin the removal.
 - **Disk janitor** `_disk_janitor()` (hourly gate, runs from media_record): media >21d or >1.1GB total (oldest first), generated >7d, uploads >30d, builds >45d.
 - Gotcha: inserting code with python triple-quoted strings eats \" escapes (patch117 lesson) — prefer edit_file.
+
+
+## patch119 — game analysis with honest confidence (SHIPPED)
+
+- `game_analyze(text)`: football + basketball on LIVE ESPN feeds (`site.api.espn.com` — scoreboard, team schedules, standings; no key needed). Resolves teams across 16 soccer leagues + NBA/WNBA via a cached team map (`_espn_team_map`, 12h); `_clean_ask` strips command words from captures.
+- Transparent model (in `_game_model`): strength = 0.6·(PPG/3) + 0.4·clamp(GDpg/2), home edge +0.18, logistic, draw band 0.12–0.32. Confidence = 50 + 62·(2p−1), hard cap 84, small sample (<5 games) cap 60, draws cap 60 — basis string explains all of it. Output includes probabilities (H/D/A), pick, confidence + basis, form, table, H2H, caveat ("analysis, not a promise; not betting advice").
+- 'games today/tomorrow' → real fixture list (`_games_today`); 'analyze THE GAME tomorrow' (singular + verb) → clarifying question; 'python vs javascript' → stays silent (`saw_game` gate needs sport/intent words).
+- Trigger: `GAME_TRIGGER`/`GAME_VS` in auto_tools, mirrors the signal dispatch. Prompt doc added next to TRADE SIGNALS in index.html. TheSportsDB is NOT usable (test key 123 thin; eventshistory/lookuptable dead) — ESPN is the engine. Sofascore blocks (403).
+- Tests: canned `_espn_canned` fixtures (shared meeting ids for H2H), assert probs sum ~100, caps, silence on non-sport vs. Suite 954.
