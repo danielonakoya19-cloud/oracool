@@ -30,6 +30,8 @@ border-radius:14px;padding:12px 14px;font-size:12.5px;color:#fde68a;line-height:
 </head>
 <body>
 <h1>📱 Phone Projection</h1>
+<div class="sub" style="margin-top:4px">pairing code: <b style="color:#67e8f9;font-size:15px" id="pairCode">----</b>
+ — it must match the code on the laptop</div>
 <div class="sub">Your camera — or your screen where your browser allows it — appears
 <b>live inside the OraCool tab</b> on your laptop. Keep this page open.</div>
 
@@ -65,6 +67,7 @@ Chrome/Safari. Then tap the purple button below.</div>
     <button class="ghost" id="stopBtn">⏹ Stop</button>
   </div>
   <div class="hint" style="margin-top:6px">📍 Live location shares this phone's GPS movement with your Intel → Geolocate → Movement watch. Only devices that choose to share can be watched.</div>
+  <div id="diag" style="font-size:11px;color:#67e8f9;margin-top:8px;min-height:15px"></div>
   <div class="log" id="log"></div>
 </div>
 
@@ -87,6 +90,8 @@ var pc=null, dc=null, stream=null, facing="environment";
 var rtcReady=false, frameTimer=null, pendingIce=[], started=false;
 function log(m){ var l=document.getElementById('log'); if(l){ l.textContent=(m+'\n'+l.textContent).slice(0,300); } }
 function setStatus(t,on){ var s=document.getElementById('status'); if(s){ s.textContent=t; s.className=on?'on':''; } }
+function diag(m){ var e=document.getElementById('diag'); if(e) e.textContent=m; }
+try{ document.getElementById('pairCode').textContent=String(SID).slice(-4).toUpperCase(); }catch(e){}
 function escapeHtml(x){ return String(x==null?'':x).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function webview(){
@@ -131,6 +136,7 @@ function sendFrame(){
 }
 function startFrames(){
   if(frameTimer) return;
+  diag('3 · sending picture to the laptop (compatible mode)…');
   setStatus(window._sharing
     ? 'streaming ● keep this tab in the foreground — background pages cannot send frames'
     : 'streaming ● compatible mode (works on every network)',true);
@@ -165,7 +171,7 @@ async function connect(){
   pc.onicecandidate=function(e){ if(e.candidate){ post('/api/remote/signal',{role:'phone',payload:{ice:e.candidate}}); } };
   pc.oniceconnectionstatechange=function(){
     var st=(pc&&pc.iceConnectionState)||'';
-    if(st==='connected'||st==='completed'){ rtcReady=true; stopFrames(); setStatus('projecting ● live peer stream',true); }
+    if(st==='connected'||st==='completed'){ rtcReady=true; stopFrames(); diag('4 · live peer stream connected (smooth)'); setStatus('projecting ● live peer stream',true); }
     else if(st==='failed'||st==='disconnected'){ if(!frameTimer) startFrames(); }
   };
   try{
@@ -213,25 +219,47 @@ function stopAll(){
 }
 async function start(withScreen){
   if(started){ stopAll(); await new Promise(function(r){ setTimeout(r,250); }); }
+  diag('1 · asking the phone for permission…');
+  var errName='';
   try{
     if(withScreen){
-      if(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia){
-        stream=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:24,max:30}},audio:false});
-      } else {
+      if(!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)){
         setStatus('screen share needs Chrome — see the yellow box above',false);
         document.getElementById('screenHelp').style.display='block';
+        diag('this browser has no screen-capture — use Chrome');
         return;
       }
+      try{
+        stream=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:24,max:30}},audio:false});
+      }catch(e1){
+        errName=(e1&&e1.name)||'';
+        if(errName==='NotAllowedError'||errName==='AbortError'){ throw e1; }   // user cancelled — do not retry
+        diag('retrying with basic screen capture…');
+        stream=await navigator.mediaDevices.getDisplayMedia({video:true});    // plain fallback: many Android browsers reject constraints
+      }
     } else if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
-      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:640},height:{ideal:480},frameRate:{ideal:24,max:30}},audio:false});
+      try{
+        stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:640},height:{ideal:480},frameRate:{ideal:24,max:30}},audio:false});
+      }catch(e1){
+        errName=(e1&&e1.name)||'';
+        if(errName==='NotAllowedError'||errName==='AbortError'){ throw e1; }
+        stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing},audio:false});
+      }
     } else {
       setStatus('this browser cannot use the camera — open in Chrome or Safari',false);
       document.getElementById('webwarn').style.display='block';
       return;
     }
   }catch(e){
-    setStatus('permission needed — tap the button and ALLOW the camera',false);
-    document.getElementById('webwarn').style.display='block';
+    errName=(e&&e.name)||errName||'error';
+    if(errName==='NotAllowedError'||errName==='AbortError'){
+      setStatus(withScreen?'screen share cancelled — tap the button and press "Start now"'
+                          :'camera permission needed — tap the button and ALLOW',false);
+    } else {
+      setStatus((withScreen?'screen share failed (':'camera failed (')+errName+') — tap ⏹ Stop, then try again',false);
+    }
+    if(withScreen) document.getElementById('screenHelp').style.display='block';
+    diag('failed: '+errName);
     return;
   }
   var v=document.getElementById('self'); v.srcObject=stream; v.muted=true;
@@ -239,10 +267,13 @@ async function start(withScreen){
   window._sharing=!!withScreen;
   try{ await v.play(); }catch(e){}
   started=true;
+  diag('2 · stream acquired ('+((stream.getTracks()||[]).length)+' track) — starting projection…');
   setStatus(withScreen?'sharing your whole screen — look at the laptop now…':'starting the stream…',true);
+  // PROJECTION FIRST: frames start flowing to the laptop within ~1 second no
+  // matter what; the fast peer stream takes over when it connects.
+  startFrames();
+  sendFrame();
   connect();
-  // heartbeat: the laptop tab sees the phone immediately, even before the stream
-  var d0=frame(); if(d0) setTimeout(function(){ post('/api/remote/snapshot',{image:d0}); },400);
 }
 document.getElementById('startCam').onclick=function(){ start(false); };
 document.getElementById('startScreen').onclick=function(){ start(true); };

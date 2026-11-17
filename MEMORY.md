@@ -615,3 +615,10 @@
 - Cause 2 (lag): user got the ~1.5fps compatible frame stream because WebRTC failed across networks (STUN-only). Fix: **free TURN relay (openrelay.metered.ca, creds openrelayproject)** added to BOTH sides (phone + tab pcNew) — calls already had it (`callIceServers`); plus bitrate cap 1.2 Mbps via sender params, camera constraints 640×480@24 ideal, screen share 24fps; frame mode cadence pushed: fast <120ms→300ms/480px/q0.6 (~3fps), 250ms tier, default 700ms/440, slow 1000ms/400.
 - Gotcha (repeat of patch122): non-greedy regex `function callIceServers(){[\s\S]*?\n}` matched the INNER `}` and clobbered half the fn — restore from `git show <sha>:index.html` when breaking; NEVER regex-replace multi-brace functions — anchor on unique full blocks.
 - Suite 959.
+
+
+## patch128 — screen-share tap that NEVER fails silently (SHIPPED)
+
+- User: tapped 'SHARE MY SCREEN' on Android → nothing projected. Root-cause chain: (1) `getDisplayMedia({video:{frameRate:{max:30}}})` throws **OverconstrainedError** on many Android browsers → old catch showed 'ALLOW the camera' (wrong) and aborted; (2) frame fallback waited 7s; (3) stale-session hazard (laptop tab reloaded → new sid → phone streams into the void) with no way for the user to tell.
+- Fix: **constraint fallback** — try constrained getDisplayMedia, on non-cancel errors retry plain `{video:true}` (same for getUserMedia); cancel (NotAllowed/Abort) never retries. **PROJECTION FIRST** — `startFrames()+sendFrame()` run IMMEDIATELY after the stream is acquired (laptop shows a picture in ~1s), peer stream takes over when connected (stopFrames). **diag() line on the phone** shows stages 1 permission → 2 acquired → 3 sending → 4 live peer, and the real error name on failure. **Pairing code = last 4 chars of sid shown on BOTH screens** (mismatch → re-scan). Tab wait states now distinguish 'phone never opened the link' vs 'phone here, tap START' vs 'stream received', with re-scan guidance (QR changes on tab reload; sids live in memory only).
+- Suite 959.

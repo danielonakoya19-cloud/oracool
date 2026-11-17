@@ -4914,7 +4914,8 @@ function renderPhone(){
           <div style="background:#fff;border-radius:18px;padding:12px;display:inline-block;box-shadow:0 16px 44px rgba(0,0,0,.35)">
             <img src="/api/qr?data=${encodeURIComponent(pair)}&fmt=png&scale=7" alt="pair QR" style="width:196px;height:196px;image-rendering:pixelated;border-radius:10px">
           </div>
-          <div class="hint" style="margin-top:8px;max-width:240px">Scan with your phone Camera or Chrome — or open<br><b style="word-break:break-all">${escapeHtml(pair)}</b></div>
+          <div class="hint" style="margin-top:8px;max-width:240px">Scan with your phone Camera or Chrome — or open<br><b style="word-break:break-all">${escapeHtml(pair)}</b><br>
+          pairing code: <b style="color:#67e8f9;font-size:15px">${escapeHtml(String(sid).slice(-4).toUpperCase())}</b> — must match the phone</div>
           <div id="phStatus" class="hint" style="margin-top:8px;color:#f9a8d4;max-width:240px">1️⃣ scan the QR → 2️⃣ tap <b>START</b> on the phone → 3️⃣ it appears here</div>
         </div>
         <div style="flex:1;min-width:300px">
@@ -5042,8 +5043,12 @@ function renderPhone(){
         }
         // phone presence → precise status
         if(r&&r.peer&&Date.now()/1000-r.peer<25&&!webrtcUp){
-          showWait('phone is on the page — tap the purple <b>START</b> button there…');
+          showWait('phone is on the page — tap <b>🖥 SHARE MY SCREEN</b> (or 📷 camera) on the phone…');
           st('📱 phone connected — tap START on the phone','#fbbf24');
+        } else if(!webrtcUp&&(!r||!r.peer||Date.now()/1000-r.peer>=25)){
+          showWait('waiting for the phone to open the link…<br><br><b>already scanned and nothing happens?</b> re-scan the QR above — '
+            +'the pairing code must match. The QR changes if this page reloads, and the phone must tap <b>SHARE MY SCREEN</b> then <b>Start now</b>.');
+          st('1️⃣ scan the QR → 2️⃣ tap <b>START</b> on the phone → 3️⃣ it appears here','#f9a8d4');
         }
         // compatible mode: no peer stream → show the phone's frame stream
         if(!webrtcUp&&r&&r.peer&&Date.now()/1000-r.peer<25&&Date.now()-lastSnap>1000){
@@ -5054,6 +5059,7 @@ function renderPhone(){
             if(im){ im.src=q.image; im.style.display='block'; if(v) v.style.display='none'; }
             window._phFrames=(window._phFrames||0)+1;
             hideWait();
+            if(!window._phFrameT){ window._phFrameT=1; st('● stream received — projecting (compatible mode)','#67e8f9'); }
           }
           if(!webrtcUp&&window._phFrames){
             const now=Date.now();
