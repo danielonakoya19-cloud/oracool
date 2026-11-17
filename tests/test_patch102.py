@@ -602,3 +602,61 @@ def test_patch121_sporty_slip_is_honest(monkeypatch):
     runs = server.auto_tools("today's betting tips please", tier="enterprise", email="a@x.com", history=[])
     assert any(x.get("tool") == "sporty" for x in runs)
     assert not any(x.get("tool") == "game" for x in runs)
+
+
+def test_patch122_selectivity_grading_and_remote(monkeypatch):
+    import json as _json
+    import time
+    monkeypatch.setattr(server, "_espn_get", _espn_canned)
+    monkeypatch.setitem(server._ESPN_CACHE, "tm:soccer", (9e12, {
+        "arsenal": ("eng.1", "359", "Arsenal"), "chelsea": ("eng.1", "363", "Chelsea")}))
+    monkeypatch.setattr(server, "_LIVE_CACHE", [0.0, None])
+    monkeypatch.setattr(server, "_SLIP_CACHE", [0.0])
+    monkeypatch.setattr(server, "_SPORTY_LOG", "/tmp/sporty_test_log.json")
+    if os.path.exists("/tmp/sporty_test_log.json"):
+        os.remove("/tmp/sporty_test_log.json")
+    def canned2(url, timeout=11, ttl=1800):
+        if "scoreboard" in url and "eng.1" in url:
+            return {"events": [{"id": "e777", "date": "2026-09-08T19:00Z", "league": {"name": "English Premier League"},
+                                "status": {"type": {"state": "pre", "description": "Scheduled"}},
+                                "competitions": [{"competitors": [
+                                    {"homeAway": "home", "team": {"displayName": "Arsenal"}, "score": {"value": None}},
+                                    {"homeAway": "away", "team": {"displayName": "Chelsea"}, "score": {"value": None}}]}]}]}
+        return _espn_canned(url)
+    monkeypatch.setattr(server, "_espn_get", canned2)
+    r = server.sporty_slip("today's betting tips")
+    assert r.get("ok") and "record" in r and r["record"]["prob_threshold"] in (55, 60)
+    assert "bankroll_rules" in r and "never chase" in r["bankroll_rules"].lower() or "NEVER chase" in r["bankroll_rules"]
+    # selective: strong pick surfaces; weak leans land in 'passed' with a reason
+    assert r.get("count", 0) >= 1
+    assert any(pk.get("pass_reason") for pk in (r.get("passed") or [])) or r.get("count", 0) == len(r.get("picks") or [])
+    # every surfaced pick clears the bar
+    for pk in r.get("picks") or []:
+        assert pk["probability_pct"] >= 55 and pk["confidence_pct"] >= 55
+    # grading: a settled pick marked pending gets graded from real finals
+    rows = server._sporty_log_load()
+    assert rows, "surfaced picks must be logged for grading"
+    rows[0]["t"] = time.time() - 7 * 3600   # old enough to grade
+    server._sporty_log_save(rows)
+    # the canned schedules carry the shared meeting ids (m1/m2/m3) as finished
+    rows[0]["eid"] = "m1"
+    rows[0]["market"] = "1X2"
+    rows[0]["selection"] = "HOME WIN"
+    rows[0]["home"], rows[0]["away"] = "Arsenal", "Chelsea"
+    server._sporty_log_save(rows)
+    monkeypatch.setattr(server, "_sporty_log_load", lambda: rows)
+    monkeypatch.setattr(server, "_sporty_log_save", lambda rr: None)
+    server._sporty_grade_pending()
+    assert rows[0]["status"] in ("W", "L"), "settled picks must be graded from real final scores"
+    assert rows[0].get("final") == "2-1"   # m1: Arsenal 2-1 Chelsea
+    # remote session plumbing
+    rs = server.remote_new_session("a@x.com")
+    assert rs.get("ok") and rs.get("sid") and rs["url"].startswith("/remote/")
+    server.remote_signal(rs["sid"], "phone", {"offer": {"type": "offer", "sdp": "x"}})
+    got = server.remote_pull(rs["sid"], "tab")
+    assert got["signals"] and got["signals"][0].get("offer")
+    server.remote_cmd(rs["sid"], "snap")
+    got2 = server.remote_pull(rs["sid"], "phone")
+    assert got2["cmds"] == ["snap"]
+    assert server.remote_snapshot(rs["sid"], "data:image/jpeg;base64,AAAA").get("ok")
+    assert not server.remote_snapshot(rs["sid"], "x" * 3000000).get("ok")

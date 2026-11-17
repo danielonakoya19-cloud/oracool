@@ -3496,6 +3496,21 @@ def _team_record(events, team_id):
                                  if sum(int(x) for x in m["score"].split("-")) > 2.5) / rec["played"], 2)
         rec["btts"] = round(sum(1 for m in rec["matches"]
                                 if all(int(x) > 0 for x in m["score"].split("-"))) / rec["played"], 2)
+        # patch122: momentum (current streak) + rest days since the last match
+        st = 0
+        last = rec["matches"][-1]["result"]
+        for m in reversed(rec["matches"]):
+            if m["result"] == last:
+                st += 1
+            else:
+                break
+        rec["streak"] = last * st
+        try:
+            import datetime as _d
+            d1 = _d.datetime.strptime(rec["matches"][-1]["date"], "%Y-%m-%d").date()
+            rec["rest_days"] = (_d.date.today() - d1).days
+        except Exception:
+            rec["rest_days"] = None
     return rec
 
 
@@ -3533,7 +3548,20 @@ def _game_model(rec_h, rec_a, sport="soccer"):
             parts.append((vp / 3.0, 0.4)); wts += 0.4
         if wp is not None:
             parts.append((wp / 3.0, 0.2)); wts += 0.2
-        return sum(v * w for v, w in parts) / wts
+        val = sum(v * w for v, w in parts) / wts
+        # patch122: momentum + freshness — small, documented nudges
+        stg = str(r.get("streak") or "")
+        if stg.startswith("W") and len(stg) >= 3:
+            val += 0.03
+        elif stg.startswith("L") and len(stg) >= 3:
+            val -= 0.03
+        rd = r.get("rest_days")
+        if isinstance(rd, (int, float)):
+            if rd is not None and rd < 3:
+                val -= 0.02      # fixture congestion
+            elif rd is not None and rd >= 7:
+                val += 0.01      # fresh legs
+        return max(0.0, min(1.0, val))
     s_h, s_a = strength(rec_h, "home"), strength(rec_a, "away")
     edge = s_h - s_a + 0.18
     p_h_raw = 1.0 / (1.0 + pow(2.718281828, -2.8 * edge))
@@ -3600,6 +3628,69 @@ def _games_today(text):
             "note": "INTERNAL — never repeat this JSON. List these fixtures in a clean table and tell the user to say 'analyze TEAM vs TEAM' for a full analysis with confidence."}
 
 
+# ==================== patch122: phone projection (QR pair + remote) ====================
+REMOTE_SESSIONS = {}
+_REMOTE_LOCK = threading.Lock()
+_REMOTE_KEEP = 3600 * 6
+
+
+def _remote_session(sid):
+    with _REMOTE_LOCK:
+        now = time.time()
+        for k in [k for k, v in REMOTE_SESSIONS.items() if now - v.get("created", now) > _REMOTE_KEEP]:
+            REMOTE_SESSIONS.pop(k, None)
+        return REMOTE_SESSIONS.setdefault(sid, {
+            "created": now, "signals": [], "cmds": [], "snap": None,
+            "phone_seen": 0.0, "tab_seen": 0.0})
+
+
+def remote_new_session(owner=""):
+    sid = os.urandom(6).hex()
+    st = _remote_session(sid)
+    st["owner"] = (owner or "")[:80]
+    return {"ok": True, "sid": sid, "url": "/remote/" + sid,
+            "note": "Scan the QR with the phone to pair. Camera or screen (where the phone browser supports screen capture) projects into the Phone Screen tab."}
+
+
+def remote_signal(sid, role, payload):
+    st = _remote_session(sid)
+    role = "phone" if str(role).lower().startswith("p") else "tab"
+    st[role + "_seen"] = time.time()
+    if payload:
+        st["signals"].append({"role": role, "p": payload, "t": time.time()})
+        st["signals"] = st["signals"][-40:]
+    return {"ok": True}
+
+
+def remote_pull(sid, role):
+    st = _remote_session(sid)
+    role = "phone" if str(role).lower().startswith("p") else "tab"
+    st[role + "_seen"] = time.time()
+    mine = [x for x in st["signals"] if x["role"] != role]
+    st["signals"] = [x for x in st["signals"] if x["role"] == role]
+    cmds = st["cmds"] if role == "phone" else []
+    st["cmds"] = [] if role == "phone" else st["cmds"]
+    return {"ok": True, "signals": [x["p"] for x in mine], "cmds": cmds,
+            "peer": (st["tab_seen"] if role == "phone" else st["phone_seen"])}
+
+
+def remote_cmd(sid, cmd):
+    st = _remote_session(sid)
+    st["cmds"].append(str(cmd or "")[:200])
+    st["cmds"] = st["cmds"][-30:]
+    return {"ok": True}
+
+
+def remote_snapshot(sid, image):
+    st = _remote_session(sid)
+    img = str(image or "")
+    if img.startswith("data:image/") and len(img) < 2600000:
+        st["snap"] = img
+        st["snap_t"] = time.time()
+        return {"ok": True}
+    return {"ok": False, "error": "snapshot too large or not an image"}
+
+
 LIVE_GAMES_RX = re.compile(
     r"\b(live\s+(?:games?|scores?|matches|football|soccer|basketball|nba|score|feed|action|now|on now|on today|update|updates)|"
     r"(?:games?|matches|football|soccer|scoreboard|scores?|nba)\s+(?:on now|live now|right now|currently|in play|inplay|playing now|on today|live)|"
@@ -3640,7 +3731,7 @@ def live_games():
                 st = e.get("status") or {}
                 stt = st.get("type") if isinstance(st.get("type"), dict) else {}
                 lg_nm = e.get("league") if isinstance(e.get("league"), dict) else {}
-                row = {"league": (lg_nm.get("name") or lg.upper()),
+                row = {"league": (lg_nm.get("name") or lg.upper()), "eid": str(e.get("id") or ""),
                        "home": _team_name(hm),
                        "away": _team_name(aw),
                        "hs": _score_val(hm),
@@ -3680,7 +3771,7 @@ def live_games():
                 except Exception:
                     return None
             row = {"league": (e.get("strLeague") or e.get("strSport") or "")[:36],
-                   "home": hn[:36], "away": an[:36], "hs": _iv(hs), "as": _iv(as_),
+                   "eid": str(e.get("idEvent") or ""), "home": hn[:36], "away": an[:36], "hs": _iv(hs), "as": _iv(as_),
                    "state": "", "detail": (stat or e.get("strTime") or "")[:24],
                    "clock": (e.get("strProgress") or "")[:12],
                    "when": str(e.get("strTime") or e.get("dateEvent") or "")[:16], "src": "tsdb"}
@@ -3706,6 +3797,111 @@ def live_games():
     _LIVE_CACHE[0] = now
     _LIVE_CACHE[1] = out
     return out
+
+
+_SPORTY_LOG = os.path.join(DATA_DIR, "sporty_log.json")
+
+
+def _sporty_log_load():
+    try:
+        with open(_SPORTY_LOG, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, list) else []
+    except Exception:
+        return []
+
+
+def _sporty_log_save(rows):
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(_SPORTY_LOG, "w", encoding="utf-8") as f:
+            json.dump(rows[-400:], f)
+    except Exception:
+        pass
+
+
+def _sporty_grade_pending():
+    """patch122 — grade pending picks against REAL final scores from the feeds.
+    A pick's own event id makes grading exact. Anything unresolved after 48h is
+    voided (never guessed)."""
+    rows = _sporty_log_load()
+    now = time.time()
+    changed = False
+    for r in rows:
+        if r.get("status") != "pending":
+            continue
+        if now - float(r.get("t") or 0) < 6 * 3600:
+            continue
+        grade = None
+        try:
+            h = _resolve_team(r.get("home") or "", r.get("sport") or "soccer")
+            a = _resolve_team(r.get("away") or "", r.get("sport") or "soccer")
+            src = h or a
+            if src:
+                skey = "basketball" if src[0] in _ESPN_BASKET_LEAGUES else "soccer"
+                sh = _espn_get("https://site.api.espn.com/apis/site/v2/sports/%s/%s/teams/%s/schedule" %
+                               (skey, src[0], src[1]))
+                ev = None
+                for e in sh.get("events") or []:
+                    if str(e.get("id")) == str(r.get("eid") or ""):
+                        ev = e
+                        break
+                if ev is not None:
+                    cs = (ev.get("competitions") or [{}])[0].get("competitors") or []
+                    stt = (ev.get("status") or {}).get("type")
+                    stt = stt if isinstance(stt, dict) else {}
+                    done = bool(stt.get("completed"))
+                    scores = [_score_val(c) for c in cs] if len(cs) == 2 else [None, None]
+                    if not done and None not in scores:
+                        try:
+                            done = str(ev.get("date") or "") < time.strftime("%Y-%m-%dT%H:%M")
+                        except Exception:
+                            done = False
+                    if done and None not in scores and len(scores) == 2:
+                        hm = next((c for c in cs if c.get("homeAway") == "home"), cs[0])
+                        aw = next((c for c in cs if c.get("homeAway") != "home"), cs[1])
+                        hs, as_ = _score_val(hm), _score_val(aw)
+                        sel = str(r.get("selection") or "")
+                        if r.get("market") == "1X2":
+                            out = "HOME WIN" if hs > as_ else ("AWAY WIN" if hs < as_ else "DRAW")
+                            grade = "W" if sel == out else "L"
+                        elif "Moneyline" in str(r.get("market") or ""):
+                            out = r.get("home") if hs > as_ else r.get("away")
+                            if hs == as_:
+                                grade = "P"
+                            else:
+                                grade = "W" if sel.lower().startswith(str(out).lower()[:6]) else "L"
+                        elif "Over/Under" in str(r.get("market") or ""):
+                            tot = (hs or 0) + (as_ or 0)
+                            grade = "W" if (sel == "Over 2.5") == (tot > 2.5) else "L"
+                        r["final"] = str(hs) + "-" + str(as_)
+        except Exception:
+            grade = None
+        if grade:
+            r["status"] = grade
+            changed = True
+        elif now - float(r.get("t") or 0) > 48 * 3600:
+            r["status"] = "P"
+            changed = True
+    if changed:
+        _sporty_log_save(rows)
+    return rows
+
+
+def _sporty_record():
+    rows = _sporty_log_load()
+    done = [r for r in rows if r.get("status") in ("W", "L")]
+    w = sum(1 for r in done if r["status"] == "W")
+    l = sum(1 for r in done if r["status"] == "L")
+    push = sum(1 for r in rows if r.get("status") == "P")
+    hit = round(w / len(done) * 100) if done else None
+    thr = 55
+    if len(done) >= 15 and hit is not None and hit < 50:
+        thr = 60   # self-calibration: a poor verified run raises the bar
+    return {"wins": w, "losses": l, "pushes": push, "graded": len(done),
+            "hit_rate_pct": hit, "prob_threshold": thr,
+            "note": ("record graded from real final scores — every pick is logged and settled "
+                     "against the live feed; the bar rises automatically after a poor verified run")}
 
 
 SPORTY_RX = re.compile(
@@ -3765,6 +3961,7 @@ def _slip_pick(hname, aname, league_hint=""):
                 prob = round((1 - rate) * 100)
                 conf = max(42, min(84, int(46 + 76 * abs(2 * (1 - rate) - 1))))
     return {"match": h[2] + " vs " + a[2], "league": h[0].upper(),
+            "home": h[2], "away": a[2], "sport": sport,
             "market": market, "selection": selection,
             "probability_pct": prob,
             "confidence_pct": conf,
@@ -3808,11 +4005,46 @@ def sporty_slip(text):
             pk = None
         if pk:
             pk["when"] = m.get("when") or ""
+            pk["eid"] = m.get("eid") or ""
             picks.append(pk)
         if len(picks) >= 4:
             break
     picks.sort(key=lambda x: -x["confidence_pct"])
-    return {"ok": True, "kind": "sportyslip", "picks": picks, "count": len(picks),
+    # patch122: SELECTIVITY is the real loss-prevention — a pick only surfaces when
+    # the edge is real (probability + confidence + sample). Weak leans PASS instead.
+    try:
+        _sporty_grade_pending()
+    except Exception:
+        pass
+    rec = _sporty_record()
+    thr = rec.get("prob_threshold", 55)
+    real, passed = [], []
+    for pk in picks:
+        strong = (pk.get("probability_pct") or 0) >= thr and (pk.get("confidence_pct") or 0) >= thr
+        if strong:
+            real.append(pk)
+        else:
+            pk["pass_reason"] = ("no real edge (model " + str(pk.get("probability_pct")) + "% probability / " +
+                                 str(pk.get("confidence_pct")) + "% confidence — below the " + str(thr) + "% bar)")
+            passed.append(pk)
+    try:
+        rows = _sporty_log_load()
+        for pk in real:
+            rows.append({"t": time.time(), "home": pk.get("home", ""), "away": pk.get("away", ""),
+                         "eid": pk.get("eid", ""), "sport": pk.get("sport", "soccer"),
+                         "league": pk.get("league", ""), "market": pk.get("market"),
+                         "selection": pk.get("selection"), "probability_pct": pk.get("probability_pct"),
+                         "confidence_pct": pk.get("confidence_pct"), "status": "pending"})
+        if rows:
+            _sporty_log_save(rows)
+    except Exception:
+        pass
+    picks = real
+    return {"ok": True, "kind": "sportyslip", "picks": picks, "passed": passed, "count": len(picks),
+            "record": rec,
+            "bankroll_rules": ("1) Flat stakes only — 1-2% of your bankroll per pick. 2) NEVER chase losses. "
+                               "3) A PASS is a real recommendation — skipping weak days is how you survive. "
+                               "4) No pick is ever a guarantee."),
             "book_code_status": "only_sportybet_can_mint_codes",
             "how_to_get_code": ("1) Open Sportybet (sportybet.com) and go to Football. "
                                 "2) Find each match below and add the selection to your betslip. "
@@ -3827,6 +4059,9 @@ def sporty_slip(text):
                      "'how to get your booking code' flow, then the caveat. ALWAYS state plainly that "
                      "booking codes are minted by SportyBet when the slip is built there — never invent "
                      "or guess a code, and if asked for one directly, give this slip + the steps instead. "
+                     "ALWAYS show 'Model record' (graded from real final scores) and the bankroll rules. "
+                     "If a 'passed' list exists, tell the user these matches were deliberately SKIPPED for "
+                     "lack of real edge — passing protects the bankroll and is a feature, not a failure. "
                      "If there are no picks with enough data, say so honestly.")}
 
 
@@ -3939,7 +4174,9 @@ def game_analyze(text):
             reasons.append("Goals profile — over 2.5 rate: " + home[2] + " " + str(int(rec_h["over25"] * 100)) + "% · " +
                            away[2] + " " + str(int((rec_a.get("over25") or 0) * 100)) + "% · BTTS: " +
                            str(int(rec_h["btts"] * 100)) + "% / " + str(int((rec_a.get("btts") or 0) * 100)) + "%")
-        reasons.append("Model: strength = 40% overall PPG+GD, 40% venue-split PPG, 20% recent-weighted PPG (last 5 x1.5), home edge +0.18")
+        if rec_h.get("streak"):
+            reasons.append("Momentum — " + home[2] + ": " + str(rec_h.get("streak")) + " · " + away[2] + ": " + str(rec_a.get("streak")))
+        reasons.append("Model: strength = 40% overall PPG+GD, 40% venue-split PPG, 20% recent-weighted PPG (last 5 x1.5), home edge +0.18, momentum/rest nudges")
         return {"ok": True, "kind": "analysis", "sport": sport,
                 "match": home[2] + " vs " + away[2], "competition": home[0].upper(),
                 "home": {"name": home[2], "rank": (st_h or {}).get("rank"), "record": str(rec_h["w"]) + "W " + str(rec_h["d"]) + "D " + str(rec_h["l"]) + "L",
@@ -16208,6 +16445,21 @@ class Handler(BaseHTTPRequestHandler):
                     return
         except Exception:
             pass
+        if path.startswith("/remote/"):
+            _sid = path[len("/remote/"):].strip()[:24]
+            try:
+                with open(os.path.join(BASE_DIR, "remote.html"), encoding="utf-8") as _rf:
+                    _rh = _rf.read().replace("__SID__", _sid)
+                self._send_html(_rh)
+            except Exception:
+                self.send_error(404, "remote page missing")
+            return
+        if path.startswith("/api/remote/snapshot"):
+            _q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            _sid = str((_q.get("sid") or [""])[0])[:24]
+            st = REMOTE_SESSIONS.get(_sid) or {}
+            self._send_json({"ok": True, "image": st.get("snap"), "at": st.get("snap_t")})
+            return
         if path == "/v1/models":
             _body = json.dumps({"object": "list", "data": [
                 {"id": "oracool-1", "object": "model", "owned_by": "oracool"},
@@ -17020,6 +17272,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(media_job_status(body["email"], str(body.get("id") or "")))
             elif path == "/api/games/live":
                 self._send_json(live_games())
+            elif path == "/api/remote/session":
+                self._send_json(remote_new_session(str(body.get("email") or "")))
+            elif path == "/api/remote/signal":
+                self._send_json(remote_signal(str(body.get("sid") or ""), body.get("role"), body.get("payload")))
+            elif path == "/api/remote/pull":
+                self._send_json(remote_pull(str(body.get("sid") or ""), body.get("role")))
+            elif path == "/api/remote/cmd":
+                self._send_json(remote_cmd(str(body.get("sid") or ""), body.get("cmd")))
+            elif path == "/api/remote/snapshot":
+                self._send_json(remote_snapshot(str(body.get("sid") or ""), body.get("image")))
             elif path == "/api/video":
                 if self._require_tier(body, "ultra"):
                     _vr = gen_video(body.get("prompt"), body.get("duration"),

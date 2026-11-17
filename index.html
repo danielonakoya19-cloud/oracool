@@ -1773,6 +1773,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
       <div class="side-item" data-v="intel"><span class="sic">🧭</span><span class="slbl">Intel</span></div>
       <div class="side-item" data-v="cores"><span class="sic">⚡</span><span class="slbl">Cores</span></div>
       <div class="side-item" data-v="devices"><span class="sic">🔗</span><span class="slbl">Devices</span></div>
+      <div class="side-item" data-v="phone"><span class="sic">📱</span><span class="slbl">Phone Screen</span></div>
       <div class="side-item" data-v="code"><span class="sic">💻</span><span class="slbl">Code</span></div>
       <div class="side-item" data-v="plans"><span class="sic">💎</span><span class="slbl">Plans</span></div>
       <div class="side-item" data-v="status"><span class="sic">📊</span><span class="slbl">Status</span></div>
@@ -1879,6 +1880,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
       <div class="panelbody" id="p-cores"></div>
       <div class="panelbody" id="p-plans"></div>
       <div class="panelbody" id="p-devices"></div>
+      <div class="panelbody" id="p-phone"></div>
       <div class="panelbody" id="p-code"></div>
       <div class="panelbody" id="p-account"></div>
       <div class="panelbody" id="p-admin"></div>
@@ -4893,6 +4895,86 @@ async function bfHandle(raw){
     bfBotSay("I'm the BotFather 🤖 — send <b>/newbot</b> to create a bot, <b>/program</b> to teach one what to do, or <b>/help</b>.");
   }catch(e){ bfBotSay('⚠ Something went wrong — try again.'); }
 }
+function renderPhone(){
+  // patch122: QR-pair a phone and project it here (camera, or screen where the
+  // phone browser supports capture) with honest remote controls for the shared view
+  const box=document.getElementById('p-phone'); if(!box) return;
+  window._phoneSID=window._phoneSID||'';
+  const boot=async()=>{
+    if(!window._phoneSID){
+      const r=await post('/api/remote/session',{email:myEmail()||'', token:proToken||''}).catch(()=>null);
+      if(r&&r.sid) window._phoneSID=r.sid; else { box.innerHTML='<div class="hint">Could not open a pairing session — try again.</div>'; return; }
+    }
+    const sid=window._phoneSID;
+    const pair=(location.origin||'https://oracoolai.com')+'/remote/'+sid;
+    box.innerHTML=`
+      <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start">
+        <div style="text-align:center">
+          <div style="background:#fff;border-radius:18px;padding:12px;display:inline-block;box-shadow:0 16px 44px rgba(0,0,0,.35)">
+            <img src="/api/qr?data=${encodeURIComponent(pair)}&fmt=png&scale=7" alt="pair QR" style="width:196px;height:196px;image-rendering:pixelated;border-radius:10px">
+          </div>
+          <div class="hint" style="margin-top:8px;max-width:230px">Scan with your phone — or open<br><b style="word-break:break-all">${escapeHtml(pair)}</b></div>
+          <div id="phStatus" class="hint" style="margin-top:6px;color:#f9a8d4">● waiting for the phone…</div>
+        </div>
+        <div style="flex:1;min-width:300px">
+          <div style="border-radius:18px;overflow:hidden;border:1px solid rgba(255,255,255,.18);background:#000">
+            <video id="phoneVideo" autoplay playsinline muted style="width:100%;max-height:56vh;display:block;background:#000"></video>
+          </div>
+          <div class="row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+            <button class="btn small" id="phSnap">📸 Snapshot</button>
+            <button class="btn small" id="phCam">🔄 Flip phone camera</button>
+            <button class="btn small" id="phFull">⛶ Full screen</button>
+            <button class="btn small" id="phPrev">◀ Prev</button>
+            <button class="btn small" id="phNext">Next ▶</button>
+            <button class="btn small ghost" id="phStop">⏹ Stop</button>
+          </div>
+          <div class="hint" style="margin-top:8px">Remote buttons control the shared view on the phone (slides · snapshot · camera).
+          A browser cannot drive your phone's OS — that is an honest platform limit, not a missing feature.</div>
+          <div id="phSnapBox" style="margin-top:10px"></div>
+        </div>
+      </div>`;
+    const st=(t,c)=>{ const e=document.getElementById('phStatus'); if(e){ e.textContent=t; e.style.color=c||'#f9a8d4'; } };
+    const send=(cmd)=>{ try{ if(window._phoneCtl&&window._phoneCtl.readyState==='open'){ window._phoneCtl.send(cmd); return; } }catch(e){}
+      post('/api/remote/cmd',{sid,cmd}).catch(()=>{}); };
+    document.getElementById('phSnap').onclick=()=>{ send('snap');
+      setTimeout(async()=>{ const r=await post('/api/remote/snapshot',{sid}).catch(()=>null);
+        const q=await fetch('/api/remote/snapshot?sid='+encodeURIComponent(sid)).then(r2=>r2.json()).catch(()=>null);
+        if(q&&q.image){ document.getElementById('phSnapBox').innerHTML='<img src="'+q.image+'" style="max-width:280px;border-radius:12px;border:1px solid rgba(255,255,255,.2)">'; } },1200); };
+    document.getElementById('phCam').onclick=()=>send('cam');
+    document.getElementById('phStop').onclick=()=>send('stop');
+    document.getElementById('phNext').onclick=()=>send('next');
+    document.getElementById('phPrev').onclick=()=>send('prev');
+    document.getElementById('phFull').onclick=()=>{ const v=document.getElementById('phoneVideo'); if(v&&v.requestFullscreen) v.requestFullscreen(); };
+    // ---- WebRTC answerer with HTTP signaling relay ----
+    let pc=null, answered=false;
+    const pcNew=()=>{ const p=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302']}]});
+      p.ontrack=(e)=>{ const v=document.getElementById('phoneVideo'); if(v){ v.srcObject=e.streams[0]; v.play().catch(()=>{}); } st('● phone connected — projecting','#67e8f9'); };
+      p.ondatachannel=(e)=>{ window._phoneCtl=e.channel; try{ e.channel.onmessage=(m)=>{ if(String(m.data)==='hello') st('● phone connected — projecting','#67e8f9'); }; }catch(err){} };
+      p.onicecandidate=(e)=>{ if(e.candidate) post('/api/remote/signal',{sid,role:'tab',payload:{ice:e.candidate}}).catch(()=>{}); };
+      return p; };
+    const loop=async()=>{
+      try{
+        const r=await post('/api/remote/pull',{sid,role:'tab'});
+        if(r&&r.signals){
+          for(const p of r.signals){
+            if(p.offer){
+              pc=pcNew(); answered=true;
+              await pc.setRemoteDescription(p.offer);
+              const ans=await pc.createAnswer(); await pc.setLocalDescription(ans);
+              await post('/api/remote/signal',{sid,role:'tab',payload:{answer:pc.localDescription}});
+            }
+            if(p.ice&&pc){ try{ await pc.addIceCandidate(p.ice); }catch(e){} }
+          }
+        }
+        if(r&&r.peer&&Date.now()/1000-r.peer<25&&document.getElementById('phStatus')&&document.getElementById('phStatus').textContent.indexOf('waiting')>=0) st('phone is on the page — tap Start camera there…','#fbbf24');
+      }catch(e){}
+      if(document.getElementById('phoneVideo')) setTimeout(loop,1500);
+    };
+    loop();
+  };
+  box.innerHTML='<div class="hint">Opening a pairing session…</div>';
+  boot();
+}
 async function renderCommBots(){
   const body=$('#commBody'); if(!body) return;
   const r=await post('/api/community/bots',{}).catch(()=>({}));
@@ -5881,7 +5963,7 @@ function tabLockPanel(p, need){
 }
 /* ---------- ChatGPT-style navigation: sidebar drives chat + full-width panels ---------- */
 const UI={view:'chat'};
-const VIEW_TITLES={chat:'Chat', community:'Community', web:'Websites', markets:'Markets', trading:'Trading desk', space:'Space', intel:'Intel', cores:'Cores', devices:'Devices & connectors', code:'Code console', plans:'Plans', status:'Status', admin:'Admin console', settings:'Settings'};
+const VIEW_TITLES={chat:'Chat', community:'Community', web:'Websites', markets:'Markets', trading:'Trading desk', space:'Space', intel:'Intel', cores:'Cores', devices:'Devices & connectors', phone:'Phone Screen', code:'Code console', plans:'Plans', status:'Status', admin:'Admin console', settings:'Settings'};
 function showView(v, skipRender){
   UI.view = (v==='chat') ? 'chat' : v;
   document.querySelectorAll('#sideNav .side-item').forEach(x=>x.classList.toggle('active', x.dataset.v===v));
@@ -5897,6 +5979,7 @@ function showView(v, skipRender){
       if(v==='status')renderStatus();
       else if(v==='community')renderCommunity();
       else if(v==='devices')renderDevices();
+      else if(v==='phone')renderPhone();
       else if(v==='code')renderCode();
       else if(v==='account')renderAccount();
       else if(v==='settings')renderSettings();

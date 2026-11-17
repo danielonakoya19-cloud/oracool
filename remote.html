@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OraCool · Phone Projection</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0c0a24;color:#fff;min-height:100vh;
+display:flex;flex-direction:column;align-items:center;padding:18px}
+h1{font-size:20px;margin:6px 0 2px;background:linear-gradient(92deg,#fff,#c4b5fd);-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{font-size:12.5px;color:#a9a3cf;text-align:center;max-width:420px;line-height:1.5}
+.card{width:100%;max-width:460px;background:rgba(255,255,255,.06);border:1px solid rgba(196,181,253,.22);border-radius:16px;padding:14px;margin:12px 0}
+video{width:100%;border-radius:12px;background:#000;aspect-ratio:9/16;object-fit:cover}
+button{border:0;border-radius:12px;padding:13px 16px;font-size:15px;font-weight:700;cursor:pointer;margin:6px 4px 0}
+.primary{background:linear-gradient(100deg,#8b5cf6,#c084fc);color:#fff;width:100%}
+.ghost{background:rgba(255,255,255,.10);color:#fff}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row button{flex:1;min-width:120px;margin:6px 0 0}
+#status{font-size:12px;letter-spacing:.10em;text-transform:uppercase;padding:7px 12px;border-radius:999px;
+background:rgba(244,114,182,.16);border:1px solid rgba(244,114,182,.4);color:#f9a8d4;display:inline-block;margin:8px 0}
+#status.on{background:rgba(34,211,238,.14);border-color:rgba(34,211,238,.45);color:#67e8f9}
+.honest{font-size:11px;color:#8d86b8;line-height:1.55;margin-top:10px}
+#stageWrap{display:none;width:100%}
+#stage{width:100%;height:320px;border:0;border-radius:12px;background:#fff}
+.log{font-size:11px;color:#7d76a8;max-height:72px;overflow:auto;margin-top:8px}
+</style>
+</head>
+<body>
+<h1>📱 Phone Projection</h1>
+<div class="sub">Share your camera — or your screen where your browser supports it — and it appears live in the
+OraCool <b>Phone Screen</b> tab. Keep this page open while presenting.</div>
+<div id="status">waiting for the tab…</div>
+
+<div class="card">
+  <video id="self" autoplay playsinline muted></video>
+  <button class="primary" id="startCam">📷 Start camera projection</button>
+  <button class="ghost" id="startScreen" style="width:100%;display:none">🖥 Share my screen instead</button>
+  <div class="row">
+    <button class="ghost" id="swap">🔄 Flip camera</button>
+    <button class="ghost" id="snapBtn">📸 Send snapshot</button>
+    <button class="ghost" id="stopBtn">⏹ Stop</button>
+  </div>
+  <div class="log" id="log"></div>
+</div>
+
+<div class="card" id="stageWrap">
+  <div class="sub" style="margin-bottom:8px">Remote stage — what the tab controls on this phone:</div>
+  <iframe id="stage" src="about:blank"></iframe>
+</div>
+
+<div class="honest">🔒 <b>How pairing works:</b> the QR in the tab opens this page — the stream goes straight
+from your phone to the tab over an encrypted peer connection. <b>Honest limit:</b> a web browser cannot let
+anyone drive your phone's operating system; the remote buttons control this shared view (slides, snapshot,
+camera) only. Screen capture works on browsers that allow it (most Android Chrome versions) — otherwise use
+the camera.</div>
+
+<script>
+(function(){
+var SID="__SID__";
+var pc=null, dc=null, stream=null, facing="environment", pendingIce=[];
+function log(m){ var l=document.getElementById('log'); if(l){ l.textContent=(m+'\n'+l.textContent).slice(0,400); } }
+function setStatus(t,on){ var s=document.getElementById('status'); if(s){ s.textContent=t; s.className=on?'on':''; } }
+async function post(path,body){ body=body||{}; body.sid=SID;
+  var r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  return r.json(); }
+function frame(){ var v=document.getElementById('self'); var c=document.createElement('canvas');
+  c.width=v.videoWidth||720; c.height=v.videoHeight||1280;
+  try{ c.getContext('2d').drawImage(v,0,0,c.width,c.height); }catch(e){ return null; }
+  return c.toDataURL('image/jpeg',0.85); }
+async function connect(){
+  pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302']}]});
+  dc=pc.createDataChannel('ctl');
+  stream.getTracks().forEach(function(t){ pc.addTrack(t,stream); });
+  pc.onicecandidate=function(e){ if(e.candidate){ post('/api/remote/signal',{role:'phone',payload:{ice:e.candidate}}); } };
+  var offer=await pc.createOffer(); await pc.setLocalDescription(offer);
+  await post('/api/remote/signal',{role:'phone',payload:{offer:pc.localDescription}});
+  poll();
+}
+async function poll(){
+  try{
+    var r=await post('/api/remote/pull',{role:'phone'});
+    (r.signals||[]).forEach(function(p){
+      if(p.answer && pc && !pc.currentRemoteDescription){ pc.setRemoteDescription(p.answer); setStatus('projecting ●',true); }
+      if(p.ice && pc){ try{ pc.addIceCandidate(p.ice); }catch(e){ pendingIce.push(p.ice); } }
+    });
+    (r.cmds||[]).forEach(handleCmd);
+    if(r.peer && Date.now()/1000-r.peer<30) setStatus('tab connected — projecting ●',true);
+  }catch(e){}
+  setTimeout(poll,1400);
+}
+function handleCmd(c){
+  c=String(c||'');
+  log('cmd: '+c);
+  if(c==='snap'){ var d=frame(); if(d) post('/api/remote/snapshot',{image:d}); }
+  else if(c==='cam'){ facing=(facing==='environment')?'user':'environment'; if(stream){ var tr=stream.getVideoTracks()[0];
+      if(tr && tr.applyConstraints){ try{ tr.applyConstraints({facingMode:facing}); }catch(e){} } } }
+  else if(c==='stop'){ stopAll(); }
+  else if(c.indexOf('nav:')===0){ var u=c.slice(4);
+      if(/^https?:\/\//.test(u)){ var f=document.getElementById('stage'); if(f){ f.src=u;
+        document.getElementById('stageWrap').style.display='block'; } } }
+  else if(c==='next'||c==='prev'||c==='down'||c==='up'){
+      try{ var f=document.getElementById('stage'); if(f && f.contentWindow){ f.contentWindow.postMessage({ora:c},'*'); } }catch(e){}
+      window.scrollBy(0,(c==='down'||c==='next')?120:-120); }
+}
+function stopAll(){ try{ if(stream){ stream.getTracks().forEach(function(t){ t.stop(); }); stream=null; } }catch(e){}
+  try{ if(pc){ pc.close(); pc=null; } }catch(e){} setStatus('stopped',false); }
+async function start(withScreen){
+  try{
+    if(withScreen && navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia){
+      stream=await navigator.mediaDevices.getDisplayMedia({video:true,audio:false});
+    } else if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing},audio:false});
+    } else { setStatus('this browser cannot capture media',false); return; }
+    var v=document.getElementById('self'); v.srcObject=stream; v.muted=true; v.play();
+    await connect(); setStatus('projecting ●',true);
+    var d=frame(); if(d) post('/api/remote/snapshot',{image:d});
+  }catch(e){ setStatus('could not start: '+String(e).slice(0,60),false); }
+}
+document.getElementById('startCam').onclick=function(){ start(false); };
+document.getElementById('startScreen').onclick=function(){ start(true); };
+document.getElementById('swap').onclick=function(){ handleCmd('cam'); };
+document.getElementById('snapBtn').onclick=function(){ handleCmd('snap'); };
+document.getElementById('stopBtn').onclick=stopAll;
+if(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia){
+  document.getElementById('startScreen').style.display='block';
+}
+})();
+</script>
+</body>
+</html>
