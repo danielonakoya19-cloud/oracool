@@ -3450,13 +3450,22 @@ def _team_record(events, team_id):
         cs = comp.get("competitors") or []
         if len(cs) != 2:
             continue
-        done = bool((e.get("status") or {}).get("type", {}).get("completed"))
+        stt = (e.get("status") or {}).get("type")
+        stt = stt if isinstance(stt, dict) else {}
         me = next((c for c in cs if str(c.get("id")) == str(team_id)), None)
         opp = next((c for c in cs if str(c.get("id")) != str(team_id)), None)
         if not me or not opp:
             continue
         sc_m = _score_val(me)
         sc_o = _score_val(opp)
+        done = bool(stt.get("completed"))
+        if not done and sc_m is not None and sc_o is not None:
+            # team-schedule feeds omit status entirely — a past kickoff with both
+            # scores filled IS finished (patch121c)
+            try:
+                done = str(e.get("date") or "") < time.strftime("%Y-%m-%dT%H:%M")
+            except Exception:
+                done = False
         if not done or sc_m is None or sc_o is None:
             continue
         rec["played"] += 1
@@ -3505,7 +3514,7 @@ def _standings_row(league, sport, team_id):
     return None
 
 
-def _game_model(rec_h, rec_a):
+def _game_model(rec_h, rec_a, sport="soccer"):
     """Transparent, documented model — every number in the output comes from here.
     strength = blend(40% overall PPG+GD, 40% venue-split PPG, 20% recent-weighted PPG);
     home edge +0.18; draw band shifts with goals profile. No hidden weights, no vibes."""
@@ -3528,14 +3537,18 @@ def _game_model(rec_h, rec_a):
     s_h, s_a = strength(rec_h, "home"), strength(rec_a, "away")
     edge = s_h - s_a + 0.18
     p_h_raw = 1.0 / (1.0 + pow(2.718281828, -2.8 * edge))
-    d_p = 0.30 - 0.10 * abs(edge)
-    # goals profile: two attacking teams draw less, two tight teams draw more
-    if rec_h.get("over25") is not None and rec_a.get("over25") is not None:
-        if rec_h["over25"] >= 0.6 and rec_a["over25"] >= 0.6:
-            d_p -= 0.04
-        elif rec_h["over25"] <= 0.35 and rec_a["over25"] <= 0.35:
-            d_p += 0.04
-    d_p = max(0.11, min(0.34, d_p))
+    if sport == "basketball":
+        # regulation draws are almost always resolved in OT — tiny draw band
+        d_p = max(0.02, min(0.06, 0.045 - 0.008 * abs(edge)))
+    else:
+        d_p = 0.30 - 0.10 * abs(edge)
+        # goals profile: two attacking teams draw less, two tight teams draw more
+        if rec_h.get("over25") is not None and rec_a.get("over25") is not None:
+            if rec_h["over25"] >= 0.6 and rec_a["over25"] >= 0.6:
+                d_p -= 0.04
+            elif rec_h["over25"] <= 0.35 and rec_a["over25"] <= 0.35:
+                d_p += 0.04
+        d_p = max(0.11, min(0.34, d_p))
     p_h = round((1 - d_p) * p_h_raw * 100)
     p_a = round((1 - d_p) * (1 - p_h_raw) * 100)
     p_d = 100 - p_h - p_a
@@ -3727,18 +3740,34 @@ def _slip_pick(hname, aname, league_hint=""):
     rec_a = _team_record(sa.get("events") or [], a[1])
     if rec_h["played"] < 3 or rec_a["played"] < 3:
         return None
-    m = _game_model(rec_h, rec_a)
-    market, selection = "1X2", m["pick"]
-    # goals-market lean only when both profiles strongly agree
-    if rec_h.get("over25") is not None and rec_a.get("over25") is not None:
-        if rec_h["over25"] >= 0.65 and rec_a["over25"] >= 0.65:
-            market, selection = "Over/Under 2.5", "Over 2.5"
-        elif rec_h["over25"] <= 0.30 and rec_a["over25"] <= 0.30:
-            market, selection = "Over/Under 2.5", "Under 2.5"
+    m = _game_model(rec_h, rec_a, sport)
+    is_bball = sport == "basketball"
+    if is_bball:
+        # basketball: moneyline only — football goal markets make no sense here
+        market = "Moneyline (incl. OT)"
+        selection = (h[2] if m["pick"] == "HOME WIN" else a[2]) + " to win" if m["pick"] != "DRAW" \
+            else "Draw (regulation)"
+        prob = max(m["p_home"], m["p_away"]) if m["pick"] != "DRAW" else m["p_draw"]
+        conf = m["confidence_pct"]
+    else:
+        market, selection = "1X2", m["pick"]
+        prob = max(m["p_home"], m["p_draw"], m["p_away"])
+        conf = m["confidence_pct"]
+        # goals-market lean only when both profiles strongly agree
+        if rec_h.get("over25") is not None and rec_a.get("over25") is not None:
+            rate = (rec_h["over25"] + rec_a["over25"]) / 2.0
+            if rec_h["over25"] >= 0.65 and rec_a["over25"] >= 0.65:
+                market, selection = "Over/Under 2.5", "Over 2.5"
+                prob = round(rate * 100)
+                conf = max(42, min(84, int(46 + 76 * abs(2 * rate - 1))))
+            elif rec_h["over25"] <= 0.30 and rec_a["over25"] <= 0.30:
+                market, selection = "Over/Under 2.5", "Under 2.5"
+                prob = round((1 - rate) * 100)
+                conf = max(42, min(84, int(46 + 76 * abs(2 * (1 - rate) - 1))))
     return {"match": h[2] + " vs " + a[2], "league": h[0].upper(),
             "market": market, "selection": selection,
-            "probability_pct": max(m["p_home"], m["p_draw"], m["p_away"]),
-            "confidence_pct": m["confidence_pct"],
+            "probability_pct": prob,
+            "confidence_pct": conf,
             "probabilities": {"home": m["p_home"], "draw": m["p_draw"], "away": m["p_away"]},
             "form": "".join(rec_h["form"][-5:]) + " / " + "".join(rec_a["form"][-5:])}
 
@@ -3877,12 +3906,20 @@ def game_analyze(text):
             shs, sas = _score_val(hm), _score_val(aw)
             if shs is None or sas is None:
                 continue
-            if not (e.get("status") or {}).get("type", {}).get("completed"):
+            _hst = (e.get("status") or {}).get("type")
+            _hst = _hst if isinstance(_hst, dict) else {}
+            _hdone = bool(_hst.get("completed"))
+            if not _hdone and shs is not None and sas is not None:
+                try:
+                    _hdone = str(e.get("date") or "") < time.strftime("%Y-%m-%dT%H:%M")
+                except Exception:
+                    _hdone = False
+            if not _hdone:
                 continue
             h2h["meetings"] += 1
             h2h["home_wins" if shs > sas else ("draws" if shs == sas else "away_wins")] += 1
             h2h["recent"].append((e.get("date") or "")[:10] + ": " + home[2] + " " + str(shs) + "-" + str(sas) + " " + away[2])
-        m = _game_model(rec_h, rec_a)
+        m = _game_model(rec_h, rec_a, sport)
         reasons = []
         reasons.append(home[2] + " form (last " + str(rec_h["played"]) + "): " + ("".join(rec_h["form"][-5:]) or "n/a") +
                        " · " + ("%.1f" % (((rec_h["w"] * 3 + rec_h["d"]) / rec_h["played"]) if rec_h["played"] else 0)) + " pts/game, GD " + str(rec_h["gf"] - rec_h["ga"]))
