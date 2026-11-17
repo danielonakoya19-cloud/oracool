@@ -573,3 +573,11 @@
 - **Phone Screen tab** (data-v=phone → p-phone → renderPhone): QR (/api/qr?data=<origin>/remote/<sid>) pairs the phone to remote.html (served at GET /remote/<sid>, __SID__ substituted). WebRTC P2P (Google STUN) with HTTP signaling relay: POST /api/remote/session|signal|cmd|snapshot, POST /api/remote/pull (queue-drain per role), GET /api/remote/snapshot?sid=. Phone page: camera projection always; 'Share my screen' button appears only when getDisplayMedia exists (feature-detect). Tab: video + controls (snapshot→/api/remote/snapshot shown in-tab, flip camera, fullscreen, slide prev/next via data channel + iframe postMessage). HONEST banner: browsers cannot drive the phone OS — remote controls the shared view only. Sessions expire in 6h; snapshots capped 2.5MB.
 - Gotcha: python str.replace anchor that is a SUBSTRING of 'async function X()' steals the async prefix — assert unique anchors.
 - Suite 957.
+
+
+## patch123 — phone projection that actually connects (SHIPPED)
+
+- User: scanned the QR and 'nothing happened'. Real causes: (1) phone only signaled AFTER tapping START (missable), (2) in-app browsers (WhatsApp/Instagram webviews) block camera silently, (3) WebRTC with STUN-only often never connects across networks (phone on mobile data) — no TURN available.
+- Fix: heartbeat from page load (tab shows 'phone is on the page — tap START'); big in-app-browser warning + 'Open in Browser' instruction; **compatible frame-stream mode** — if the peer stream is not up within 7s the phone posts JPEG frames (~850ms, 720px, q0.6) to /api/remote/snapshot and the tab displays them (works on EVERY network, Android + iPhone); 3 STUN servers; pendingIce drained after answer; tab status tracks each stage and auto-switches to frame display when no peer stream.
+- `/api/remote/*` is NOT in the do_POST `protected` list → tokenless phone posts work (session id is the capability). iPhone = camera only (Apple blocks browser screen capture) — stated honestly on both screens.
+- Suite 957.

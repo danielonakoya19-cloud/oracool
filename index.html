@@ -4896,14 +4896,15 @@ async function bfHandle(raw){
   }catch(e){ bfBotSay('⚠ Something went wrong — try again.'); }
 }
 function renderPhone(){
-  // patch122: QR-pair a phone and project it here (camera, or screen where the
-  // phone browser supports capture) with honest remote controls for the shared view
+  // patch123: QR-pair a phone and project it — WebRTC peer stream where networks
+  // allow, automatic compatible frame stream everywhere (works on ANY network,
+  // Android + iPhone). The tab shows exactly what stage the phone is at.
   const box=document.getElementById('p-phone'); if(!box) return;
   window._phoneSID=window._phoneSID||'';
   const boot=async()=>{
     if(!window._phoneSID){
       const r=await post('/api/remote/session',{email:myEmail()||'', token:proToken||''}).catch(()=>null);
-      if(r&&r.sid) window._phoneSID=r.sid; else { box.innerHTML='<div class="hint">Could not open a pairing session — try again.</div>'; return; }
+      if(r&&r.sid) window._phoneSID=r.sid; else { box.innerHTML='<div class="hint">Could not open a pairing session — refresh and try again.</div>'; return; }
     }
     const sid=window._phoneSID;
     const pair=(location.origin||'https://oracoolai.com')+'/remote/'+sid;
@@ -4913,14 +4914,18 @@ function renderPhone(){
           <div style="background:#fff;border-radius:18px;padding:12px;display:inline-block;box-shadow:0 16px 44px rgba(0,0,0,.35)">
             <img src="/api/qr?data=${encodeURIComponent(pair)}&fmt=png&scale=7" alt="pair QR" style="width:196px;height:196px;image-rendering:pixelated;border-radius:10px">
           </div>
-          <div class="hint" style="margin-top:8px;max-width:230px">Scan with your phone — or open<br><b style="word-break:break-all">${escapeHtml(pair)}</b></div>
-          <div id="phStatus" class="hint" style="margin-top:6px;color:#f9a8d4">● waiting for the phone…</div>
+          <div class="hint" style="margin-top:8px;max-width:240px">Scan with your phone Camera or Chrome — or open<br><b style="word-break:break-all">${escapeHtml(pair)}</b></div>
+          <div id="phStatus" class="hint" style="margin-top:8px;color:#f9a8d4;max-width:240px">1️⃣ scan the QR → 2️⃣ tap <b>START</b> on the phone → 3️⃣ it appears here</div>
         </div>
         <div style="flex:1;min-width:300px">
-          <div style="border-radius:18px;overflow:hidden;border:1px solid rgba(255,255,255,.18);background:#000">
+          <div style="position:relative;border-radius:18px;overflow:hidden;border:1px solid rgba(255,255,255,.18);background:#000;min-height:220px">
             <video id="phoneVideo" autoplay playsinline muted style="width:100%;max-height:56vh;display:block;background:#000"></video>
+            <img id="phoneFrame" style="width:100%;max-height:56vh;display:none;object-fit:contain;background:#000">
+            <div id="phWait" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+                 background:rgba(12,10,36,.72);color:#a9a3cf;font-size:13px;text-align:center;padding:18px">
+              waiting for the phone stream…</div>
           </div>
-          <div class="row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
             <button class="btn small" id="phSnap">📸 Snapshot</button>
             <button class="btn small" id="phCam">🔄 Flip phone camera</button>
             <button class="btn small" id="phFull">⛶ Full screen</button>
@@ -4928,37 +4933,44 @@ function renderPhone(){
             <button class="btn small" id="phNext">Next ▶</button>
             <button class="btn small ghost" id="phStop">⏹ Stop</button>
           </div>
-          <div class="hint" style="margin-top:8px">Remote buttons control the shared view on the phone (slides · snapshot · camera).
-          A browser cannot drive your phone's OS — that is an honest platform limit, not a missing feature.</div>
+          <div class="hint" style="margin-top:8px">Works on <b>Android and iPhone</b>. iPhone shows the camera (Apple blocks
+          screen capture in browsers); Android can share its real screen. Remote buttons control the shared view —
+          a browser cannot drive your phone's OS itself.</div>
           <div id="phSnapBox" style="margin-top:10px"></div>
         </div>
       </div>`;
-    const st=(t,c)=>{ const e=document.getElementById('phStatus'); if(e){ e.textContent=t; e.style.color=c||'#f9a8d4'; } };
+    const st=(t,c)=>{ const e=document.getElementById('phStatus'); if(e){ e.innerHTML=t; e.style.color=c||'#f9a8d4'; } };
     const send=(cmd)=>{ try{ if(window._phoneCtl&&window._phoneCtl.readyState==='open'){ window._phoneCtl.send(cmd); return; } }catch(e){}
       post('/api/remote/cmd',{sid,cmd}).catch(()=>{}); };
     document.getElementById('phSnap').onclick=()=>{ send('snap');
-      setTimeout(async()=>{ const r=await post('/api/remote/snapshot',{sid}).catch(()=>null);
-        const q=await fetch('/api/remote/snapshot?sid='+encodeURIComponent(sid)).then(r2=>r2.json()).catch(()=>null);
+      setTimeout(async()=>{ const q=await fetch('/api/remote/snapshot?sid='+encodeURIComponent(sid)).then(r2=>r2.json()).catch(()=>null);
         if(q&&q.image){ document.getElementById('phSnapBox').innerHTML='<img src="'+q.image+'" style="max-width:280px;border-radius:12px;border:1px solid rgba(255,255,255,.2)">'; } },1200); };
     document.getElementById('phCam').onclick=()=>send('cam');
     document.getElementById('phStop').onclick=()=>send('stop');
     document.getElementById('phNext').onclick=()=>send('next');
     document.getElementById('phPrev').onclick=()=>send('prev');
-    document.getElementById('phFull').onclick=()=>{ const v=document.getElementById('phoneVideo'); if(v&&v.requestFullscreen) v.requestFullscreen(); };
-    // ---- WebRTC answerer with HTTP signaling relay ----
-    let pc=null, answered=false;
-    const pcNew=()=>{ const p=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302']}]});
-      p.ontrack=(e)=>{ const v=document.getElementById('phoneVideo'); if(v){ v.srcObject=e.streams[0]; v.play().catch(()=>{}); } st('● phone connected — projecting','#67e8f9'); };
-      p.ondatachannel=(e)=>{ window._phoneCtl=e.channel; try{ e.channel.onmessage=(m)=>{ if(String(m.data)==='hello') st('● phone connected — projecting','#67e8f9'); }; }catch(err){} };
+    document.getElementById('phFull').onclick=()=>{ const v=document.getElementById('phoneVideo');
+      const t=(v&&v.srcObject)?v:document.getElementById('phoneFrame'); if(t&&t.requestFullscreen) t.requestFullscreen(); };
+    // ---- display: WebRTC peer stream when connected, frame stream otherwise ----
+    let pc=null, webrtcUp=false, lastSnap=0;
+    const showWait=(msg)=>{ const w=document.getElementById('phWait'); if(w){ w.style.display='flex'; w.innerHTML=msg; } };
+    const hideWait=()=>{ const w=document.getElementById('phWait'); if(w) w.style.display='none'; };
+    const pcNew=()=>{ const p=new RTCPeerConnection({iceServers:[
+        {urls:['stun:stun.l.google.com:19302']},{urls:['stun:stun1.l.google.com:19302']},{urls:['stun:openrelay.metered.ca:80']}]});
+      p.ontrack=(e)=>{ const v=document.getElementById('phoneVideo'); const im=document.getElementById('phoneFrame');
+        if(v){ v.srcObject=e.streams[0]; v.style.display='block'; if(im) im.style.display='none'; v.play().catch(()=>{}); }
+        webrtcUp=true; hideWait(); st('● live peer stream connected','#67e8f9'); };
+      p.ondatachannel=(e)=>{ window._phoneCtl=e.channel; };
       p.onicecandidate=(e)=>{ if(e.candidate) post('/api/remote/signal',{sid,role:'tab',payload:{ice:e.candidate}}).catch(()=>{}); };
       return p; };
     const loop=async()=>{
+      if(!document.getElementById('phoneVideo')) return;
       try{
         const r=await post('/api/remote/pull',{sid,role:'tab'});
         if(r&&r.signals){
           for(const p of r.signals){
             if(p.offer){
-              pc=pcNew(); answered=true;
+              pc=pcNew();
               await pc.setRemoteDescription(p.offer);
               const ans=await pc.createAnswer(); await pc.setLocalDescription(ans);
               await post('/api/remote/signal',{sid,role:'tab',payload:{answer:pc.localDescription}});
@@ -4966,9 +4978,23 @@ function renderPhone(){
             if(p.ice&&pc){ try{ await pc.addIceCandidate(p.ice); }catch(e){} }
           }
         }
-        if(r&&r.peer&&Date.now()/1000-r.peer<25&&document.getElementById('phStatus')&&document.getElementById('phStatus').textContent.indexOf('waiting')>=0) st('phone is on the page — tap Start camera there…','#fbbf24');
+        // phone presence → precise status
+        if(r&&r.peer&&Date.now()/1000-r.peer<25&&!webrtcUp){
+          showWait('phone is on the page — tap the purple <b>START</b> button there…');
+          st('📱 phone connected — tap START on the phone','#fbbf24');
+        }
+        // compatible mode: no peer stream → show the phone's frame stream
+        if(!webrtcUp&&r&&r.peer&&Date.now()/1000-r.peer<25&&Date.now()-lastSnap>1000){
+          lastSnap=Date.now();
+          const q=await fetch('/api/remote/snapshot?sid='+encodeURIComponent(sid)).then(r2=>r2.json()).catch(()=>null);
+          if(q&&q.image){
+            const im=document.getElementById('phoneFrame'), v=document.getElementById('phoneVideo');
+            if(im){ im.src=q.image; im.style.display='block'; if(v) v.style.display='none'; }
+            hideWait(); st('● projecting (compatible mode — every network)','#67e8f9');
+          }
+        }
       }catch(e){}
-      if(document.getElementById('phoneVideo')) setTimeout(loop,1500);
+      setTimeout(loop,1100);
     };
     loop();
   };
