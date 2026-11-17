@@ -556,3 +556,11 @@
 - Route `POST /api/games/live` (public scores, no tier gate). Trigger `LIVE_GAMES_RX` ("live games/scores", "games on now", "what's live", "in play"...) — fires tool `live`, BLOCKS the analysis path (`not _lgm`).
 - Client `liveScoreCard(x)`: chat card with 🔴 live / ✅ finished / 🕒 upcoming rows, auto-refreshes every 60s (max 90 pulls, stops when the card leaves the DOM). Hook on `x.tool==='live'` next to videoJobCard.
 - Honest empty state: 'Nothing is live right now' + next up. Suite 955.
+
+
+## patch121 — multi-source live feed + SportyBet slips + model v2 (SHIPPED)
+
+- **Sources**: ESPN (22 soccer leagues + NBA/WNBA) MERGED with TheSportsDB all-sport eventsday (key 123 — NFL/MLB/tennis rows appear too), deduped by normalized team-pair. FotMob 404-dead, Sofascore 403, SportyBet WAF 403 from servers, livescore.com API 404 — none usable.
+- **SportyBet honesty**: their whole platform is behind CloudFront WAF — booking codes can ONLY be minted on sportybet.com. `sporty_slip()` builds a REAL slip (fixtures + `_slip_pick` schedules + model v2: match · market 1X2 or O/U2.5 · selection · probability · confidence) + the exact 3-step code flow on Sportybet; `book_code_status: only_sportybet_can_mint_codes`; NEVER prints a fake code (test pins this). Trigger `SPORTY_RX` (sportybet|booking code|today's tips|acca|parlay...) takes priority over game analysis.
+- **Model v2**: strength = 40% overall PPG+GD, 40% venue-split PPG (home_ppg/away_ppg), 20% recent-weighted PPG (last5 x1.5); draw band shifts with goals profile (over25 >= .6 both → -0.04; <= .35 both → +0.04); reasons show venue split + over25/BTTS rates + the formula. `_score_val`/`_team_name` harden ESPN shape (string scores crashed patch120 — lesson: ESPN mixes dict/string/empty shapes).
+- Suite 956.

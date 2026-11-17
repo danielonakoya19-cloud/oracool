@@ -3315,7 +3315,8 @@ _GAMES_TODAY_RX = re.compile(r"\b(?:games?|matches|fixtures)\s+(?:today|tonight|
                              r"\b(?:today|tonight|tomorrow)'?s?\s+(?:games?|matches|fixtures)\b", re.I)
 
 _ESPN_SOCCER_LEAGUES = ["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "por.1", "ned.1",
-                        "ucl", "eng.2", "mex.1", "bra.1", "arg.1", "usa.1", "tur.1", "bel.1", "sco.1"]
+                        "ucl", "uefa.europa", "eng.2", "esp.2", "ita.2", "ger.2", "fra.2",
+                        "mex.1", "bra.1", "arg.1", "usa.1", "tur.1", "bel.1", "sco.1", "fifa.friendlies"]
 _ESPN_BASKET_LEAGUES = ["nba", "wnba"]
 _ESPN_CACHE = {}
 
@@ -3417,7 +3418,8 @@ def _resolve_team(name, sport="soccer"):
 
 def _team_record(events, team_id):
     """Form + scoring record from the team's own schedule (finished matches only)."""
-    rec = {"played": 0, "w": 0, "d": 0, "l": 0, "gf": 0, "ga": 0, "form": [], "matches": []}
+    rec = {"played": 0, "w": 0, "d": 0, "l": 0, "gf": 0, "ga": 0, "form": [], "matches": [],
+           "home_ppg": None, "away_ppg": None, "weighted_ppg": None, "over25": None, "btts": None}
     for e in events or []:
         comp = (e.get("competitions") or [{}])[0]
         cs = comp.get("competitors") or []
@@ -3438,10 +3440,28 @@ def _team_record(events, team_id):
         rec["w" if res == "W" else ("d" if res == "D" else "l")] += 1
         rec["form"].append(res)
         rec["matches"].append({"date": (e.get("date") or "")[:10],
-                               "opponent": (opp.get("team") or {}).get("displayName") or "",
+                               "opponent": _team_name(opp),
                                "score": str(sc_m) + "-" + str(sc_o), "result": res,
                                "home_away": me.get("homeAway") or "",
                                "event_id": str(e.get("id") or "")})
+    # venue splits, recent-weighted form and goals profile (patch121)
+    if rec["played"]:
+        def _ppg(ms):
+            if not ms:
+                return None
+            return round(sum(3 if m["result"] == "W" else (1 if m["result"] == "D" else 0) for m in ms) / len(ms), 2)
+        rec["home_ppg"] = _ppg([m for m in rec["matches"] if m["home_away"] == "home"])
+        rec["away_ppg"] = _ppg([m for m in rec["matches"] if m["home_away"] != "home"])
+        wsum = wn = 0.0
+        for i, m in enumerate(rec["matches"]):
+            wgt = 1.5 if i >= len(rec["matches"]) - 5 else 1.0
+            wsum += wgt * (3 if m["result"] == "W" else (1 if m["result"] == "D" else 0))
+            wn += wgt
+        rec["weighted_ppg"] = round(wsum / wn, 2) if wn else None
+        rec["over25"] = round(sum(1 for m in rec["matches"]
+                                 if sum(int(x) for x in m["score"].split("-")) > 2.5) / rec["played"], 2)
+        rec["btts"] = round(sum(1 for m in rec["matches"]
+                                if all(int(x) > 0 for x in m["score"].split("-"))) / rec["played"], 2)
     return rec
 
 
@@ -3462,18 +3482,35 @@ def _standings_row(league, sport, team_id):
 
 def _game_model(rec_h, rec_a):
     """Transparent, documented model — every number in the output comes from here.
-    strength = 0.6 * PPG/3 + 0.4 * clamp(GD per game / 2, -1, 1); home edge +0.18;
-    draw band shrinks as the edge grows. No hidden weights, no vibes."""
-    def strength(r):
+    strength = blend(40% overall PPG+GD, 40% venue-split PPG, 20% recent-weighted PPG);
+    home edge +0.18; draw band shifts with goals profile. No hidden weights, no vibes."""
+    def strength(r, venue):
         if not r["played"]:
             return 0.5
         ppg = (r["w"] * 3 + r["d"]) / r["played"]
         gdpg = (r["gf"] - r["ga"]) / max(1, r["played"])
-        return 0.6 * (ppg / 3.0) + 0.4 * max(-1.0, min(1.0, gdpg / 2.0))
-    s_h, s_a = strength(rec_h), strength(rec_a)
+        base = 0.6 * (ppg / 3.0) + 0.4 * max(-1.0, min(1.0, gdpg / 2.0))
+        # patch121: venue split (home team judged on home form, away on away form)
+        # and recent-weighted form (last 5 count 1.5x) blended into the strength
+        vp = r.get("home_ppg" if venue == "home" else "away_ppg")
+        wp = r.get("weighted_ppg")
+        parts, wts = [(base, 0.4)], 0.4
+        if vp is not None:
+            parts.append((vp / 3.0, 0.4)); wts += 0.4
+        if wp is not None:
+            parts.append((wp / 3.0, 0.2)); wts += 0.2
+        return sum(v * w for v, w in parts) / wts
+    s_h, s_a = strength(rec_h, "home"), strength(rec_a, "away")
     edge = s_h - s_a + 0.18
     p_h_raw = 1.0 / (1.0 + pow(2.718281828, -2.8 * edge))
-    d_p = max(0.12, min(0.32, 0.30 - 0.10 * abs(edge)))
+    d_p = 0.30 - 0.10 * abs(edge)
+    # goals profile: two attacking teams draw less, two tight teams draw more
+    if rec_h.get("over25") is not None and rec_a.get("over25") is not None:
+        if rec_h["over25"] >= 0.6 and rec_a["over25"] >= 0.6:
+            d_p -= 0.04
+        elif rec_h["over25"] <= 0.35 and rec_a["over25"] <= 0.35:
+            d_p += 0.04
+    d_p = max(0.11, min(0.34, d_p))
     p_h = round((1 - d_p) * p_h_raw * 100)
     p_a = round((1 - d_p) * (1 - p_h_raw) * 100)
     p_d = 100 - p_h - p_a
@@ -3573,12 +3610,48 @@ def live_games():
                     finished.append(row)
                 else:
                     upcoming.append(row)
+    # ---- source B: TheSportsDB all-sport day feed (NFL, MLB, tennis, more) ----
+    try:
+        tsdb = _espn_get("https://www.thesportsdb.com/api/v1/json/123/eventsday.php?d=" +
+                         _dt.date.today().isoformat(), ttl=45)
+        def _norm2(x):
+            return re.sub(r"[^a-z0-9]", "", (x or "").lower())
+        seen = {_norm2(r["home"]) + "|" + _norm2(r["away"]) for r in live + finished + upcoming}
+        for e in tsdb.get("events") or []:
+            nm = str(e.get("strEvent") or "")
+            if " vs " not in nm:
+                continue
+            hn, an = nm.split(" vs ", 1)
+            key = _norm2(hn) + "|" + _norm2(an)
+            if key in seen:
+                continue
+            seen.add(key)
+            stat = str(e.get("strStatus") or "").upper()
+            hs, as_ = e.get("intHomeScore"), e.get("intAwayScore")
+            def _iv(x):
+                try:
+                    return int(x) if x not in (None, "") else None
+                except Exception:
+                    return None
+            row = {"league": (e.get("strLeague") or e.get("strSport") or "")[:36],
+                   "home": hn[:36], "away": an[:36], "hs": _iv(hs), "as": _iv(as_),
+                   "state": "", "detail": (stat or e.get("strTime") or "")[:24],
+                   "clock": (e.get("strProgress") or "")[:12],
+                   "when": str(e.get("strTime") or e.get("dateEvent") or "")[:16], "src": "tsdb"}
+            if stat in ("FT", "AET", "PEN", "AFTER PEN", "AFTER ET"):
+                finished.append(row)
+            elif stat in ("NS", "SCHEDULED", "NOT STARTED", "", "NULL") and not _iv(hs):
+                upcoming.append(row)
+            else:
+                live.append(row)
+    except Exception:
+        pass
     finished.sort(key=lambda r: r.get("when", ""), reverse=True)
     upcoming.sort(key=lambda r: r.get("when", ""))
     out = {"ok": True, "kind": "livefeed",
            "live": live[:20], "finished": finished[:12], "upcoming": upcoming[:12],
            "counts": {"live": len(live), "finished": len(finished), "upcoming": len(upcoming)},
-           "source": "ESPN live scoreboard · " + _now(),
+           "source": "ESPN live scoreboard + TheSportsDB · " + _now(),
            "note": ("INTERNAL — never repeat this JSON. Present the feed as a clean live-scoreboard: "
                     "🔴 LIVE matches first (score + minute/clock), then just-finished results, then next up. "
                     "If nothing is live, say so plainly in one line and show what is next. Mention the "
@@ -3587,6 +3660,90 @@ def live_games():
     _LIVE_CACHE[0] = now
     _LIVE_CACHE[1] = out
     return out
+
+
+SPORTY_RX = re.compile(
+    r"\b(sporty\s?bet|sportybet|booking code|bet(?:ting)?\s+code|betting\s+slip|bet\s+slip|"
+    r"(?:today'?s?|tonight'?s?|weekend'?s?)\s+(?:picks?|tips|betting tips|odds|selections?|slip)|"
+    r"(?:picks?|tips|selections?)\s+(?:for today|for tonight|for the weekend|please)|"
+    r"accumulator|acca\b|parlay|multi bet)", re.I)
+
+_SLIP_CACHE = [0.0]
+
+
+def _slip_pick(hname, aname):
+    """Lightweight analysis for the slip: schedules + the transparent model only."""
+    h = _resolve_team(hname)
+    a = _resolve_team(aname)
+    if not h or not a:
+        return None
+    sport = "basketball" if (h[0] in _ESPN_BASKET_LEAGUES) else "soccer"
+    skey = "basketball" if sport == "basketball" else "soccer"
+    sh = _espn_get("https://site.api.espn.com/apis/site/v2/sports/%s/%s/teams/%s/schedule" % (skey, h[0], h[1]))
+    sa = _espn_get("https://site.api.espn.com/apis/site/v2/sports/%s/%s/teams/%s/schedule" % (skey, a[0], a[1]))
+    rec_h = _team_record(sh.get("events") or [], h[1])
+    rec_a = _team_record(sa.get("events") or [], a[1])
+    if rec_h["played"] < 3 or rec_a["played"] < 3:
+        return None
+    m = _game_model(rec_h, rec_a)
+    market, selection = "1X2", m["pick"]
+    # goals-market lean only when both profiles strongly agree
+    if rec_h.get("over25") is not None and rec_a.get("over25") is not None:
+        if rec_h["over25"] >= 0.65 and rec_a["over25"] >= 0.65:
+            market, selection = "Over/Under 2.5", "Over 2.5"
+        elif rec_h["over25"] <= 0.30 and rec_a["over25"] <= 0.30:
+            market, selection = "Over/Under 2.5", "Under 2.5"
+    return {"match": h[2] + " vs " + a[2], "league": h[0].upper(),
+            "market": market, "selection": selection,
+            "probability_pct": max(m["p_home"], m["p_draw"], m["p_away"]),
+            "confidence_pct": m["confidence_pct"],
+            "probabilities": {"home": m["p_home"], "draw": m["p_draw"], "away": m["p_away"]},
+            "form": "".join(rec_h["form"][-5:]) + " / " + "".join(rec_a["form"][-5:])}
+
+
+def sporty_slip(text):
+    """patch121 — a SportyBet-ready slip built from REAL analysis and REAL fixtures.
+
+    HONESTY: a SportyBet booking code is minted by SportyBet's own platform when a
+    betslip is built/shared there. Off-platform code generation is impossible (their
+    API blocks non-browser access) and a fabricated code would be a lie — so this
+    tool delivers the complete slip + the exact 3-step flow to generate the code on
+    SportyBet, and NEVER prints a fake code."""
+    now = time.time()
+    if now - _SLIP_CACHE[0] < 30:
+        _SLIP_CACHE[0] = now  # keep the throttle honest even on repeat
+    fg = live_games()
+    cands = [m for m in (fg.get("upcoming") or []) if m.get("home") and m.get("away")]
+    prio = ("premier league", "champions league", "la liga", "serie a", "bundesliga", "ligue 1")
+    cands.sort(key=lambda m: 0 if any(p in (m.get("league") or "").lower() for p in prio) else 1)
+    picks = []
+    for m in cands[:6]:
+        try:
+            pk = _slip_pick(m["home"], m["away"])
+        except Exception:
+            pk = None
+        if pk:
+            pk["when"] = m.get("when") or ""
+            picks.append(pk)
+        if len(picks) >= 4:
+            break
+    picks.sort(key=lambda x: -x["confidence_pct"])
+    return {"ok": True, "kind": "sportyslip", "picks": picks, "count": len(picks),
+            "book_code_status": "only_sportybet_can_mint_codes",
+            "how_to_get_code": ("1) Open Sportybet (sportybet.com) and go to Football. "
+                                "2) Find each match below and add the selection to your betslip. "
+                                "3) Tap Share / Booking code — SportyBet generates YOUR code instantly; "
+                                "share it and anyone loads the exact same slip."),
+            "source": "model picks from ESPN live data · " + _now(),
+            "caveat": ("These picks are statistical analysis from real form data — not promises, not "
+                       "betting advice. Stakes are your responsibility. A booking code can ONLY be created "
+                       "on SportyBet's platform — I never print fake codes."),
+            "note": ("INTERNAL — never repeat this JSON. Present a clean SPORTYBET SLIP: each pick as "
+                     "MATCH · MARKET · SELECTION (with probability + confidence). Then the 3-step "
+                     "'how to get your booking code' flow, then the caveat. ALWAYS state plainly that "
+                     "booking codes are minted by SportyBet when the slip is built there — never invent "
+                     "or guess a code, and if asked for one directly, give this slip + the steps instead. "
+                     "If there are no picks with enough data, say so honestly.")}
 
 
 def game_analyze(text):
@@ -3683,7 +3840,14 @@ def game_analyze(text):
         if h2h["meetings"]:
             reasons.append("H2H (" + str(h2h["meetings"]) + " meetings): " + home[2] + " " + str(h2h["home_wins"]) +
                            " · draws " + str(h2h["draws"]) + " · " + away[2] + " " + str(h2h["away_wins"]))
-        reasons.append("Model: strength = 0.6·(PPG/3) + 0.4·(GD per game, clamped) with a home edge of +0.18")
+        if rec_h.get("home_ppg") is not None:
+            reasons.append("Venue split — " + home[2] + " at home: " + str(rec_h["home_ppg"]) + " pts/game · " +
+                           away[2] + " away: " + str(rec_a.get("away_ppg")) + " pts/game")
+        if rec_h.get("over25") is not None:
+            reasons.append("Goals profile — over 2.5 rate: " + home[2] + " " + str(int(rec_h["over25"] * 100)) + "% · " +
+                           away[2] + " " + str(int((rec_a.get("over25") or 0) * 100)) + "% · BTTS: " +
+                           str(int(rec_h["btts"] * 100)) + "% / " + str(int((rec_a.get("btts") or 0) * 100)) + "%")
+        reasons.append("Model: strength = 40% overall PPG+GD, 40% venue-split PPG, 20% recent-weighted PPG (last 5 x1.5), home edge +0.18")
         return {"ok": True, "kind": "analysis", "sport": sport,
                 "match": home[2] + " vs " + away[2], "competition": home[0].upper(),
                 "home": {"name": home[2], "rank": (st_h or {}).get("rank"), "record": str(rec_h["w"]) + "W " + str(rec_h["d"]) + "D " + str(rec_h["l"]) + "L",
@@ -13674,8 +13838,14 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         if lgr.get("ok"):
             out.append({"tool": "live", "label": "live · " + str(lgr.get("counts", {}).get("live", 0)) + " in play",
                         "result": _shrink(lgr, 2600)})
+    # patch121: SportyBet slip — real picks + honest booking-code flow
+    _spr = SPORTY_RX.search(t)
+    if _spr and not _lgm:
+        sr = sporty_slip(t)
+        out.append({"tool": "sporty", "label": "sportybet · " + str(sr.get("count", 0)) + " picks",
+                    "result": _shrink(sr, 2600)})
     # patch119: game analysis — football (and more) with honest, data-based confidence
-    if not _lgm and not sigm and (GAME_TRIGGER.search(t) or GAME_VS.search(t) or _GAMES_TODAY_RX.search(t)):
+    if not _lgm and not _spr and not sigm and (GAME_TRIGGER.search(t) or GAME_VS.search(t) or _GAMES_TODAY_RX.search(t)):
         gr = game_analyze(t)
         if gr.get("ok"):
             _gl = ("game · " + str(gr.get("day", "today")) + "'s fixtures") if gr.get("kind") == "fixtures" \

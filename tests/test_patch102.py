@@ -565,3 +565,40 @@ def test_patch120_live_feed(monkeypatch):
     runs = server.auto_tools("live games", tier="enterprise", email="a@x.com", history=[])
     assert any(x.get("tool") == "live" for x in runs)
     assert not any(x.get("tool") == "game" for x in runs)
+
+
+def test_patch121_sporty_slip_is_honest(monkeypatch):
+    import json
+    monkeypatch.setattr(server, "_espn_get", _espn_canned)
+    monkeypatch.setitem(server._ESPN_CACHE, "tm:soccer", (9e12, {
+        "arsenal": ("eng.1", "359", "Arsenal"), "chelsea": ("eng.1", "363", "Chelsea")}))
+    monkeypatch.setattr(server, "_LIVE_CACHE", [0.0, None])
+    monkeypatch.setattr(server, "_SLIP_CACHE", [0.0])
+    # make the fixture feed return one upcoming match to build a slip from
+    def canned2(url, timeout=11, ttl=1800):
+        if "scoreboard" in url and "eng.1" in url:
+            return {"events": [{"id": "p1", "date": "2026-09-08T19:00Z", "league": {"name": "English Premier League"},
+                                "status": {"type": {"state": "pre", "description": "Scheduled"}},
+                                "competitions": [{"competitors": [
+                                    {"homeAway": "home", "team": {"displayName": "Arsenal"}, "score": {"value": None}},
+                                    {"homeAway": "away", "team": {"displayName": "Chelsea"}, "score": {"value": None}}]}]}]}
+        return _espn_canned(url)
+    monkeypatch.setattr(server, "_espn_get", canned2)
+    r = server.sporty_slip("give me sportybet picks for today")
+    assert r.get("ok") and r.get("kind") == "sportyslip"
+    assert r.get("count", 0) >= 1
+    pk = r["picks"][0]
+    assert pk["match"] == "Arsenal vs Chelsea" and pk["selection"] in ("HOME WIN", "AWAY WIN", "DRAW", "Over 2.5", "Under 2.5")
+    assert 42 <= pk["confidence_pct"] <= 84
+    # HONESTY: booking codes are never fabricated
+    assert r["book_code_status"] == "only_sportybet_can_mint_codes"
+    assert "SportyBet generates YOUR code" in r["how_to_get_code"] or "Booking code" in r["how_to_get_code"]
+    flat = json.dumps(r)
+    assert "never print fake codes" in flat and "booking code" in flat.lower()
+    # model v2 leaves its traces in the analysis too
+    a = server.game_analyze("analyze the arsenal vs chelsea game")
+    assert any("Venue split" in x or "Goals profile" in x or "weighted" in x for x in a.get("reasons", []))
+    # trigger: the slip path wins over plain analysis
+    runs = server.auto_tools("today's betting tips please", tier="enterprise", email="a@x.com", history=[])
+    assert any(x.get("tool") == "sporty" for x in runs)
+    assert not any(x.get("tool") == "game" for x in runs)
