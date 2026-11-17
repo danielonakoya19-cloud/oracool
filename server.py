@@ -3360,6 +3360,29 @@ def _team_name(c):
     return str(t or "")[:36]
 
 
+def _espn_get_many(urls, ttl=1800, timeout=11):
+    """Parallel fetch with the shared cache — the live feed touches 25+ endpoints
+    and must stay well inside Render's request window."""
+    urls = list(dict.fromkeys(urls))
+    res = {}
+    todo = []
+    for u in urls:
+        hit = _ESPN_CACHE.get("j:" + u)
+        if hit and hit[0] > time.time():
+            res[u] = hit[1]
+        else:
+            todo.append(u)
+    if todo:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futs = {ex.submit(_espn_get, u, timeout, ttl): u for u in todo}
+            for f in as_completed(futs):
+                try:
+                    res[futs[f]] = f.result()
+                except Exception:
+                    res[futs[f]] = {}
+    return res
+
+
 def _norm_team(n):
     n = (n or "").lower().strip()
     n = re.sub(r"[^a-z0-9 ]+", " ", n)
@@ -3374,10 +3397,12 @@ def _espn_team_map(sport="soccer"):
     if hit and hit[0] > time.time():
         return hit[1]
     leagues = _ESPN_SOCCER_LEAGUES if sport == "soccer" else _ESPN_BASKET_LEAGUES
+    skey = "soccer" if sport == "soccer" else "basketball"
+    urls = {lg: "https://site.api.espn.com/apis/site/v2/sports/%s/%s/teams" % (skey, lg) for lg in leagues}
+    docs = _espn_get_many(list(urls.values()))
     m = {}
     for lg in leagues:
-        d = _espn_get("https://site.api.espn.com/apis/site/v2/sports/%s/%s/teams" %
-                      ("soccer" if sport == "soccer" else "basketball", lg))
+        d = docs.get(urls[lg]) or {}
         for t in (d.get("sports") or [{}])[0].get("leagues", [{}])[0].get("teams", []):
             tt = t.get("team") or {}
             if tt.get("id") and tt.get("displayName"):
@@ -3580,12 +3605,20 @@ def live_games():
     import datetime as _dt
     d0 = _dt.date.today().strftime("%Y%m%d")
     live, finished, upcoming = [], [], []
+    _scan = []
     for sport, skey, leagues in (("soccer", "soccer", _ESPN_SOCCER_LEAGUES),
                                  ("basketball", "basketball", _ESPN_BASKET_LEAGUES)):
         for lg in leagues:
-            d = _espn_get("https://site.api.espn.com/apis/site/v2/sports/%s/%s/scoreboard?dates=%s" %
-                          (skey, lg, d0), ttl=45)
-            for e in d.get("events") or []:
+            _scan.append((lg, "https://site.api.espn.com/apis/site/v2/sports/%s/%s/scoreboard?dates=%s" %
+                          (skey, lg, d0)))
+    _scan.append(("tsdb", "https://www.thesportsdb.com/api/v1/json/123/eventsday.php?d=" +
+                  _dt.date.today().isoformat()))
+    _docs = _espn_get_many([u for _l, u in _scan], ttl=45)
+    for lg, _u in _scan:
+        if lg == "tsdb":
+            continue
+        d = _docs.get(_u) or {}
+        for e in d.get("events") or []:
                 cs = (e.get("competitions") or [{}])[0].get("competitors") or []
                 if len(cs) != 2:
                     continue
@@ -3612,8 +3645,8 @@ def live_games():
                     upcoming.append(row)
     # ---- source B: TheSportsDB all-sport day feed (NFL, MLB, tennis, more) ----
     try:
-        tsdb = _espn_get("https://www.thesportsdb.com/api/v1/json/123/eventsday.php?d=" +
-                         _dt.date.today().isoformat(), ttl=45)
+        tsdb = _docs.get("https://www.thesportsdb.com/api/v1/json/123/eventsday.php?d=" +
+                         _dt.date.today().isoformat()) or {}
         def _norm2(x):
             return re.sub(r"[^a-z0-9]", "", (x or "").lower())
         seen = {_norm2(r["home"]) + "|" + _norm2(r["away"]) for r in live + finished + upcoming}
@@ -3726,7 +3759,20 @@ def sporty_slip(text):
     prio = ("premier league", "champions league", "la liga", "serie a", "bundesliga", "ligue 1")
     cands.sort(key=lambda m: 0 if any(p in (m.get("league") or "").lower() for p in prio) else 1)
     picks = []
-    for m in cands[:6]:
+    # warm the schedule cache for every candidate in one parallel sweep
+    try:
+        _pre = []
+        for m in cands[:6]:
+            for sp in ("soccer", "basketball"):
+                for nm in (m["home"], m["away"]):
+                    r0 = _resolve_team(nm, sp)
+                    if r0:
+                        _pre.append("https://site.api.espn.com/apis/site/v2/sports/%s/%s/teams/%s/schedule" %
+                                    (sp, r0[0], r0[1]))
+        _espn_get_many(_pre, ttl=900)
+    except Exception:
+        pass
+    for m in cands[:5]:
         try:
             pk = _slip_pick(m["home"], m["away"], m.get("league") or "")
         except Exception:
