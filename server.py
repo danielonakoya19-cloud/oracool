@@ -3340,6 +3340,25 @@ def _espn_get(url, timeout=11, ttl=1800):
     return out
 
 
+def _score_val(c):
+    """ESPN mixes shapes: score may be {'value': 2}, '' or '2'. Never crash on it."""
+    sc = (c or {}).get("score")
+    v = sc.get("value") if isinstance(sc, dict) else sc
+    if v is None or v == "":
+        return None
+    try:
+        return int(float(v))
+    except Exception:
+        return None
+
+
+def _team_name(c):
+    t = (c or {}).get("team")
+    if isinstance(t, dict):
+        return (t.get("displayName") or "")[:36]
+    return str(t or "")[:36]
+
+
 def _norm_team(n):
     n = (n or "").lower().strip()
     n = re.sub(r"[^a-z0-9 ]+", " ", n)
@@ -3409,13 +3428,9 @@ def _team_record(events, team_id):
         opp = next((c for c in cs if str(c.get("id")) != str(team_id)), None)
         if not me or not opp:
             continue
-        sc_m = (me.get("score") or {}).get("value")
-        sc_o = (opp.get("score") or {}).get("value")
+        sc_m = _score_val(me)
+        sc_o = _score_val(opp)
         if not done or sc_m is None or sc_o is None:
-            continue
-        try:
-            sc_m = int(float(sc_m)); sc_o = int(float(sc_o))
-        except Exception:
             continue
         rec["played"] += 1
         rec["gf"] += sc_m; rec["ga"] += sc_o
@@ -3540,12 +3555,13 @@ def live_games():
                 hm = next((c for c in cs if c.get("homeAway") == "home"), cs[0])
                 aw = next((c for c in cs if c.get("homeAway") != "home"), cs[1])
                 st = e.get("status") or {}
-                stt = st.get("type") or {}
-                row = {"league": ((e.get("league") or {}).get("name") or lg.upper()),
-                       "home": ((hm.get("team") or {}).get("displayName") or "")[:32],
-                       "away": ((aw.get("team") or {}).get("displayName") or "")[:32],
-                       "hs": (hm.get("score") or {}).get("value"),
-                       "as": (aw.get("score") or {}).get("value"),
+                stt = st.get("type") if isinstance(st.get("type"), dict) else {}
+                lg_nm = e.get("league") if isinstance(e.get("league"), dict) else {}
+                row = {"league": (lg_nm.get("name") or lg.upper()),
+                       "home": _team_name(hm),
+                       "away": _team_name(aw),
+                       "hs": _score_val(hm),
+                       "as": _score_val(aw),
                        "state": stt.get("state") or "",
                        "detail": (stt.get("detail") or stt.get("description") or "")[:24],
                        "clock": (st.get("displayClock") or "")[:12],
@@ -3646,9 +3662,8 @@ def game_analyze(text):
             aw = next((c for c in cs if str(c.get("id")) == str(away[1])), None)
             if not hm or not aw:
                 continue
-            try:
-                shs, sas = int(float((hm.get("score") or {}).get("value") or 0)), int(float((aw.get("score") or {}).get("value") or 0))
-            except Exception:
+            shs, sas = _score_val(hm), _score_val(aw)
+            if shs is None or sas is None:
                 continue
             if not (e.get("status") or {}).get("type", {}).get("completed"):
                 continue
