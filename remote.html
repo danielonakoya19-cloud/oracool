@@ -49,8 +49,15 @@ Chrome/Safari. Then tap the purple button below.</div>
     Use the <b>camera</b> below to project a live view. To mirror the actual screen: cable to a Mac (QuickTime) or AirPlay.
     If your phone is lost/stolen: <b>icloud.com/find</b> → lock &amp; track it.
   </div>
-  <button class="primary" id="startScreen" style="width:100%;display:none">🖥 SHARE MY SCREEN — project my whole phone</button>
+  <button class="primary" id="startScreen" style="width:100%">🖥 SHARE MY SCREEN — project my whole phone</button>
+  <div id="screenHelp" style="display:none;width:100%;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.4);
+       border-radius:14px;padding:12px 14px;font-size:12.5px;color:#fde68a;line-height:1.65;margin:4px 0">
+    ⚠️ <b>This browser cannot share the screen.</b> Screen share only works in <b>Google Chrome</b> (updated to the
+    latest version — ⋮ → Help → About Chrome) or <b>Samsung Internet</b>. It never works inside WhatsApp/Instagram's
+    built-in browser — tap ⋮ → <b>Open in Browser</b> first. Camera mode below always works.
+  </div>
   <button class="primary" id="startCam">📷 project my camera</button>
+  <div class="hint" id="capLine" style="margin-top:6px"></div>
   <div class="row">
     <button class="ghost" id="swap">🔄 Flip camera</button>
     <button class="ghost" id="snapBtn">📸 Snapshot</button>
@@ -80,6 +87,8 @@ var pc=null, dc=null, stream=null, facing="environment";
 var rtcReady=false, frameTimer=null, pendingIce=[], started=false;
 function log(m){ var l=document.getElementById('log'); if(l){ l.textContent=(m+'\n'+l.textContent).slice(0,300); } }
 function setStatus(t,on){ var s=document.getElementById('status'); if(s){ s.textContent=t; s.className=on?'on':''; } }
+function escapeHtml(x){ return String(x==null?'':x).replace(/[&<>"']/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function webview(){
   var u=navigator.userAgent||'';
   return /Instagram|FBAN|FBAV|WhatsApp|Twitter|Line\/|Telegram|TikTok/i.test(u) ||
@@ -107,15 +116,16 @@ function frame(){
   try{ c.getContext('2d').drawImage(v,0,0,c.width,c.height); }catch(e){ return null; }
   return c.toDataURL('image/jpeg',frameCfg.q);
 }
-var frameCfg={ms:650,w:720,q:0.65}, sendAvg=250;
+var frameCfg={ms:550,w:520,q:0.6}, sendAvg=250;
 function sendFrame(){
   var d=frame(); if(!d) return;
   var t0=Date.now();
   post('/api/remote/snapshot',{image:d}).then(function(){
     sendAvg=sendAvg*0.7+(Date.now()-t0)*0.3;
-    if(sendAvg>700){ frameCfg={ms:1100,w:480,q:0.5}; }        // slow link: lighter frames
-    else if(sendAvg<170){ frameCfg={ms:420,w:720,q:0.72}; }    // fast link: smoother stream
-    else { frameCfg={ms:650,w:640,q:0.62}; }
+    if(sendAvg>700){ frameCfg={ms:1000,w:400,q:0.5}; }        // slow link: tiny + light
+    else if(sendAvg<120){ frameCfg={ms:300,w:480,q:0.6}; }     // fast link: ~3 fps, smooth motion
+    else if(sendAvg<250){ frameCfg={ms:450,w:520,q:0.6}; }
+    else { frameCfg={ms:700,w:440,q:0.55}; }
     if(frameTimer){ clearInterval(frameTimer); frameTimer=setInterval(sendFrame,frameCfg.ms); }
   });
 }
@@ -134,11 +144,24 @@ async function connect(){
     pc=new RTCPeerConnection({iceServers:[
       {urls:['stun:stun.l.google.com:19302']},
       {urls:['stun:stun1.l.google.com:19302']},
-      {urls:['stun:openrelay.metered.ca:80']}
+      {urls:['stun:openrelay.metered.ca:80']},
+      {urls:['turn:openrelay.metered.ca:80'],username:'openrelayproject',credential:'openrelayproject'},
+      {urls:['turn:openrelay.metered.ca:443'],username:'openrelayproject',credential:'openrelayproject'},
+      {urls:['turns:openrelay.metered.ca:443?transport=tcp'],username:'openrelayproject',credential:'openrelayproject'}
     ]});
   }catch(e){ startFrames(); return; }
   try{ dc=pc.createDataChannel('ctl'); }catch(e){}
   stream.getTracks().forEach(function(t){ try{ pc.addTrack(t,stream); }catch(e){} });
+  // cap the video bitrate so mobile links stay smooth instead of stalling
+  try{
+    var snd=pc.getSenders().find(function(x){ return x.track&&x.track.kind==='video'; });
+    if(snd&&snd.setParameters){
+      var pr=snd.getParameters();
+      if(!pr.encodings||!pr.encodings.length) pr.encodings=[{}];
+      pr.encodings[0].maxBitrate=1200000;
+      snd.setParameters(pr);
+    }
+  }catch(e){}
   pc.onicecandidate=function(e){ if(e.candidate){ post('/api/remote/signal',{role:'phone',payload:{ice:e.candidate}}); } };
   pc.oniceconnectionstatechange=function(){
     var st=(pc&&pc.iceConnectionState)||'';
@@ -191,10 +214,16 @@ function stopAll(){
 async function start(withScreen){
   if(started){ stopAll(); await new Promise(function(r){ setTimeout(r,250); }); }
   try{
-    if(withScreen && navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia){
-      stream=await navigator.mediaDevices.getDisplayMedia({video:true,audio:false});
+    if(withScreen){
+      if(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia){
+        stream=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:24,max:30}},audio:false});
+      } else {
+        setStatus('screen share needs Chrome — see the yellow box above',false);
+        document.getElementById('screenHelp').style.display='block';
+        return;
+      }
     } else if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
-      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing},audio:false});
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:640},height:{ideal:480},frameRate:{ideal:24,max:30}},audio:false});
     } else {
       setStatus('this browser cannot use the camera — open in Chrome or Safari',false);
       document.getElementById('webwarn').style.display='block';
@@ -237,10 +266,20 @@ document.getElementById('geoBtn').onclick=function(){
 };
 var isIPhone=/iP(hone|od)/.test(navigator.userAgent||'');
 if(isIPhone){ document.getElementById('iosNote').style.display='block'; }
-if(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia && !isIPhone){
-  document.getElementById('startScreen').style.display='block';
-  var camBtn=document.getElementById('startCam');
-  camBtn.className='ghost'; camBtn.style.width='100%'; camBtn.textContent='📷 project my camera instead';
+var hasDisplay=!!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+if(isIPhone){
+  document.getElementById('startScreen').style.display='none';
+} else {
+  if(hasDisplay){
+    var camBtn=document.getElementById('startCam');
+    camBtn.className='ghost'; camBtn.style.width='100%'; camBtn.textContent='📷 project my camera instead';
+  } else {
+    document.getElementById('screenHelp').style.display='block';
+    var camBtn2=document.getElementById('startCam');
+    camBtn2.className='ghost'; camBtn2.style.width='100%';
+  }
+  document.getElementById('capLine').innerHTML='browser: <b>'+escapeHtml((navigator.userAgent.match(/(Chrome|SamsungBrowser|Firefox|EdgA|Version)\/([0-9.]+)/)||['','browser','?']).slice(1).join(' '))+
+    '</b> · screen-share support: <b style="color:'+(hasDisplay?'#67e8f9':'#fbbf24')+'">'+(hasDisplay?'YES':'not in this browser — use Chrome')+'</b>';
 }
 // heartbeat from page load so the laptop tab can show “phone is here”
 poll();

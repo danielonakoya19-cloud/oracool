@@ -4998,7 +4998,10 @@ function renderPhone(){
     const showWait=(msg)=>{ const w=document.getElementById('phWait'); if(w){ w.style.display='flex'; w.innerHTML=msg; } };
     const hideWait=()=>{ const w=document.getElementById('phWait'); if(w) w.style.display='none'; };
     const pcNew=()=>{ const p=new RTCPeerConnection({iceServers:[
-        {urls:['stun:stun.l.google.com:19302']},{urls:['stun:stun1.l.google.com:19302']},{urls:['stun:openrelay.metered.ca:80']}]});
+        {urls:['stun:stun.l.google.com:19302']},{urls:['stun:stun1.l.google.com:19302']},{urls:['stun:openrelay.metered.ca:80']},
+        {urls:['turn:openrelay.metered.ca:80'],username:'openrelayproject',credential:'openrelayproject'},
+        {urls:['turn:openrelay.metered.ca:443'],username:'openrelayproject',credential:'openrelayproject'},
+        {urls:['turns:openrelay.metered.ca:443?transport=tcp'],username:'openrelayproject',credential:'openrelayproject'}]});
       p.ontrack=(e)=>{ const v=document.getElementById('phoneVideo'); const im=document.getElementById('phoneFrame');
         if(v){ v.srcObject=e.streams[0]; v.style.display='block'; if(im) im.style.display='none'; v.play().catch(()=>{}); }
         webrtcUp=true; hideWait(); st('● live peer stream connected','#67e8f9'); };

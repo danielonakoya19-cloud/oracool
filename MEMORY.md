@@ -607,3 +607,11 @@
 - Movement (honest scope — only devices that REPORT): `geo_watch_act` (create/report/get/drop/list) persisted at data/geo_watch.json (cap 200 watches / 250 reports); paired-phone GPS: remote.html `📍 Share my live location` button (geolocation.watchPosition) → POST /api/geo/report {sid,lat,lon,acc} → `geo_track_store` into REMOTE_SESSIONS[sid]['geo'] (cap 300, rejects unknown sids — no ghosts) → GET /api/geo/track?sid= → Intel Movement panel + Phone-Screen `#phGeoLine` live coordinates. Routes `/api/geo/{reverse,watch,report}` in do_POST (before /api/remote/snapshot), `/api/geo/track` in do_GET (before /api/remote/snapshot startswith).
 - Gotcha: dict `{...} | {...}` merge needs py3.9+; escape EVERY geo field in client (API data = untrusted).
 - Suite 959.
+
+
+## patch127 — screen button always visible + TURN relay + smooth video (SHIPPED)
+
+- User (Android): saw NO 'SHARE MY SCREEN' button and camera stream lagged. Cause 1: the button was hidden when `getDisplayMedia` is absent (old Chrome, OEM browsers, in-app webviews) — silently. Fix: button ALWAYS visible on Android; tapping without support shows a yellow guidance box (use updated Chrome / Samsung Internet; never in WhatsApp webview) + `capLine` shows browser + screen-share support YES/no. `start(withScreen)` never silently falls back to camera.
+- Cause 2 (lag): user got the ~1.5fps compatible frame stream because WebRTC failed across networks (STUN-only). Fix: **free TURN relay (openrelay.metered.ca, creds openrelayproject)** added to BOTH sides (phone + tab pcNew) — calls already had it (`callIceServers`); plus bitrate cap 1.2 Mbps via sender params, camera constraints 640×480@24 ideal, screen share 24fps; frame mode cadence pushed: fast <120ms→300ms/480px/q0.6 (~3fps), 250ms tier, default 700ms/440, slow 1000ms/400.
+- Gotcha (repeat of patch122): non-greedy regex `function callIceServers(){[\s\S]*?\n}` matched the INNER `}` and clobbered half the fn — restore from `git show <sha>:index.html` when breaking; NEVER regex-replace multi-brace functions — anchor on unique full blocks.
+- Suite 959.
