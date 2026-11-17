@@ -13590,7 +13590,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
         elif r.get("saw_symbol"):
             out.append({"tool": "signal", "label": "signal", "result": _shrink(r, 800)})
     # patch119: game analysis — football (and more) with honest, data-based confidence
-    if not sigm and (GAME_TRIGGER.search(t) or GAME_VS.search(t)):
+    if not sigm and (GAME_TRIGGER.search(t) or GAME_VS.search(t) or _GAMES_TODAY_RX.search(t)):
         gr = game_analyze(t)
         if gr.get("ok"):
             out.append({"tool": "game", "label": "game · " + str(gr.get("match", ""))[:36] + " · " + str(gr.get("pick", "")),
