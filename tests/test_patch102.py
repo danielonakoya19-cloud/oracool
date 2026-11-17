@@ -679,3 +679,43 @@ def test_patch124_device_and_ip_intel():
     assert r["device"]["ip"] == "102.34.56.78"      # tab sees the phone's identity
     server._device_touch(st, "tab", {"label": "Mac \u00b7 Chrome", "ip": "1.2.3.4"})
     assert st["device"]["ip"] == "102.34.56.78"     # tab side must not overwrite it
+
+
+def test_patch126_geolocate_and_movement():
+    import json
+    def fake_fetch(url, method="GET", headers=None, json_body=None, data=None, timeout=25):
+        if "nominatim" in url:
+            return 200, json.dumps({
+                "display_name": "12, Admiralty Way, Lekki Phase 1, Eti-Osa, Lagos, 106104, Nigeria",
+                "address": {"house_number": "12", "road": "Admiralty Way", "suburb": "Lekki Phase 1",
+                            "city": "Lagos", "county": "Eti-Osa", "state": "Lagos",
+                            "postcode": "106104", "country": "Nigeria", "country_code": "ng"}}).encode(), "application/json"
+        return 500, b"", ""
+    import server
+    server.http_fetch, _keep = fake_fetch, server.http_fetch
+    try:
+        r = server.geo_reverse(6.4478, 3.4723)
+        assert r["ok"] and r["country"] == "Nigeria" and r["country_code"] == "NG"
+        assert r["state"] == "Lagos" and r["local_government"] == "Eti-Osa" and r["city"] == "Lagos"
+        assert r["street"] == "Admiralty Way" and r["house_number"] == "12"
+        assert "Lekki Phase 1" in r["exact_location"] and "Admiralty Way" in r["line"]
+        assert not server.geo_reverse(200, 3)["ok"]          # latitude out of range
+        assert not server.geo_reverse("x", "y")["ok"]        # junk input
+    finally:
+        server.http_fetch = _keep
+    m = server.GEO_RX.search("where is 6.5244, 3.3792 ?")
+    assert m and float(m.group(1)) == 6.5244 and float(m.group(2)) == 3.3792
+    assert not server.GEO_RX.search("price 1.5, 2.3 dollars")   # no false trigger on prices
+    w = server.geo_watch_act("create", owner="t@t.com", label="dispatch bus", lat=6.5, lon=3.3)
+    assert w["ok"] and w["id"]
+    r2 = server.geo_watch_act("report", wid=w["id"], lat=6.51, lon=3.31, acc=12)
+    assert r2["ok"] and r2["reports"] == 2
+    g = server.geo_watch_act("get", wid=w["id"])
+    assert g["ok"] and len(g["watch"]["reports"]) == 2
+    lst = server.geo_watch_act("list", owner="t@t.com")
+    assert lst["ok"] and any(x["id"] == w["id"] for x in lst["watches"])
+    server._remote_session("geotest1")   # a real paired session exists first
+    assert server.geo_track_store("geotest1", 6.52, 3.38, 8)["ok"]
+    tr = server.geo_track_get("geotest1")
+    assert tr["ok"] and tr["latest"]["lat"] == 6.52 and tr["points"]
+    assert not server.geo_track_store("no-such-sid", 1, 1)["ok"]   # no ghost sessions

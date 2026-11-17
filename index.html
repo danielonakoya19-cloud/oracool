@@ -4480,7 +4480,7 @@ async function send(text){
                     (_cur.detail?' — <span style="opacity:.72">'+escapeHtml(String(_cur.detail).slice(0,90))+'</span>':'')+
                     ' <span class="dots"></span></div>'; scrollChat(); }
                 }catch(e){} }
-              if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build'){ if(x.coins_left!=null){ COINS=COINS||{}; COINS.balance=x.coins_left; renderCoinPill(); } if(x.url){ _builtCard=true; try{ buildCard(x); }catch(e){ addAI('<b>🏗 '+(x.name||'Your site')+'</b> is built — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the live preview here</a> (auto-saved to your vault).'); } } } if(x.tool==='edit'&&x.url){ _builtCard=true; try{ buildCard(x); }catch(e){ addAI('<b>✏️ '+(x.name||'Your site')+' updated</b> — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the new preview</a>.'); } } if(x.tool==='publish'){ try{ addAI(x.url?('🌐 Published — live at <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener">'+escapeHtml(x.url)+'</a>'):''); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } if(x.tool==='connector_link'){ try{ connLinkCard(x); }catch(e){} } if(x.tool==='wa_link'){ try{ waQRSheet(); }catch(e){} } if(x.tool==='video'){ try{ videoJobCard(x); }catch(e){} } if(x.tool==='live'){ try{ liveScoreCard(x); }catch(e){} } if(x.tool==='chart'){ try{ chartCard(x); }catch(e){} } if(x.tool==='qr'){ try{ qrCard(x); }catch(e){} } if(x.tool==='cert'){ try{ certCard(x); }catch(e){} } }); }
+              if(j.__tools && j.__tools.length){ const who=b.querySelector('.who'); if(who) who.insertAdjacentHTML('afterend','<div class="toolsline">⚙️ Live: '+j.__tools.map(x=>escapeHtml(x.label)).join(' · ')+'</div>'); if(j.__tools.some(x=>x.tool==='camera') && !window.__camAutoRunning){ try{ cameraAuto(); }catch(e){} } j.__tools.forEach(x=>{ if(x.tool==='build'){ if(x.coins_left!=null){ COINS=COINS||{}; COINS.balance=x.coins_left; renderCoinPill(); } if(x.url){ _builtCard=true; try{ buildCard(x); }catch(e){ addAI('<b>🏗 '+(x.name||'Your site')+'</b> is built — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the live preview here</a> (auto-saved to your vault).'); } } } if(x.tool==='edit'&&x.url){ _builtCard=true; try{ buildCard(x); }catch(e){ addAI('<b>✏️ '+(x.name||'Your site')+' updated</b> — <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener" style="color:var(--cyan2,#7dd3fc)">open the new preview</a>.'); } } if(x.tool==='publish'){ try{ addAI(x.url?('🌐 Published — live at <a href="'+escapeHtml(x.url)+'" target="_blank" rel="noopener">'+escapeHtml(x.url)+'</a>'):''); }catch(e){} } if(x.tool==='github_push'){ try{ githubPushCard(x); }catch(e){} } if(x.tool==='connector_link'){ try{ connLinkCard(x); }catch(e){} } if(x.tool==='wa_link'){ try{ waQRSheet(); }catch(e){} } if(x.tool==='video'){ try{ videoJobCard(x); }catch(e){} } if(x.tool==='live'){ try{ liveScoreCard(x); }catch(e){} } if(x.tool==='geo'){ try{ geoCard(x); }catch(e){} } if(x.tool==='chart'){ try{ chartCard(x); }catch(e){} } if(x.tool==='qr'){ try{ qrCard(x); }catch(e){} } if(x.tool==='cert'){ try{ certCard(x); }catch(e){} } }); }
               if(j.__cores && j.__cores.length){ const who=b.querySelector('.who'); if(who){ const all=[...new Set([...coreNames, ...j.__cores])]; who.textContent='ORA-COOL · '+all.join(' + '); } }
               if(j.__media && j.__media.length){ streamMedia=streamMedia.concat(j.__media); }
               const d=j.choices?.[0]?.delta?.content; if(d){ acc+=d; const _shown=_noApp(_cleanReply(acc)); body.textContent=_shown+(acc.indexOf('```')>=0&&_shown.length<_cleanReply(acc).length?' ✨ drawing it for you…':''); if(turnSpeaker)turnSpeaker.feed(_shown); scrollChat(); }
@@ -5021,6 +5021,22 @@ function renderPhone(){
           }
         }
         if(r&&r.device) devCard(r.device);
+        // live movement of the paired phone (when it shares location)
+        if(!window._phGeoT||Date.now()-window._phGeoT>5000){
+          window._phGeoT=Date.now();
+          fetch('/api/geo/track?sid='+encodeURIComponent(sid)).then(x=>x.json()).then(g=>{
+            if(g&&g.ok&&g.latest){
+              const e=document.getElementById('phDevice');
+              if(e&&!document.getElementById('phGeoLine')){
+                e.insertAdjacentHTML('beforeend',
+                  `<div id="phGeoLine">🗺 <b>live location</b> <span id="phGeoTxt"></span></div>`);
+              }
+              const t=document.getElementById('phGeoTxt');
+              if(t) t.textContent=g.latest.lat.toFixed(5)+', '+g.latest.lon.toFixed(5)+
+                ' ±'+Math.round(g.latest.acc||0)+'m · '+g.points.length+' report(s) · full breakdown in Intel → 📍 Geolocate';
+            }
+          }).catch(()=>{});
+        }
         // phone presence → precise status
         if(r&&r.peer&&Date.now()/1000-r.peer<25&&!webrtcUp){
           showWait('phone is on the page — tap the purple <b>START</b> button there…');
@@ -6118,6 +6134,7 @@ function renderStatus(){
 
 /* ---------- intel panel ---------- */
 const INTEL_TOOLS=[
+  {id:'geo',label:'📍 Geolocate',free:true,ph:'6.5244, 3.3792',hint:'Coordinates → the FULL address: country, state, local government (LGA), city, street, exact spot + live map. Movement watch: the Phone Screen tab can share live location and the trail appears here.'},
   {id:'ip',label:'IP Recon',free:false,req:'starter',ph:'8.8.8.8',hint:'Geolocation, ISP/ASN, reverse DNS, IPinfo.'},
   {id:'domain',label:'Domain',free:false,req:'starter',ph:'example.com',hint:'WHOIS/RDAP + full DNS records.'},
   {id:'email',label:'Email Breach',free:false,req:'starter',ph:'name@example.com',hint:'Infostealer + leak indexes (live, no key needed).'},
@@ -6201,6 +6218,11 @@ async function runIntel(){
   const authorized=!!($('#secAuth')&&$('#secAuth').checked);
   try{
     switch(curIntel){
+      case 'geo': {
+        const m=val.match(/(-?\d{1,3}\.\d+)\s*[,;\s]\s*(-?\d{1,3}\.\d+)/);
+        if(!m){ $('#intelout').innerHTML='<div class="errbox">Enter coordinates as: latitude, longitude — e.g. 6.5244, 3.3792</div>'; return; }
+        r=await post('/api/geo/reverse',{lat:parseFloat(m[1]),lon:parseFloat(m[2])});
+        break; }
       case 'ip': r=await post('/api/osint/ip',{ip:val}); break;
       case 'domain': r=await post('/api/osint/domain',{domain:val}); break;
       case 'email': r=await post('/api/osint/email',isAdminSession()&&settings.hibpKey?{email:val,hibp_key:settings.hibpKey}:{email:val}); break;
@@ -6309,7 +6331,67 @@ async function trackerPreview(slug){
   await paint();
   trackerPoll=setInterval(paint, 4000);
 }
+function geoAddressRows(r){
+  const rows=[
+    ['🌍 country',(r.country||'—')+(r.country_code?' ('+r.country_code+')':'')],
+    ['🏛 state', r.state||'—'],
+    ['🏘 local government', r.local_government||'—'],
+    ['🏙 city', r.city||'—'],
+    ['📍 neighbourhood', r.neighbourhood||'—'],
+    ['🛣 street', ((r.house_number||'')+' '+(r.street||'')).trim()||'—'],
+    ['📮 postcode', r.postcode||'—'],
+    ['🎯 exact location', r.exact_location||'—'],
+    ['🛰 source', r.source||'—'],
+  ];
+  return `<div style="line-height:2.1">${rows.map(x=>`<div><span class="hint" style="display:inline-block;min-width:158px">${x[0]}</span> <b>${escapeHtml(String(x[1]))}</b></div>`).join('')}</div>`;
+}
+function geoMapIframe(lat,lon){
+  const bb=[(lon-0.004).toFixed(5),(lat-0.002).toFixed(5),(lon+0.004).toFixed(5),(lat+0.002).toFixed(5)].join(',');
+  return `<iframe title="map" style="width:100%;height:240px;border:1px solid var(--line);border-radius:14px;margin-top:10px"
+    src="https://www.openstreetmap.org/export/embed.html?bbox=${bb}&layer=mapnik&marker=${lat},${lon}"></iframe>
+    <div class="hint" style="margin-top:6px">🗺 <a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}" target="_blank" rel="noopener">Open the full map</a></div>`;
+}
+async function geoMovePanel(r){
+  let h='<div class="tag" style="margin-top:14px">📡 Movement watch</div>';
+  const sid=window._phoneSID||'';
+  if(sid){
+    const tr=await fetch('/api/geo/track?sid='+encodeURIComponent(sid)).then(x=>x.json()).catch(()=>null);
+    if(tr&&tr.ok&&tr.points&&tr.points.length){
+      const L=tr.points[tr.points.length-1];
+      const addr=await post('/api/geo/reverse',{lat:L.lat,lon:L.lon}).catch(()=>null);
+      h+=`<div class="okbox" style="margin-top:8px">📱 paired phone is sharing location — <b>${tr.points.length}</b> report(s), latest just now<br>
+        <b>${L.lat.toFixed(5)}, ${L.lon.toFixed(5)}</b> (±${Math.round(L.acc||0)} m)${addr&&addr.ok?' · '+escapeHtml(addr.exact_location||''):''}</div>`;
+      h+=geoMapIframe(L.lat,L.lon);
+      h+=`<div style="margin-top:8px;max-height:150px;overflow:auto">${tr.points.slice(-12).reverse().map(q=>
+        `<div class="logline"><span class="ts">${new Date(q.t*1000).toLocaleTimeString()}</span> ${q.lat.toFixed(5)}, ${q.lon.toFixed(5)} ±${Math.round(q.acc||0)}m</div>`).join('')}</div>`;
+      h+='<div class="hint" style="margin-top:6px">To share a device\'s movement: open <b>📱 Phone Screen</b> on the paired phone → <b>📍 Share my live location</b>.</div>';
+    } else {
+      h+='<div class="hint" style="margin-top:8px">No device is sharing movement right now. Pair a phone (📱 Phone Screen tab) and tap <b>📍 Share my live location</b> on it — its trail appears here live. Nothing can pull a device\'s location without the device itself sharing it.</div>';
+    }
+  } else {
+    h+='<div class="hint" style="margin-top:8px">Pair a phone (📱 Phone Screen tab) and tap <b>📍 Share my live location</b> on it — its movement appears here live. A location can only be watched when the device itself reports it.</div>';
+  }
+  return h;
+}
+async function geoCard(x){
+  const r=x.result||{};
+  if(!r.ok){ addAI('📍 Geolocate: '+escapeHtml(r.error||'lookup failed')); return; }
+  addAI(`<div class="toolcard"><b>📍 ${escapeHtml(x.label||'geolocate')}</b><div style="margin-top:8px">${geoAddressRows(r)}</div>
+    ${geoMapIframe(r.coordinates.lat,r.coordinates.lon)}
+    <div class="hint" style="margin-top:6px">🛰 ${escapeHtml(r.source||'')} · map data © OpenStreetMap contributors</div></div>`);
+}
 function renderIntelResult(tool,val,r){
+  if(tool==='geo'){
+    const out=$('#intelout');
+    if(!r||r.error||!r.ok){ out.innerHTML='<div class="errbox">'+escapeHtml((r&&r.error)||'Lookup failed — try again.')+'</div>'; return; }
+    out.innerHTML=`<div class="okbox">📍 <b>${escapeHtml(val)}</b> resolved</div>
+      <div style="margin-top:10px">${geoAddressRows(r)}</div>
+      ${geoMapIframe(r.coordinates.lat,r.coordinates.lon)}
+      <div class="hint" style="margin-top:6px">🛰 ${escapeHtml(r.source||'')} · map data © OpenStreetMap contributors</div>
+      <div id="geoMove"></div>`;
+    geoMovePanel(r).then(h=>{ const e=document.getElementById('geoMove'); if(e) e.innerHTML=h; });
+    return;
+  }
   if(!r){ $('#intelout').innerHTML=''; return; }
   if(r.error){ $('#intelout').innerHTML=`<div class="errbox">${escapeHtml(r.error)}</div>`; return; }
   if(r.locked){ $('#intelout').innerHTML='<div class="warnbox">'+escapeHtml(r.message||'This tool needs a higher plan.')+'</div>'; openUpgrade(r.plan||'pro'); return; }

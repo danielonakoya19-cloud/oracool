@@ -3704,6 +3704,196 @@ def _device_touch(st, role, device):
     st["device"] = d
 
 
+# --------------------------------------------------------------- patch126 geolocate
+# Coordinates -> full address (reverse geocoding) + movement watch. Reverse
+# geocode sources: OpenStreetMap Nominatim (street-level) with BigDataCloud as
+# fallback (no key). Movement = positions REPORTED by a device (the paired phone
+# shares its own GPS; nothing can pull a location from a device that does not).
+
+GEO_WATCH = os.path.join(DATA_DIR, "geo_watch.json")
+_GEO_LOCK = threading.Lock()
+
+GEO_RX = re.compile(r"(-?\d{1,3}\.\d{3,})\s*[,;/]\s*(-?\d{1,3}\.\d{3,})")
+GEO_CTX = re.compile(r"coordinate|gps|lat|lon|longitude|latitude|location|locate|address|"
+                     r"where|position|geocode|place|spot|pin|street|exact", re.I)
+
+
+def _geo_watch_load():
+    try:
+        with open(GEO_WATCH, "r", encoding="utf-8") as f:
+            rows = json.load(f)
+        return rows if isinstance(rows, list) else []
+    except Exception:
+        return []
+
+
+def _geo_watch_save(rows):
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = GEO_WATCH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(rows[-200:], f)
+        os.replace(tmp, GEO_WATCH)
+    except Exception:
+        pass
+
+
+def _geo_val(*cands):
+    for c in cands:
+        if c not in (None, ""):
+            return str(c)
+    return ""
+
+
+def geo_reverse(lat, lon):
+    """patch126 — coordinate -> full address. Honest layers: country, state,
+    local government (LGA/county), city, street, house number, exact location."""
+    try:
+        lat = float(lat); lon = float(lon)
+    except Exception:
+        return {"ok": False, "error": "Give coordinates as two numbers: latitude, longitude — e.g. 6.5244, 3.3792."}
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return {"ok": False, "error": "Coordinates out of range — latitude must be −90…90 and longitude −180…180."}
+    out = {"ok": True, "coordinates": {"lat": lat, "lon": lon},
+           "country": "", "country_code": "", "state": "", "local_government": "",
+           "city": "", "street": "", "house_number": "", "postcode": "",
+           "neighbourhood": "", "exact_location": "", "source": "",
+           "map_url": "https://www.openstreetmap.org/?mlat=" + str(lat) + "&mlon=" + str(lon) + "#map=17/" + str(lat) + "/" + str(lon)}
+    # ---- source 1: OpenStreetMap Nominatim (street-level detail)
+    try:
+        st, raw, _ = http_fetch(
+            "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1"
+            "&lat=" + str(lat) + "&lon=" + str(lon), timeout=20)
+        if st == 200:
+            j = json.loads(raw)
+            a = j.get("address") or {}
+            out.update({
+                "country": _geo_val(a.get("country")),
+                "country_code": str(a.get("country_code") or "").upper(),
+                "state": _geo_val(a.get("state"), a.get("region"), a.get("province"), a.get("state_district")),
+                "local_government": _geo_val(a.get("county"), a.get("LGA"), a.get("state_district"), a.get("municipality")),
+                "city": _geo_val(a.get("city"), a.get("town"), a.get("village"), a.get("municipality"), a.get("locality")),
+                "street": _geo_val(a.get("road"), a.get("pedestrian"), a.get("footway"), a.get("path")),
+                "house_number": _geo_val(a.get("house_number")),
+                "postcode": _geo_val(a.get("postcode")),
+                "neighbourhood": _geo_val(a.get("suburb"), a.get("neighbourhood"), a.get("quarter"), a.get("hamlet")),
+                "exact_location": _geo_val(j.get("display_name")),
+                "source": "OpenStreetMap Nominatim",
+            })
+    except Exception:
+        pass
+    # ---- source 2: BigDataCloud (keyless) fills any gaps
+    if not out.get("exact_location") or not out.get("country"):
+        try:
+            st, raw, _ = http_fetch(
+                "https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=" + str(lat) +
+                "&longitude=" + str(lon) + "&localityLanguage=en", timeout=20)
+            if st == 200:
+                j = json.loads(raw)
+                _lga = ""
+                for ad in ((j.get("localityInfo") or {}).get("administrative") or []):
+                    nm = str(ad.get("name") or ""); ds = str(ad.get("description") or "")
+                    if re.search(r"local government|\bLGA\b|district|division|county|commune|borough", nm + " " + ds, re.I):
+                        _lga = nm; break
+                out["country"] = out["country"] or _geo_val(j.get("countryName"))
+                out["country_code"] = out["country_code"] or str(j.get("countryCode") or "").upper()
+                out["state"] = out["state"] or _geo_val(j.get("principalSubdivision"))
+                out["local_government"] = out["local_government"] or _lga
+                out["city"] = out["city"] or _geo_val(j.get("city"), j.get("locality"))
+                out["postcode"] = out["postcode"] or _geo_val(j.get("postcode"))
+                out["neighbourhood"] = out["neighbourhood"] or _geo_val(j.get("locality"))
+                if not out["exact_location"]:
+                    out["exact_location"] = ", ".join(x for x in
+                        [out["neighbourhood"], out["city"], out["local_government"], out["state"], out["country"]] if x)
+                if not out.get("source"):
+                    out["source"] = "BigDataCloud"
+        except Exception:
+            pass
+    if not out.get("exact_location"):
+        out["exact_location"] = ", ".join(x for x in
+            [out["street"] or out["neighbourhood"], out["city"], out["state"], out["country"]] if x) or ""
+    if not out.get("source"):
+        return {"ok": False, "error": "Reverse geocoding is unreachable right now (both map sources failed) — try again in a moment.",
+                "coordinates": {"lat": lat, "lon": lon}}
+    out["line"] = (" | ".join(x for x in [
+        ("country: " + out["country"]) if out["country"] else "",
+        ("state: " + out["state"]) if out["state"] else "",
+        ("local government: " + out["local_government"]) if out["local_government"] else "",
+        ("city: " + out["city"]) if out["city"] else "",
+        ("street: " + ((" ".join(x for x in [out["house_number"], out["street"]] if x)) or out["street"])) if out["street"] else "",
+    ] if x))
+    return out
+
+
+def geo_watch_act(action, wid="", owner="", label="", lat=None, lon=None, acc=None):
+    """patch126 — movement watch store: pin a coordinate or follow reported positions."""
+    with _GEO_LOCK:
+        rows = _geo_watch_load()
+        action = (action or "").strip().lower()
+        if action == "create":
+            try:
+                lat = float(lat) if lat not in (None, "") else None
+                lon = float(lon) if lon not in (None, "") else None
+            except Exception:
+                return {"ok": False, "error": "Invalid coordinates."}
+            rec = {"id": os.urandom(4).hex(), "owner": (owner or "")[:80],
+                   "label": (label or "watch")[:80], "created": time.time(),
+                   "lat": lat, "lon": lon,
+                   "reports": ([{"lat": lat, "lon": lon, "acc": acc, "t": time.time()}]
+                               if lat is not None and lon is not None else [])}
+            rows.append(rec); _geo_watch_save(rows)
+            return {"ok": True, "id": rec["id"], "watch": rec}
+        if action == "report":
+            rec = next((r for r in rows if r.get("id") == wid), None)
+            if not rec:
+                return {"ok": False, "error": "Watch not found."}
+            try:
+                lat = float(lat); lon = float(lon)
+            except Exception:
+                return {"ok": False, "error": "Invalid coordinates."}
+            rec.setdefault("reports", []).append({"lat": lat, "lon": lon, "acc": acc, "t": time.time()})
+            rec["reports"] = rec["reports"][-250:]
+            rec["lat"], rec["lon"] = lat, lon
+            _geo_watch_save(rows)
+            return {"ok": True, "id": rec["id"], "reports": len(rec["reports"])}
+        if action == "get":
+            rec = next((r for r in rows if r.get("id") == wid), None)
+            return {"ok": bool(rec), "watch": rec} if rec else {"ok": False, "error": "Watch not found."}
+        if action == "drop":
+            rows[:] = [r for r in rows if r.get("id") != wid]
+            _geo_watch_save(rows)
+            return {"ok": True}
+        # list
+        sel = [r for r in rows if (not owner or r.get("owner") == owner)]
+        slim = [{k: v for k, v in r.items() if k != "reports"} | {"reports": len(r.get("reports") or []),
+                 "latest": (r.get("reports") or [{}])[-1]} for r in sel]
+        return {"ok": True, "watches": slim[-50:]}
+
+
+def geo_track_store(sid, lat, lon, acc=None):
+    """positions REPORTED by a paired phone (remote.html shares its own GPS)."""
+    st = REMOTE_SESSIONS.get(sid)
+    if not st:
+        return {"ok": False, "error": "No active pairing session for that id."}
+    try:
+        lat = float(lat); lon = float(lon)
+    except Exception:
+        return {"ok": False, "error": "Invalid coordinates."}
+    pts = st.setdefault("geo", [])
+    pts.append({"lat": lat, "lon": lon, "acc": acc, "t": time.time()})
+    st["geo"] = pts[-300:]
+    return {"ok": True, "points": len(st["geo"])}
+
+
+def geo_track_get(sid):
+    st = REMOTE_SESSIONS.get(sid)
+    if not st:
+        return {"ok": False, "error": "No active pairing session for that id."}
+    pts = st.get("geo") or []
+    return {"ok": True, "points": pts[-300:], "device": dict(st.get("device") or {}),
+            "latest": pts[-1] if pts else None}
+
+
 def remote_signal(sid, role, payload, device=None):
     st = _remote_session(sid)
     role = "phone" if str(role).lower().startswith("p") else "tab"
@@ -14262,6 +14452,20 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     fs = _fred_series(low)
     if fs:
         out.append({"tool": "fred", "label": fs, "result": _shrink(market_fred(fs))})
+    # patch126: coordinate -> FULL address (country · state · LGA · city · street · exact)
+    gm = GEO_RX.search(t)
+    if gm:
+        _gl = _go = None
+        try:
+            _gl, _go = float(gm.group(1)), float(gm.group(2))
+        except Exception:
+            pass
+        if _gl is not None and -90 <= _gl <= 90 and -180 <= _go <= 180 \
+                and (GEO_CTX.search(t) or len(gm.group(1).split(".")[-1]) >= 4 or len(gm.group(2).split(".")[-1]) >= 4):
+            gr = geo_reverse(_gl, _go)
+            out.append({"tool": "geo",
+                        "label": "geolocate · " + gm.group(1) + ", " + gm.group(2),
+                        "result": _shrink(gr, 2200)})
     # IP
     ipm = re.search(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", t)
     # patch38: every OSINT lookup (IP · domain · email · phone · username · dark-web) is Starter+
@@ -16511,6 +16715,10 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 self.send_error(404, "remote page missing")
             return
+        if path.startswith("/api/geo/track"):
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            self._send_json(geo_track_get((qs.get("sid") or [""])[0]))
+            return
         if path.startswith("/api/remote/snapshot"):
             _q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             _sid = str((_q.get("sid") or [""])[0])[:24]
@@ -17345,6 +17553,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(remote_pull(str(body.get("sid") or ""), body.get("role"), dev))
             elif path == "/api/remote/cmd":
                 self._send_json(remote_cmd(str(body.get("sid") or ""), body.get("cmd")))
+            elif path == "/api/geo/reverse":
+                self._send_json(geo_reverse(body.get("lat"), body.get("lon")))
+            elif path == "/api/geo/watch":
+                self._send_json(geo_watch_act(body.get("action") or "list", wid=str(body.get("id") or ""),
+                                              owner=str(body.get("owner") or ""), label=str(body.get("label") or ""),
+                                              lat=body.get("lat"), lon=body.get("lon"), acc=body.get("acc")))
+            elif path == "/api/geo/report":
+                self._send_json(geo_track_store(str(body.get("sid") or ""), body.get("lat"), body.get("lon"), body.get("acc")))
             elif path == "/api/remote/snapshot":
                 self._send_json(remote_snapshot(str(body.get("sid") or ""), body.get("image")))
             elif path == "/api/video":

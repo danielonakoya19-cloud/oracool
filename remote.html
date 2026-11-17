@@ -54,8 +54,10 @@ Chrome/Safari. Then tap the purple button below.</div>
   <div class="row">
     <button class="ghost" id="swap">🔄 Flip camera</button>
     <button class="ghost" id="snapBtn">📸 Snapshot</button>
+    <button class="ghost" id="geoBtn">📍 Share my live location</button>
     <button class="ghost" id="stopBtn">⏹ Stop</button>
   </div>
+  <div class="hint" style="margin-top:6px">📍 Live location shares this phone's GPS movement with your Intel → Geolocate → Movement watch. Only devices that choose to share can be watched.</div>
   <div class="log" id="log"></div>
 </div>
 
@@ -218,6 +220,21 @@ document.getElementById('startScreen').onclick=function(){ start(true); };
 document.getElementById('swap').onclick=function(){ handleCmd('cam'); };
 document.getElementById('snapBtn').onclick=function(){ handleCmd('snap'); };
 document.getElementById('stopBtn').onclick=stopAll;
+var geoWatch=null;
+document.getElementById('geoBtn').onclick=function(){
+  var btn=this;
+  if(geoWatch){ try{ navigator.geolocation.clearWatch(geoWatch); }catch(e){} geoWatch=null;
+    btn.textContent='📍 Share my live location'; setStatus('location sharing stopped',false); return; }
+  if(!navigator.geolocation){ setStatus('this browser has no location service',false); return; }
+  geoWatch=navigator.geolocation.watchPosition(function(pos){
+    var c=pos.coords;
+    post('/api/geo/report',{lat:c.latitude, lon:c.longitude, acc:c.accuracy});
+    setStatus('location sharing ● ('+c.latitude.toFixed(4)+', '+c.longitude.toFixed(4)+')',true);
+  },function(){ setStatus('location permission denied — allow it to share movement',false); },
+  {enableHighAccuracy:true, maximumAge:6000, timeout:30000});
+  btn.textContent='⏹ Stop sharing location';
+  setStatus('waiting for GPS…',true);
+};
 var isIPhone=/iP(hone|od)/.test(navigator.userAgent||'');
 if(isIPhone){ document.getElementById('iosNote').style.display='block'; }
 if(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia && !isIPhone){

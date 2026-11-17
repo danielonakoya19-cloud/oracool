@@ -597,3 +597,13 @@
 - remote.html: **"🖥 SHARE MY SCREEN" is now the PRIMARY button on Android** (camera demoted to ghost) — getDisplayMedia captures the whole screen incl. other apps (MediaProjection); iOS note card explains Apple's block + Find My; `<details>` control explainer on the phone page; screen-share status + background caveat (backgrounded pages cannot send frames — keep tab foreground / Add to Home screen; WebRTC survives backgrounding better than frame mode).
 - renderPhone: "📖 Setup & remote-control guide" toggle panel on the tab — per-platform screen projection steps, real control tools, security (Find My), privacy line (own devices only).
 - Suite 958.
+
+
+## patch126 — Geolocate: coordinates → FULL address + movement watch (SHIPPED)
+
+- User: the AI refused a coordinate saying no reverse-geocoding tool existed → built it. `geo_reverse(lat,lon)` — Nominatim (street-level) primary + BigDataCloud keyless fallback → {country(+code), state, local_government (LGA/county), city, neighbourhood, street+house_number, postcode, exact_location, line, source, map_url}. Out-of-range/junk → honest error. FREE tool (like weather, not tier-gated).
+- Chat dispatch: `GEO_RX` = `(-?\d{1,3}\.\d{3,})\s*[,;/]\s*(-?\d{1,3}\.\d{3,})` + GEO_CTX words OR ≥3 decimals per side → tool card `geolocate · lat, lon`; inserted BEFORE the IP block in `auto_tools` (no clash with phone/IP regexes). Client hook `x.tool==='geo'` → `geoCard` (address rows + OSM embed iframe; no raw JSON).
+- Intel suite: new FIRST tool `📍 Geolocate` (free:true) — coordinates input → full address table + OpenStreetMap embed iframe + full-map link + **Movement watch** panel.
+- Movement (honest scope — only devices that REPORT): `geo_watch_act` (create/report/get/drop/list) persisted at data/geo_watch.json (cap 200 watches / 250 reports); paired-phone GPS: remote.html `📍 Share my live location` button (geolocation.watchPosition) → POST /api/geo/report {sid,lat,lon,acc} → `geo_track_store` into REMOTE_SESSIONS[sid]['geo'] (cap 300, rejects unknown sids — no ghosts) → GET /api/geo/track?sid= → Intel Movement panel + Phone-Screen `#phGeoLine` live coordinates. Routes `/api/geo/{reverse,watch,report}` in do_POST (before /api/remote/snapshot), `/api/geo/track` in do_GET (before /api/remote/snapshot startswith).
+- Gotcha: dict `{...} | {...}` merge needs py3.9+; escape EVERY geo field in client (API data = untrusted).
+- Suite 959.
