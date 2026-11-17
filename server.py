@@ -13593,8 +13593,9 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     if not sigm and (GAME_TRIGGER.search(t) or GAME_VS.search(t) or _GAMES_TODAY_RX.search(t)):
         gr = game_analyze(t)
         if gr.get("ok"):
-            out.append({"tool": "game", "label": "game · " + str(gr.get("match", ""))[:36] + " · " + str(gr.get("pick", "")),
-                        "result": _shrink(gr, 2600)})
+            _gl = ("game · " + str(gr.get("day", "today")) + "'s fixtures") if gr.get("kind") == "fixtures" \
+                else ("game · " + str(gr.get("match", ""))[:36] + " · " + str(gr.get("pick", "")))
+            out.append({"tool": "game", "label": _gl, "result": _shrink(gr, 2600)})
         elif gr.get("saw_game"):
             out.append({"tool": "game", "label": "game · analysis",
                         "result": _shrink(gr, 800)})
