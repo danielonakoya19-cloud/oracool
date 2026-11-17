@@ -4938,9 +4938,29 @@ function renderPhone(){
           <div id="phDevice" style="margin-top:10px;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.35);border-radius:14px;padding:11px 14px;font-size:12px;line-height:1.9;color:#e9d5ff">
             <b>📱 device &amp; network</b><div class="hint" style="margin:4px 0 0">waiting for the phone to open the link…</div>
           </div>
-          <div class="hint" style="margin-top:8px">Works on <b>Android and iPhone</b>. iPhone shows the camera (Apple blocks
-          screen capture in browsers); Android can share its real screen. Remote buttons control the shared view —
-          a browser cannot drive your phone's OS itself.</div>
+          <button class="btn small" id="phGuideBtn" style="margin-top:10px">📖 Setup &amp; remote-control guide</button>
+          <div id="phGuide" style="display:none;margin-top:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:16px;font-size:12.5px;line-height:1.75;max-height:52vh;overflow:auto">
+            <div style="font-size:14px;font-weight:800;color:#e9d5ff">🖥 Project the whole phone screen</div>
+            <div><b>Android (Chrome):</b> on the phone tap <b>🖥 SHARE MY SCREEN</b> → tap <b>Start now</b> on the Android
+            dialog. Your <b>entire phone</b> — home screen, apps, everything — projects here, and it keeps sharing when
+            you switch apps. Tip: ⋮ → <b>Add to Home screen</b> so the page stays alive.</div>
+            <div><b>iPhone:</b> Apple blocks every browser from capturing the iPhone screen. In the browser you get the
+            <b>camera</b> view. Real screen mirroring: cable to a Mac (QuickTime) or AirPlay to Apple TV.</div>
+            <div style="font-size:14px;font-weight:800;color:#e9d5ff;margin-top:12px">🎮 Control the phone from this laptop (press apps)</div>
+            <div>Straight answer: <b>no website can control a phone's OS</b> — Android and iOS refuse touches from outside
+            devices. This is a phone security rule, not a missing button. What actually works:</div>
+            <div>• <b>scrcpy</b> (free, open source) — see and <b>fully control</b> an Android with your laptop mouse and
+            keyboard, over USB or the same Wi-Fi: <b>github.com/Genymobile/scrcpy</b></div>
+            <div>• <b>Phone Link</b> — built into Windows 11: mirror + control Android from the laptop, no cables.</div>
+            <div>• <b>TeamViewer Host</b> / <b>AirDroid</b> on the phone — view + control from anywhere.</div>
+            <div>• <b>iPhone:</b> remote control does not exist (Apple lock) — view-only via cable/AirPlay.</div>
+            <div style="font-size:14px;font-weight:800;color:#e9d5ff;margin-top:12px">🛡 Someone entered / phone security</div>
+            <div>• <b>google.com/android/find</b> (Find My Device) or <b>icloud.com/find</b> (Find My) — locate, lock, ring
+            and erase from any browser, right now.</div>
+            <div>• Live watch: point the projecting phone's camera at the door and keep this tab open.</div>
+            <div class="hint" style="margin-top:10px">🔒 The projection is peer-to-peer and encrypted. Only monitor or
+            control devices you own or are responsible for.</div>
+          </div>
           <div id="phSnapBox" style="margin-top:10px"></div>
         </div>
       </div>`;
@@ -4956,6 +4976,8 @@ function renderPhone(){
     document.getElementById('phPrev').onclick=()=>send('prev');
     document.getElementById('phNext2').onclick=()=>send('next');
     document.getElementById('phPrev2').onclick=()=>send('prev');
+    document.getElementById('phGuideBtn').onclick=()=>{ const g=document.getElementById('phGuide');
+      if(g) g.style.display=(g.style.display==='none'||!g.style.display)?'block':'none'; };
     const fmtAgo=(ts)=>{ if(!ts) return '—'; const d=Math.round(Date.now()/1000-ts);
       if(d<5) return 'just now'; if(d<60) return d+'s ago'; if(d<3600) return Math.round(d/60)+'m ago'; return Math.round(d/3600)+'h ago'; };
     const devCard=(dev)=>{

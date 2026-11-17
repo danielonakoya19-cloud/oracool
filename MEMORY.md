@@ -589,3 +589,11 @@
 - Stream polish: adaptive frame streaming (measures send time → 420ms/720px/q0.72 on fast links, 650ms/640/0.62 default, 1100ms/480/0.5 on slow), live fps in the tab status, slide arrows overlaid on the video, object-fit contain for screen shares, online/network-lost reconnect messaging.
 - Gotcha: the REAL remote_signal/remote_pull text (phone_seen/tab_seen, signals store 'p') differed from the session-memory paraphrase (seen-dict, 'payload') — ALWAYS sed the live region before patching.
 - Suite 958.
+
+
+## patch125 — screen projection first + honest remote-control guide (SHIPPED)
+
+- User wanted (1) the whole phone SCREEN projected (not camera) and (2) to press apps on the phone from the laptop (remote control, monitoring). HARD TRUTH (standing no-fake rule): **no website can drive a phone's OS** — Android/iOS refuse external touch injection. Real tools: scrcpy (free, Android, full control over USB/WiFi), Windows Phone Link, TeamViewer Host/AirDroid; iPhone remote control does not exist (Apple lock) — view via cable/AirPlay; security: google.com/android/find + icloud.com/find.
+- remote.html: **"🖥 SHARE MY SCREEN" is now the PRIMARY button on Android** (camera demoted to ghost) — getDisplayMedia captures the whole screen incl. other apps (MediaProjection); iOS note card explains Apple's block + Find My; `<details>` control explainer on the phone page; screen-share status + background caveat (backgrounded pages cannot send frames — keep tab foreground / Add to Home screen; WebRTC survives backgrounding better than frame mode).
+- renderPhone: "📖 Setup & remote-control guide" toggle panel on the tab — per-platform screen projection steps, real control tools, security (Find My), privacy line (own devices only).
+- Suite 958.

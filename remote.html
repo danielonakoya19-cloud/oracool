@@ -43,8 +43,14 @@ Chrome/Safari. Then tap the purple button below.</div>
   <div class="step"><b>1</b><div>Tap the purple button below and allow the camera.</div></div>
   <div class="step"><b>2</b><div>Keep this page open — your screen appears on the laptop tab in seconds.</div></div>
   <video id="self" autoplay playsinline muted></video>
-  <button class="primary" id="startCam">📷 START — project my camera</button>
-  <button class="ghost" id="startScreen" style="width:100%;display:none">🖥 Share my screen instead</button>
+  <div id="iosNote" style="display:none;width:100%;background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.4);
+       border-radius:14px;padding:12px 14px;font-size:12.5px;color:#bfdbfe;line-height:1.6;margin:4px 0 2px">
+    🍎 <b>iPhone:</b> Apple does not allow ANY browser to capture the iPhone screen — this is an Apple rule, not a bug.
+    Use the <b>camera</b> below to project a live view. To mirror the actual screen: cable to a Mac (QuickTime) or AirPlay.
+    If your phone is lost/stolen: <b>icloud.com/find</b> → lock &amp; track it.
+  </div>
+  <button class="primary" id="startScreen" style="width:100%;display:none">🖥 SHARE MY SCREEN — project my whole phone</button>
+  <button class="primary" id="startCam">📷 project my camera</button>
   <div class="row">
     <button class="ghost" id="swap">🔄 Flip camera</button>
     <button class="ghost" id="snapBtn">📸 Snapshot</button>
@@ -53,10 +59,17 @@ Chrome/Safari. Then tap the purple button below.</div>
   <div class="log" id="log"></div>
 </div>
 
-<div class="honest">🔒 The stream goes straight from your phone to your laptop tab (encrypted). <b>Honest limit:</b>
-a browser cannot let anyone drive your phone's operating system — the laptop buttons control this shared view
-(snapshots, camera flip, slides) only. iPhone shows the camera (Apple does not allow screen capture in the browser);
-Android can share the real screen where Chrome supports it.</div>
+<details class="honest" style="max-width:470px;background:rgba(255,255,255,.05);border-radius:12px;padding:10px 14px">
+  <summary style="cursor:pointer;font-size:12.5px;color:#c4b5fd"><b>Can this laptop press apps and control my phone?</b> — the honest answer</summary>
+  <div style="margin-top:8px">
+    <b>No website can control a phone's operating system</b> — Android and iOS block outside devices from sending touches.
+    That is a security rule of the phone itself. What <b>actually</b> works if you need to press apps remotely:
+    <div style="margin:7px 0 0">🤖 <b>Android:</b> <b>scrcpy</b> (free &amp; open source) — full control with mouse/keyboard over USB or same Wi-Fi ·
+    <b>Phone Link</b> (built into Windows laptops) · <b>TeamViewer Host</b> / <b>AirDroid</b> (control from anywhere).</div>
+    <div style="margin:7px 0 0">🍎 <b>iPhone:</b> remote control does not exist (Apple lock). Screen viewing via cable/AirPlay only.</div>
+    <div style="margin:7px 0 0">🛡 <b>Phone missing / someone entered:</b> <b>google.com/android/find</b> or <b>icloud.com/find</b> → locate, lock, ring, erase from any browser.</div>
+  </div>
+</details>
 
 <script>
 (function(){
@@ -106,7 +119,9 @@ function sendFrame(){
 }
 function startFrames(){
   if(frameTimer) return;
-  setStatus('streaming ● compatible mode (works on every network)',true);
+  setStatus(window._sharing
+    ? 'streaming ● keep this tab in the foreground — background pages cannot send frames'
+    : 'streaming ● compatible mode (works on every network)',true);
   log('frame streaming on');
   frameTimer=setInterval(sendFrame,frameCfg.ms);
   sendFrame();
@@ -190,9 +205,10 @@ async function start(withScreen){
   }
   var v=document.getElementById('self'); v.srcObject=stream; v.muted=true;
   v.style.objectFit=withScreen?'contain':'cover';
+  window._sharing=!!withScreen;
   try{ await v.play(); }catch(e){}
   started=true;
-  setStatus('starting the stream…',true);
+  setStatus(withScreen?'sharing your whole screen — look at the laptop now…':'starting the stream…',true);
   connect();
   // heartbeat: the laptop tab sees the phone immediately, even before the stream
   var d0=frame(); if(d0) setTimeout(function(){ post('/api/remote/snapshot',{image:d0}); },400);
@@ -202,8 +218,12 @@ document.getElementById('startScreen').onclick=function(){ start(true); };
 document.getElementById('swap').onclick=function(){ handleCmd('cam'); };
 document.getElementById('snapBtn').onclick=function(){ handleCmd('snap'); };
 document.getElementById('stopBtn').onclick=stopAll;
-if(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia){
+var isIPhone=/iP(hone|od)/.test(navigator.userAgent||'');
+if(isIPhone){ document.getElementById('iosNote').style.display='block'; }
+if(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia && !isIPhone){
   document.getElementById('startScreen').style.display='block';
+  var camBtn=document.getElementById('startCam');
+  camBtn.className='ghost'; camBtn.style.width='100%'; camBtn.textContent='📷 project my camera instead';
 }
 // heartbeat from page load so the laptop tab can show “phone is here”
 poll();
