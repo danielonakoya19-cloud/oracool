@@ -630,3 +630,11 @@
 - remote.html no-support guidance now names the detected browser + Chrome 105+ requirement + scrcpy/Phone Link fallback.
 - **CRITICAL FILE-SAFETY GOTCHA:** Python `Path.write_text` with a JS string containing raw surrogate escapes (`'\ud83d\udcd6'`) raises UnicodeEncodeError MID-WRITE and **truncates the file to 0 bytes**. remote.html was destroyed and restored via `git show bfa8116:remote.html`. ALWAYS use ASCII `\uXXXX` escapes inside JS strings; assert `len(s)>5000` before writes; restore via git when truncated.
 - Suite 960.
+
+
+## patch130 — perfection pass: zero raw user errors (SHIPPED)
+
+- Global Handler guard: `handle_one_request` override → ANY route crash returns clean JSON {"ok":false,"error":"A temporary server hiccup…"} (traceback → server log only). `_try(fn,...)` helper wraps the 11 network-heavy tool calls in auto_tools (movers/weather/signal/live/sporty/game/forecast/crypto/stock/fred/phone) → raising tool becomes a clean error card, dispatch continues. Direct auto_tools call site wrapped; tool-thread errors no longer re-raised into the SSE (degrade to no-tools).
+- Client: `errText(e)` maps 'Failed to fetch'/NetworkError → 'Connection problem — check your internet…'; chat catch + intel catch + 7 domain/build catches sanitized (console keeps detail). System prompt (systemPrompt() in index.html — NOT server.py) gains PERFECTION RULE: no raw errors/JSON/excuses to users; failures → one clean sentence with cause+fix; 'cannot do X' banned when tools can; broken feature → one clarifying question then numbered steps.
+- Gotchas: `function escapeHtml(x){` doesn't exist in index.html (it's `(s)`); the system prompt template literal lives in index.html; a stray backtick in a `+`-chained clause breaks node --check — end clauses with exactly `` `+ ``.
+- Suite 961.

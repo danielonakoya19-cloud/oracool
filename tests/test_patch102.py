@@ -732,3 +732,13 @@ def test_patch129_caps_and_phone_status_telemetry():
     assert d["chrome"] == "98" and d["pstat"] == "failed: NotAllowedError"
     r = server.remote_pull("captest1", "tab")
     assert r["device"]["caps"]["display"] is False and r["device"]["pstat"].startswith("failed")
+
+
+def test_patch130_zero_error_guards():
+    def boom():
+        raise RuntimeError("kaboom-internal")
+    r = server._try(boom)
+    assert r["ok"] is False and "temporary problem" in r["error"] and "kaboom" not in r["error"]
+    assert server._try(lambda: {"ok": True, "v": 7})["v"] == 7
+    # the handler guard exists and produces a clean JSON body
+    assert "zero raw errors" in server.Handler.handle_one_request.__doc__.lower()

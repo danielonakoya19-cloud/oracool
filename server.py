@@ -14002,6 +14002,18 @@ def _fred_series(low):
             return sid
     return None
 
+def _try(fn, *a, **kw):
+    """patch130: a tool that raises must never break the chat — clean, honest error card."""
+    try:
+        return fn(*a, **kw)
+    except Exception as e:
+        try:
+            print("[tool-error]", getattr(fn, "__name__", str(fn)), str(e)[:200], flush=True)
+        except Exception:
+            pass
+        return {"ok": False, "error": "This lookup hit a temporary problem — please try again in a moment."}
+
+
 def _shrink(obj, limit=1200):
     try:
         txt = json.dumps(obj, default=str)
@@ -14395,18 +14407,18 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     if re.search(r"\b(morning brief|briefing|movers?|what'?s moving|top (gainers|losers|movers))\b", low) \
             and not SIGNAL_TRIGGER.search(t):
         out.append({"tool": "movers", "label": "market movers",
-                    "result": _shrink(market_movers(), 1400)})
+                    "result": _shrink(_try(market_movers), 1400)})
     # weather (patch88: briefings with no city fall back to the user's timezone city)
     wc = _weather_city(t)
     if not wc and re.search(r"\b(weather|briefing|forecast|temperature)\b", low):
         wc = ((tz or "").split("/")[-1].replace("_", " ").strip()) or "Lagos"
     if wc:
         out.append({"tool": "weather", "label": "weather · " + wc,
-                    "result": _shrink(weather(wc))})
+                    "result": _shrink(_try(weather, wc))})
     # trade signals (patch80) — BUY/SELL/WAIT + confidence for any market/horizon
     sigm = SIGNAL_TRIGGER.search(t)
     if sigm:
-        r = market_signal(t)
+        r = _try(market_signal, t)
         if r.get("ok"):
             out.append({"tool": "signal",
                          "label": "signal · " + str(r.get("market", "")) + " · " + str(r.get("signal", "")) + (" · live" if r.get("live") else ""),
@@ -14416,19 +14428,19 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     # patch120: LIVE feed — in-play scores with a self-updating card
     _lgm = LIVE_GAMES_RX.search(t)
     if _lgm:
-        lgr = live_games()
+        lgr = _try(live_games)
         if lgr.get("ok"):
             out.append({"tool": "live", "label": "live · " + str(lgr.get("counts", {}).get("live", 0)) + " in play",
                         "result": _shrink(lgr, 2600)})
     # patch121: SportyBet slip — real picks + honest booking-code flow
     _spr = SPORTY_RX.search(t)
     if _spr and not _lgm:
-        sr = sporty_slip(t)
+        sr = _try(sporty_slip, t)
         out.append({"tool": "sporty", "label": "sportybet · " + str(sr.get("count", 0)) + " picks",
                     "result": _shrink(sr, 2600)})
     # patch119: game analysis — football (and more) with honest, data-based confidence
     if not _lgm and not _spr and not sigm and (GAME_TRIGGER.search(t) or GAME_VS.search(t) or _GAMES_TODAY_RX.search(t)):
-        gr = game_analyze(t)
+        gr = _try(game_analyze, t)
         if gr.get("ok"):
             _gl = ("game · " + str(gr.get("day", "today")) + "'s fixtures") if gr.get("kind") == "fixtures" \
                 else ("game · " + str(gr.get("match", ""))[:36] + " · " + str(gr.get("pick", "")))
@@ -14438,7 +14450,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
                         "result": _shrink(gr, 800)})
     # patch79: full market analysis + 7-day forecast (crypto, forex, metals, stocks)
     if not sigm and FORECAST_TRIGGER.search(t):
-        fr = market_forecast(t)
+        fr = _try(market_forecast, t)
         if fr.get("ok"):
             out.append({"tool": "forecast", "label": "forecast · " + str(fr.get("market")),
                         "result": _shrink(fr, 2600)})
@@ -14448,16 +14460,16 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     cid = _crypto_coin(t)
     if cid:
         out.append({"tool": "crypto", "label": cid + " price",
-                    "result": _shrink(market_crypto(cid))})
+                    "result": _shrink(_try(market_crypto, cid))})
     # stock
     sym = _stock_symbol(t)
     if sym:
         out.append({"tool": "stock", "label": sym + " stock",
-                    "result": _shrink(market_stock(sym))})
+                    "result": _shrink(_try(market_stock, sym))})
     # FRED economic
     fs = _fred_series(low)
     if fs:
-        out.append({"tool": "fred", "label": fs, "result": _shrink(market_fred(fs))})
+        out.append({"tool": "fred", "label": fs, "result": _shrink(_try(market_fred, fs))})
     # patch126: coordinate -> FULL address (country · state · LGA · city · street · exact)
     gm = GEO_RX.search(t)
     if gm:
@@ -14493,7 +14505,7 @@ def auto_tools(text, tier="free", ha_url=None, ha_token=None, email=None, crypto
     ph = re.search(r"\+?\d[\d\s\-()]{8,}", t)
     if ph and _osint_ok and any(k in low for k in ("phone", "number", "trace", "carrier", "who called", "caller")):
         out.append({"tool": "phone", "label": "phone " + ph.group(0),
-                    "result": _shrink(phone_intel.lookup(ph.group(0), key_lookup=key, http_fetch=http_fetch))})
+                    "result": _shrink(_try(phone_intel.lookup, ph.group(0), key_lookup=key, http_fetch=http_fetch))})
     # username OSINT (free) — @handle or "username X"
     if not em:
         um = re.search(r"@([a-z0-9_\.]{2,30})", low)
@@ -16553,6 +16565,27 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def handle_one_request(self):
+        """patch130: zero raw errors for users — any handler crash becomes one clean,
+        retryable JSON message; the traceback goes to the server log only."""
+        try:
+            BaseHTTPRequestHandler.handle_one_request(self)
+        except Exception:
+            try:
+                print("[handler-error]", self.path, traceback.format_exc()[-700:], flush=True)
+            except Exception:
+                pass
+            try:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "ok": False,
+                    "error": "A temporary server hiccup happened — please try that again in a moment."}).encode())
+            except Exception:
+                pass
+
     def _sse_begin(self):
         """patch40: open the event-stream early (before slow tools such as the site builder run) so the
         browser gets headers within a second and keep-alive pings while OraCool works — no 45s timeout."""
@@ -18356,15 +18389,21 @@ class Handler(BaseHTTPRequestHandler):
                         except Exception:
                             pass
                         if "e" in _tr:
-                            raise _tr["e"]
+                            try: print("[tools-thread-error]", str(_tr["e"])[:200], flush=True)
+                            except Exception: pass
                         tool_runs = _tr.get("r") or []
                     else:
-                        tool_runs = auto_tools(last_user, tier,
+                        try:
+                            tool_runs = auto_tools(last_user, tier,
                                                ha_url=body.get("ha_url"),
                                                ha_token=body.get("ha_token"),
                                                email=chat_email, crypto_site=_site, history=messages,
                                                force_build=(_mode == "build"),
                                                tz=str(body.get("tz") or ""))
+                        except Exception as _e130:
+                            try: print("[tools-error]", str(_e130)[:200], flush=True)
+                            except Exception: pass
+                            tool_runs = []
                 except Exception as e:
                     tool_runs = [{"tool": "error", "label": "auto-tools", "result": str(e)[:200]}]
         tool_ctx = tool_context(tool_runs)

@@ -2566,6 +2566,9 @@ function speak(text){
 const chat=$('#chat');
 const history=[];
 const MAXH=30;
+function errText(e){ const m=(e&&e.message)||String(e||'');
+  return /failed to fetch|networkerror|load failed|network request failed|err_connection/i.test(m)
+    ? 'Connection problem — check your internet and try again.' : String(m).slice(0,160); }
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function updateGreet(){
   try{
@@ -2852,7 +2855,7 @@ function domainModal(s){
   let poll=null;
   const checkStatus=async()=>{ if(!document.getElementById('domOv')){ if(poll) clearTimeout(poll); return; }
     const bd=document.getElementById('domBadge'); if(!bd) return; bd.innerHTML='<span class="spinner"></span> checking DNS…';
-    const r=await post('/api/sites',{action:'domain_status',sub:sub}).catch(e=>({error:String(e)}));
+    const r=await post('/api/sites',{action:'domain_status',sub:sub}).catch(e=>({error:errText(e)}));
     const det=document.getElementById('domDetail');
     if(!r.ok){ bd.textContent='⚠ '+(r.error||'check failed'); return; }
     if(r.stage==='live'){ bd.innerHTML='🟢 <b style="color:#25d366">LIVE</b>'; if(det) det.innerHTML='✅ <a href="https://'+escapeHtml(r.domain)+'/" target="_blank" rel="noopener">https://'+escapeHtml(r.domain)+'</a> is serving your site with HTTPS. Done!'; if(poll) clearTimeout(poll); }
@@ -2896,7 +2899,7 @@ function domainModal(s){
     m.querySelector('#domFindGo').onclick=async()=>{ const v=(m.querySelector('#domFind').value||'').trim().toLowerCase().replace(/^https?:\/\//,'').split('/')[0].split('.')[0];
       const res=m.querySelector('#domResults'); const fb=m.querySelector('#domFindGo'); fb.disabled=true;
       res.innerHTML='<span class="spinner"></span> checking availability…';
-      const r=await post('/api/domains',{action:'search',name:v}).catch(e=>({error:String(e)})); fb.disabled=false;
+      const r=await post('/api/domains',{action:'search',name:v}).catch(e=>({error:errText(e)})); fb.disabled=false;
       if(!r.ok){ res.innerHTML='⚠ '+escapeHtml(r.error||'search failed'); return; }
       res.innerHTML=r.results.map(x=>'<div style="display:flex;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid rgba(126,148,193,.15)">'+
         (x.available?('🟢 <b>'+escapeHtml(x.domain)+'</b><span class="hint">'+escapeHtml(x.price||'')+'</span><button class="btn gold small" data-ord="'+escapeHtml(x.domain)+'" data-price="'+escapeHtml(x.price||'')+'" style="min-height:30px;margin-left:auto">Order via OraCool</button>')
@@ -2904,7 +2907,7 @@ function domainModal(s){
       res.querySelectorAll('[data-ord]').forEach(b=>{ b.onclick=async()=>{ const dom=b.dataset.ord;
         if(!confirm('Order '+dom+' ('+(b.dataset.price||'')+ ') through OraCool?\n\nThe team registers it for you and connects it to this site. You keep full ownership — the team confirms the exact yearly price with you before any payment.')) return;
         b.disabled=true; b.textContent='ordering…';
-        const rr=await post('/api/domains',{action:'order',domain:dom,years:1}).catch(e=>({error:String(e)}));
+        const rr=await post('/api/domains',{action:'order',domain:dom,years:1}).catch(e=>({error:errText(e)}));
         if(rr.ok){ b.textContent='✅ ordered'; loadOrders(); } else { b.textContent='⚠ failed'; res.insertAdjacentHTML('beforeend','<div class="hint">⚠ '+escapeHtml(rr.error||'order failed')+'</div>'); } }; });
     };
     loadOrders(); };
@@ -2912,7 +2915,7 @@ function domainModal(s){
     if(noteEl&&noteEl.parentElement) noteEl=noteEl; 
     if(!v||v.indexOf('.')<0){ if(noteEl) noteEl.textContent='Type a real domain first, e.g. mybrand.com'; return; }
     if(noteEl) noteEl.innerHTML='<span class="spinner"></span> attaching…';
-    const r=await post('/api/sites',{action:'domain',sub:sub,domain:v}).catch(e=>({error:String(e)}));
+    const r=await post('/api/sites',{action:'domain',sub:sub,domain:v}).catch(e=>({error:errText(e)}));
     if(r.ok){ try{ renderWeb(); }catch(e){} renderConnected(r.domain||v, r.hosting); } else { if(noteEl) noteEl.textContent='⚠ '+(r.error||'failed'); } };
   (s.custom_domain? renderConnected(s.custom_domain) : renderSetup());
 }
@@ -2926,7 +2929,7 @@ function versionsModal(slug, name){
   const B=m.querySelector('#verBody');
   m.querySelector('#verX').onclick=()=>m.remove();
   m.addEventListener('click',e=>{ if(e.target===m) m.remove(); });
-  const load=async()=>{ const r=await post('/api/builds',{action:'versions',slug:slug}).catch(e=>({error:String(e)}));
+  const load=async()=>{ const r=await post('/api/builds',{action:'versions',slug:slug}).catch(e=>({error:errText(e)}));
     if(!r.ok){ B.innerHTML='<div class="hint">⚠ '+escapeHtml(r.error||'failed')+'</div>'; return; }
     if(!r.versions||!r.versions.length){ B.innerHTML='<div class="hint">No history yet — from now on, every edit automatically keeps the previous version here. Restore any time.</div>'; return; }
     B.innerHTML=r.versions.map(v=>'<div style="display:flex;gap:8px;align-items:center;padding:8px 4px;border-bottom:1px solid rgba(126,148,193,.15)">'+
@@ -2934,7 +2937,7 @@ function versionsModal(slug, name){
       '<button class="btn ghost small" data-res="'+v.v+'" style="min-height:32px">Restore</button></div>').join('');
     B.querySelectorAll('[data-res]').forEach(b=>{ b.onclick=async()=>{ if(!confirm('Restore version v'+b.dataset.res+'? (The current version is saved to history first — nothing is lost.)')) return;
       b.disabled=true; b.textContent='restoring…';
-      const rr=await post('/api/builds',{action:'restore',slug:slug,version:Number(b.dataset.res)}).catch(e=>({error:String(e)}));
+      const rr=await post('/api/builds',{action:'restore',slug:slug,version:Number(b.dataset.res)}).catch(e=>({error:errText(e)}));
       if(rr.ok){ b.textContent='✅ restored'; setTimeout(()=>{ try{ renderWeb(); }catch(e){} },300); setTimeout(load,900); }
       else { b.disabled=false; b.textContent='Restore'; B.insertAdjacentHTML('beforeend','<div class="hint">⚠ '+escapeHtml(rr.error||'failed')+'</div>'); } }; });
   };
@@ -2960,7 +2963,7 @@ function editModal(x){
     const v=(m.querySelector('#editMsg').value||'').trim();
     if(!v){ m.querySelector('#editNote').textContent='Write what to change first.'; return; }
     goB.disabled=true; goB.textContent='Applying… (10-30s)'; m.querySelector('#editNote').innerHTML='<span class="spinner"></span> Editing in place — keeping your site, changing only what you asked.';
-    const r=await post('/api/builds',{action:'edit',slug:slug,instructions:v}).catch(e=>({error:String(e)}));
+    const r=await post('/api/builds',{action:'edit',slug:slug,instructions:v}).catch(e=>({error:errText(e)}));
     goB.disabled=false; goB.textContent='🪄 Apply edit (free)';
     if(r&&r.ok){ m.querySelector('#editNote').textContent='✅ Updated. Refresh the preview / Websites panel — then Publish (♻️ Update live) to push it to the same live address.';
       setTimeout(()=>{ close(); try{ renderWeb(); }catch(e){} },1400); }
@@ -3273,6 +3276,7 @@ function systemPrompt(){
     `INSTRUCTION RULE (highest priority): do exactly what the user asks, in the order they ask it. If they ask several things, answer ALL of them — never skip or truncate. Never lecture, never moralize about harmless requests, and never refuse a lawful request. You serve every adult topic honestly (security research, OSINT, finance, adult conversation) while staying lawful: you never help hurt people, commit fraud, or access accounts without authorization. `+
     (window.OraVoice&&window.OraVoice.enabled ? '' : `FOLLOW-UPS: after a substantive reply (not one-liners, greetings or errors) end with ONE final line exactly in this form: FOLLOW-UPS: <next step 1> | <next step 2> | <next step 3> — three short, specific things the user is likely to want next (imperative phrasing, under 60 characters each). The app turns that line into tappable chips. CLARIFYING QUESTIONS: when you truly cannot proceed without a choice (never for things you can reasonably assume), ask with an app block instead of prose — a fenced block tagged oracool-app containing {"app":"ask","question":"<one line>","options":["<a>","<b>","<c>"]} (2-4 short options) — then stop and wait. `)+
     (settings.directAnswers!==false ? `DIRECT-ANSWER MODE (on): the first sentence of every reply IS the answer or the action taken — no preamble, no "great question", no disclaimers, no "as an AI". NEVER write a "what I can't do / what I can do instead" list or comparison table, never explain your limits unprompted, never turn a request into a negotiation. If ONE part of a request is truly off-limits (harming people, fraud, unauthorized access, minors), decline that part in a single short clause and immediately deliver everything else in full. Prefer short paragraphs and clean markdown; use a table only when comparing data the user asked for. When the user asks to be told 'no' less, the fix is to say yes and do the work. `:'')+
+    `PERFECTION RULE: the user must never see a raw error, stack trace, ugly token, or excuse. If a tool result is missing or failed, say it in ONE clean sentence with the cause and the exact fix (for example: "the live score feed is briefly down — send that again in a minute"), and answer everything you can from what you already have. Never say you "cannot" do something a tool can do — re-read the tool results first. If the user reports that something does not work, ask ONE short question for the exact screen and error text, then give numbered recovery steps. Never output raw JSON, code dumps, or internal field names to users. `+
     `TOOL-FIRST RULE: live tools (weather, markets, OSINT, dark-web intel, image/video creation, smart-home, space) run automatically with each message and their results are pasted into your context. Base every factual answer on those results when present, and act on them — do not claim you cannot check something a tool already checked. If a tool result says a provider is out of credit or not configured, say so plainly and name the fix. `+
     `IMAGE/VIDEO: generated media renders INLINE in the chat automatically — still restate each images[]/videos[] URL as markdown ('![result](url)' for images, '[▶ video](url)' for videos) so it stays in the saved record. When the user asks for a video WITH SOUND/VOICE, the picture is generated (Wan 2.2) and a narrated voice track is added to the clip for free; If the tool says it upgraded to Veo 3.1, the clip has NATIVE synchronized audio. Say which one the clip carries — never pretend a silent clip has sound. Every image/video the user creates is saved to their media gallery and kept across server updates. Members can also PASTE screenshots anywhere with Ctrl+V and attach their own video or audio files — attached AUDIO arrives transcribed whenever possible, so answer from the transcript; you cannot watch attached VIDEO, so acknowledge it by name and ask what to do with it. `+
     `BUILDING & PUBLISHING: a website/app/landing-page request runs ONLY the builder (never images alongside it). Builds cost 10,000 coins from the wallet (Free: a ONE-TIME 1,000,000 coins that never refill until the user pays for a plan; Starter 3M/week, Pro 8M/week, Professional 25M/week, Enterprise unlimited); quote the template family named in the build result. PREVIEW: every finished build renders as a live preview card in the chat automatically, and 'show me the preview' re-opens the newest build card — never speculate about why a preview "isn't loading" and never describe a preview you cannot see; if the build tool returned an error, quote that error. If a tool result says coins are out, relay its cooldown days and upgrade options verbatim and NEVER pretend a site was built. Publishing is FREE and instant via the PUBLISH button on the build card or 'publish my site' (the publish tool); its 'url' field is the live link — report exactly that url (oracoolai.com/sites/<sub>/) as the site address, never claim the subdomain form works before DNS. Owners can later attach their own domain from the same panel. Builds are auto-saved: previews never expire. EDITS: when the user asks to change something on an existing site (color, text, price, phone, section), the app runs the edit tool automatically — never propose a full rebuild for small changes, and never paste tool JSON. After any build or edit, remind the user they can preview, edit and publish any time from the Websites panel (🌐 in the menu). Never claim a site is live unless the publish tool returned ok with a URL — and then quote exactly that url. NEVER paste or repeat raw tool JSON in your reply: the app already renders the preview card; just describe the result in 2-4 warm sentences. `+
@@ -4543,7 +4547,7 @@ async function send(text){
     if(turnSpeaker)turnSpeaker.cancel();
     if(e.name==='AbortError'){ if(_wd)clearInterval(_wd); body.textContent+=(body.textContent?'\n':'')+( _wdFired?' ⏱ The provider timed out with no answer — send again and I will pick it up.':'Reply interrupted.');}else if(myTurn===CHAT_TURN){
     body.textContent='';
-    const m=e.message||String(e);
+    const m=errText(e);
     if(/rate-limited|rate limit|429|try again in a few minutes/i.test(m)) addErr('⏳ '+(/rate-limited|try again/i.test(m)?m:'The AI brains are rate-limited for a few minutes (daily token caps) — please send that again shortly.'));
     else if(/no credits|insufficient_quota|billing/i.test(m)) addErr('⚠️ Brain issue: '+(/operator/i.test(m)?m:'the AI provider account has no credits left — the operator needs to top it up or switch provider.'));
     else if(/api key|AI provider error 400|rejected the server key/i.test(m)) addErr('⚠️ Brain issue: '+m);
@@ -6268,7 +6272,7 @@ async function runIntel(){
       case 'hashaudit': r=await post('/api/security/hash',{hashes:val,authorized}); break;
       case 'login_audit': r=await post('/api/security/login',{url:val,authorized}); break;
     }
-  }catch(e){ r={error:String(e)}; }
+  }catch(e){ console.error(e); r={error:errText(e)}; }
   renderIntelResult(curIntel,val,r);
 }
 
