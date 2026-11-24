@@ -742,3 +742,20 @@ def test_patch130_zero_error_guards():
     assert server._try(lambda: {"ok": True, "v": 7})["v"] == 7
     # the handler guard exists and produces a clean JSON body
     assert "zero raw errors" in server.Handler.handle_one_request.__doc__.lower()
+
+
+def test_patch131_voice_understanding():
+    from pathlib import Path
+    src = Path(server.__file__).read_text()
+    # spoken-language hint: dialects + silent slip repair
+    assert "UNDERSTAND SPOKEN HUMANS PERFECTLY" in src and "wetin, abeg, dey" in src
+    # Gemini audio fallback exists for browsers without Web Speech
+    assert "generativelanguage.googleapis.com" in src and "inline_data" in src
+    # client-side speech repair + calmer auto-send pause
+    vr = Path(__file__).resolve().parent.parent / "voice-reminders.js"
+    vs = vr.read_text()
+    assert "function speechRepair" in vs and "speechRepair(text)" in vs
+    assert "transcriptTimer=setTimeout(()=>accept(finals),850)" in vs
+    # clean & neat layer present
+    ap = Path(__file__).resolve().parent.parent / "index.html"
+    assert "PATCH131" in ap.read_text()

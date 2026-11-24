@@ -25,6 +25,29 @@
   let submitted='', submittedAt=0, transcriptTimer=null, lastSuggestion=0;
   let voiceLocked=false,abortReply=null,lastSpoken='';
   const normTxt=t=>String(t||'').toLowerCase().replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+  // patch131: repair raw speech so the AI reads what the human MEANT — strip
+  // fillers, collapse stutters, add punctuation, keep dialect words intact.
+  function speechRepair(t){
+    let x=String(t||'').replace(/\s+/g,' ').trim();
+    if(!x) return '';
+    x=x.replace(/\b(um+|uh+|erm+|erm|hmm+|huh|mhm|ahh*|ehh*|ohh*)\b/gi,' ');
+    x=x.replace(/\b(you know what i mean|you know|i mean|kind of|sort of)\b/gi,' ');
+    x=x.replace(/\s+/g,' ').trim();
+    // collapse immediate word stutters: "the the the cat" -> "the cat"
+    x=x.replace(/\b([a-z']+)\s+\1(?:\s+\1)?(?=\s|$)/gi,'$1');
+    x=x.replace(/\s+/g,' ').trim();
+    if(!x) return '';
+    // smart punctuation: questions get "?", statements get "."
+    const isQ=/^(who|what|where|when|why|how|which|whose|whom)\b/i.test(x)||
+      /^(can|could|will|would|shall|should|do|does|did|is|are|was|were|have|has|had)\b/i.test(x)||
+      (/\b(show me|tell me|find me|give me)\b/i.test(x)&&/\?$/.test(x));
+    x=x.replace(/[.\s]*$/,'');
+    x=x+(isQ?'?':'.');
+    // capitalize sentence starts
+    x=x.replace(/(^|[.!?]\s+)([a-z])/g,(m,a,b)=>a+b.toUpperCase());
+    return x;
+  }
+  window.speechRepair=speechRepair;
   function isEcho(t){const n=normTxt(t);if(!n)return true;const s=normTxt(lastSpoken);if(!s)return false;const sw=new Set(s.split(' '));const tw=n.split(' ');let hit=0;for(const w of tw)if(sw.has(w))hit++;return tw.length>1&&hit/tw.length>=0.85;}
   function interruptTurn(){if(abortReply)abortReply();streaming=false;}
   const toolbar=document.createElement('div');
@@ -88,7 +111,9 @@
     lastActAt=Date.now();lastSuggestion=Date.now();state('Starting microphone…');
     await listen();
   }
-  async function accept(text){
+  async function accept(rawText){
+    let text=String(rawText||'').trim();
+    try{ const rp=speechRepair(text); if(rp) text=rp; }catch(e){}
     text=text.trim();if(!text||!enabled)return;
     if(/^(stop listening|stop conversation|mute yourself|stop voice mode)[.!]?$/i.test(text)){stop();return;}
     if(text===submitted&&Date.now()-submittedAt<1800)return;
@@ -119,7 +144,7 @@
         }
         q('#input').value=(finals+' '+interim).trim();
         clearTimeout(transcriptTimer);
-        if(finals.trim()&&!interim.trim())transcriptTimer=setTimeout(()=>accept(finals),650);
+        if(finals.trim()&&!interim.trim())transcriptTimer=setTimeout(()=>accept(finals),850);
       };
       r.onend=()=>{if(capture!==r)return;capture=null;listening=false;if(finals.trim())accept(finals);else resume(600);};
       r.onerror=e=>{

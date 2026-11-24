@@ -638,3 +638,10 @@
 - Client: `errText(e)` maps 'Failed to fetch'/NetworkError → 'Connection problem — check your internet…'; chat catch + intel catch + 7 domain/build catches sanitized (console keeps detail). System prompt (systemPrompt() in index.html — NOT server.py) gains PERFECTION RULE: no raw errors/JSON/excuses to users; failures → one clean sentence with cause+fix; 'cannot do X' banned when tools can; broken feature → one clarifying question then numbered steps.
 - Gotchas: `function escapeHtml(x){` doesn't exist in index.html (it's `(s)`); the system prompt template literal lives in index.html; a stray backtick in a `+`-chained clause breaks node --check — end clauses with exactly `` `+ ``.
 - Suite 961.
+
+
+## patch131 — clean & neat UI + perfect voice understanding (SHIPPED)
+
+- UI polish LAYER appended at end of index.html main <style> (before its </style>): unified radius scale (--r-btn 12px/--r-card 16px/--r-pill 999px), calmer buttons (normal-case, letter-spacing .4px, 42px/44px touch heights), consistent inputs (12px radius, 14px), readable .hint 11px/.result 13px, tool grid hover-lift, thin themed scrollbars, ::selection, :focus-visible rings, mobile touch-target media query. Layer approach = low breakage risk; `body:not(.clean)` guards bubble sizing vs existing clean mode.
+- Voice understanding: (1) `speechRepair()` in voice-reminders.js (strips um/uh/you know/I mean, collapses word stutters 'the the'→'the', smart ?/. punctuation, sentence caps; dialect words untouched) wired into `accept()`; auto-send pause 650→850ms; (2) voice_mode system hint rewritten: UNDERSTAND SPOKEN HUMANS PERFECTLY — silent slip repair, accents + natural Nigerian English/slang (wetin, abeg, dey, sef, na, how far, ehen) treated as standard, never lecture about transcription; (3) `/api/voice/transcribe` gains **Gemini fallback** (inline_data audio → 'transcribe exactly') when Groq/OpenAI keys absent — iOS Safari & no-Web-Speech browsers now transcribe too.
+- Suite 962.

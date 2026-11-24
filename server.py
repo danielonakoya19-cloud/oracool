@@ -18268,7 +18268,14 @@ class Handler(BaseHTTPRequestHandler):
         api_key, base_url, model, provider = self._resolve_provider(body)
         if body.get("voice_mode") and not body.get("api_key") and key("GROQ_API_KEY"):
             api_key, base_url, model, provider = key("GROQ_API_KEY"), "https://api.groq.com/openai/v1", key("GROQ_FAST_MODEL") or GROQ_DEFAULT_MODEL, "auto"
-            messages = [{"role":"system", "content":"Voice conversation: answer directly in one or two short sentences unless detail is requested. Telephone calls, SMS and phone alarms are not available on OraCool — if asked for one, say so plainly instead of pretending."}] + messages
+            messages = [{"role":"system", "content":(
+                "VOICE CONVERSATION — UNDERSTAND SPOKEN HUMANS PERFECTLY: the user is speaking by voice, so their words "
+                "may carry transcription slips (homophones, missing punctuation, filler words) and natural spoken phrasing. "
+                "Read their INTENT generously and silently repair obvious slips — never lecture about transcription, never "
+                "ask them to repeat because of wording. Understand every dialect and accent, including natural Nigerian "
+                "English and slang (wetin, abeg, dey, sef, na, how far, ehen) and treat them as standard phrasing. "
+                "Answer directly in one or two short sentences unless detail is requested. Telephone calls, SMS and phone "
+                "alarms are not available on OraCool — if asked for one, say so plainly instead of pretending.")}] + messages
         # ---- chat sessions: every turn is persisted server-side (history sidebar)
         _conv_id = str(body.get("session_id") or "").strip()[:40]
         _private = bool(body.get("private"))  # patch87: Private chat — nothing is ever stored
@@ -21388,6 +21395,23 @@ def voice_transcribe(body, email):
     ext = {"audio/webm":"webm", "audio/mp4":"m4a", "audio/ogg":"ogg", "audio/wav":"wav"}.get(mime)
     if not ext or not 100 <= len(audio) <= 1600000:
         return {"error":"Unsupported or empty recording. Use text input in this browser."}
+    # patch131: Gemini audio fallback first-class — Groq/OpenAI primary, Gemini rescue
+    if not (key("GROQ_API_KEY") or key("OPENAI_API_KEY")) and key("GEMINI_API_KEY"):
+        try:
+            gmodel = key("GEMINI_MODEL") or "gemini-2.0-flash"
+            gurl = ("https://generativelanguage.googleapis.com/v1beta/models/" + gmodel +
+                    ":generateContent?key=" + key("GEMINI_API_KEY"))
+            gbody = {"contents": [{"parts": [
+                {"text": "Transcribe this audio exactly as spoken, in the language spoken. Return ONLY the transcript text."},
+                {"inline_data": {"mime_type": mime, "data": raw[:2200000]}}]}]}
+            _, gdata, _ = http_fetch(gurl, method="POST", json_body=gbody, timeout=40)
+            gj = json.loads(gdata)
+            parts = (((gj.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
+            gtext = "".join(str(x.get("text") or "") for x in parts).strip()[:2000]
+            if gtext:
+                return {"text": gtext}
+        except Exception:
+            pass
     k = key("GROQ_API_KEY") or key("OPENAI_API_KEY")
     if not k:
         return {"error":"Speech recognition is not configured for this browser. Use a browser with speech recognition, or type."}
