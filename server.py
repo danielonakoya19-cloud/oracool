@@ -18266,8 +18266,14 @@ class Handler(BaseHTTPRequestHandler):
         _mode = str(body.get("mode") or "auto").strip().lower()  # patch43: auto | fast | build | expert
         self._sanitize_overrides(body)   # admin-only overrides stripped before any provider use
         api_key, base_url, model, provider = self._resolve_provider(body)
-        if body.get("voice_mode") and not body.get("api_key") and key("GROQ_API_KEY"):
-            api_key, base_url, model, provider = key("GROQ_API_KEY"), "https://api.groq.com/openai/v1", key("GROQ_FAST_MODEL") or GROQ_DEFAULT_MODEL, "auto"
+        if body.get("voice_mode") and not body.get("api_key"):
+            # patch132: the spoken-language hint ALWAYS applies (it is what makes the
+            # AI understand human speech perfectly) and voice rides the FASTEST brain
+            # available — Groq first, then Gemini flash, otherwise the normal chain.
+            if key("GROQ_API_KEY"):
+                api_key, base_url, model, provider = key("GROQ_API_KEY"), "https://api.groq.com/openai/v1", key("GROQ_FAST_MODEL") or GROQ_DEFAULT_MODEL, "groq"
+            elif key("GEMINI_API_KEY"):
+                api_key, base_url, model, provider = key("GEMINI_API_KEY"), "https://generativelanguage.googleapis.com/v1beta/openai", key("GEMINI_MODEL") or "gemini-3.1-flash-lite", "gemini"
             messages = [{"role":"system", "content":(
                 "VOICE CONVERSATION — UNDERSTAND SPOKEN HUMANS PERFECTLY: the user is speaking by voice, so their words "
                 "may carry transcription slips (homophones, missing punctuation, filler words) and natural spoken phrasing. "

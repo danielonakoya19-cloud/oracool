@@ -4196,7 +4196,7 @@ function callSay(t){
   try{
     if(window.speechSynthesis && typeof SpeechSynthesisUtterance!=='undefined'){
       speechSynthesis.cancel(); speechSynthesis.resume();
-      const u=new SpeechSynthesisUtterance(t); u.rate=1.03; u.onend=done; u.onerror=done;
+      const u=new SpeechSynthesisUtterance(t); u.rate=1.1; u.onend=done; u.onerror=done;
       speechSynthesis.speak(u);
       /* iOS can silently refuse out-of-gesture speech: if nothing started in 900ms,
          the caption already carries the reply — continue the conversation anyway */
@@ -4228,7 +4228,17 @@ async function callTurn(text){
       }
     }catch(e){ seen=''; }
   }
-  let _sys=''; try{ _sys=systemPrompt(); }catch(e){ _sys='You are OraCool, a helpful voice assistant. Keep answers short and natural.'; }
+  /* patch132: a call is spoken — use a compact system prompt (same standards,
+     ~1/10 the tokens) so the first word arrives fast */
+  let _sys=''; try{
+    _sys='You are OraCool on a LIVE VOICE CALL. Speak like a person on the phone: answer in one or two short '
+       +'sentences unless the user asks for detail. Understand every accent and natural Nigerian English/slang '
+       +'(wetin, abeg, dey, sef, na) as standard phrasing; silently repair transcription slips and never lecture '
+       +'about them. Never make fake predictions or fake confidence, never collect or ask for passwords, PINs, '
+       +'BVN, card numbers, OTPs or personal info, never show raw JSON or internal errors. Your name is OraCool '
+       +'only. If asked for telephone calls, SMS or phone alarms: they are not available — say so plainly. '
+       +'When a live tool result is present in the conversation, answer from it with its source.';
+  }catch(e){ _sys='You are OraCool, a helpful voice assistant. Keep answers short and natural.'; }
   const tail=history.slice(-18).map(function(m){ return {role:m.role, content:m.content}; });
   if(seen && tail.length && tail[tail.length-1].role==='user'){
     tail[tail.length-1]={role:'user',content:tail[tail.length-1].content+'\n\n[Live camera frame — you can see the user and their surroundings right now. Briefly acknowledge what you see when relevant (their look, place, mood), then answer what they said:] '+seen};
@@ -4249,7 +4259,11 @@ async function callTurn(text){
         chunk.split('\n\n').forEach(function(ln){
           const m=ln.match(/^data: ?(.*)$/m); if(!m) return; const data=m[1];
           if(data==='[DONE]'){ res(acc); return; }
-          try{ const j=JSON.parse(data); const d=j.delta!==undefined?j.delta:(j.text||j.content||''); if(d){ acc+=d; document.getElementById('callCap').textContent='OraCool: '+acc; } }catch(e){}
+          try{ const j=JSON.parse(data);
+            const d=(j.choices&&j.choices[0]&&j.choices[0].delta&&j.choices[0].delta.content)
+              || (j.choices&&j.choices[0]&&j.choices[0].text)
+              || (j.delta!==undefined?j.delta:(j.text||j.content||''));
+            if(d){ acc+=d; document.getElementById('callCap').textContent='OraCool: '+acc; } }catch(e){}
         });
         pump();
       }).catch(function(){ res(acc); }); })();
@@ -4269,7 +4283,7 @@ function callListen(){
   if(!SR){ if(typed) typed.classList.add('show'); document.getElementById('callCap').textContent='Voice input is unavailable in this browser — type below and I\'ll answer out loud.'; return; }
   try{ if(callRec){ callRec.onend=null; try{callRec.stop();}catch(e){} callRec=null; } }catch(e){}
   try{
-    callRec=new SR(); callRec.lang='en-US'; callRec.continuous=false; callRec.interimResults=true;
+    callRec=new SR(); callRec.lang=settings.voiceLanguage||'en-NG'; callRec.continuous=false; callRec.interimResults=true;
     let heard='';
     callRec.onresult=function(ev){
       let fin='';

@@ -197,7 +197,7 @@
     if(!settings.ttsOn||!('speechSynthesis' in window)){speechQueue=[];resume();return;}
     activeSpeech=true;state('Speaking — just talk over me');
     const epoch=speechEpoch, text=speechQueue.shift();lastSpoken=text;
-    const u=new SpeechSynthesisUtterance(text);u.lang=settings.voiceLanguage||'en-NG';u.rate=1.08;
+    const u=new SpeechSynthesisUtterance(text);u.lang=settings.voiceLanguage||'en-NG';u.rate=1.12;
     const chosen=voices.find(v=>v.name===settings.voiceName)||voices.find(v=>(v.lang||'').startsWith(u.lang.slice(0,2)));
     if(chosen)u.voice=chosen;
     let started=false,finished=false;
@@ -222,7 +222,7 @@
     newTurn(){
       pauseCapture();cancelSpeech();streaming=true;state('Thinking…');
       const epoch=speechEpoch,buffer=new SentenceBuffer();
-      const acknowledgement=setTimeout(()=>{if(epoch===speechEpoch&&enabled&&buffer.position===0)enqueue("I am on it.");},1300);
+      const acknowledgement=setTimeout(()=>{if(epoch===speechEpoch&&enabled&&buffer.position===0)enqueue("I am on it.");},750);
       return {feed(text){clearTimeout(acknowledgement);if(epoch!==speechEpoch)return;buffer.take(text).forEach(enqueue);},
         finish(text){clearTimeout(acknowledgement);if(epoch!==speechEpoch)return;buffer.take(text,true).forEach(enqueue);streaming=false;if(!activeSpeech&&!speechQueue.length)resumeWake();resume();},
         cancel(){clearTimeout(acknowledgement);if(epoch===speechEpoch){streaming=false;cancelSpeech();resume();}}};

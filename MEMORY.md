@@ -645,3 +645,10 @@
 - UI polish LAYER appended at end of index.html main <style> (before its </style>): unified radius scale (--r-btn 12px/--r-card 16px/--r-pill 999px), calmer buttons (normal-case, letter-spacing .4px, 42px/44px touch heights), consistent inputs (12px radius, 14px), readable .hint 11px/.result 13px, tool grid hover-lift, thin themed scrollbars, ::selection, :focus-visible rings, mobile touch-target media query. Layer approach = low breakage risk; `body:not(.clean)` guards bubble sizing vs existing clean mode.
 - Voice understanding: (1) `speechRepair()` in voice-reminders.js (strips um/uh/you know/I mean, collapses word stutters 'the the'→'the', smart ?/. punctuation, sentence caps; dialect words untouched) wired into `accept()`; auto-send pause 650→850ms; (2) voice_mode system hint rewritten: UNDERSTAND SPOKEN HUMANS PERFECTLY — silent slip repair, accents + natural Nigerian English/slang (wetin, abeg, dey, sef, na, how far, ehen) treated as standard, never lecture about transcription; (3) `/api/voice/transcribe` gains **Gemini fallback** (inline_data audio → 'transcribe exactly') when Groq/OpenAI keys absent — iOS Safari & no-Web-Speech browsers now transcribe too.
 - Suite 962.
+
+
+## patch132 — calls answer again + fast voice processing (SHIPPED)
+
+- 'On call no respond' ROOT CAUSE: `callTurn`'s SSE parser read `j.delta`/`j.text`/`j.content` but /api/chat streams `j.choices[0].delta.content` → acc always empty → fallback 'I'm here — say that again?' forever. FIXED: parser checks choices[0].delta.content first (then legacy shapes). Also `callRec.lang` was hardcoded en-US → now `settings.voiceLanguage||'en-NG'` (accents understood on calls); compact CALL system prompt (identity + standards + call brevity ~1KB instead of the full ~10KB prompt) = much faster first word.
+- Voice latency: (1) server voice_mode hint (UNDERSTAND SPOKEN HUMANS PERFECTLY) now applies ALWAYS (was Groq-only) and voice rides fastest brain: Groq → **Gemini flash** (`GEMINI_API_KEY` vault, OpenAI-compat base `generativelanguage.googleapis.com/v1beta/openai`) → normal chain; (2) client: acknowledgement 1300→750ms, TTS rate 1.08→1.12 (call 1.03→1.1).
+- Suite 963.

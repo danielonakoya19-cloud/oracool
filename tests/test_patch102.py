@@ -759,3 +759,23 @@ def test_patch131_voice_understanding():
     # clean & neat layer present
     ap = Path(__file__).resolve().parent.parent / "index.html"
     assert "PATCH131" in ap.read_text()
+
+
+def test_patch132_call_response_and_voice_latency():
+    from pathlib import Path
+    base = Path(server.__file__).resolve().parent
+    src = (base / "index.html").read_text()
+    # the call stream parser reads the REAL SSE shape (this was the 'no respond' bug)
+    assert "j.choices&&j.choices[0]&&j.choices[0].delta&&j.choices[0].delta.content" in src
+    # calls use the user's voice language (Nigerian English by default), not en-US
+    assert "callRec.lang=settings.voiceLanguage||'en-NG'" in src
+    # compact call prompt for fast first word
+    assert "LIVE VOICE CALL" in src
+    sv = Path(server.__file__).read_text()
+    # spoken-language hint always + fastest brain (groq -> gemini) for voice
+    assert "the spoken-language hint ALWAYS applies" in sv
+    i = sv.index('if body.get("voice_mode")')
+    seg = sv[i:i+1400]
+    assert 'GEMINI_API_KEY' in seg and 'GROQ_API_KEY' in seg
+    vr = (base / "voice-reminders.js").read_text()
+    assert "buffer.position===0)enqueue(\"I am on it.\");},750);" in vr and "u.rate=1.12" in vr
