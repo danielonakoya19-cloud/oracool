@@ -19535,44 +19535,149 @@ _JANITOR_TS = [0.0]
 
 
 def _disk_janitor(force=False):
-    """patch118: keep Render's disk near-empty — generated media older than 21
-    days (or beyond ~1.1GB total, oldest first), generated files past 7 days and
-    uploads past 30 days are removed. Hourly gate so it costs nothing."""
+    """patch118/133: keep Render's disk FAR under the 5GB line. patch118 only
+    removed FILES in data/builds — but builds are DIRECTORIES, so every site ever
+    generated lived forever (that is what blew the 5GB). Now: whole build/site
+    trees are pruned oldest-first with age + size caps, evidence artifacts age
+    out, stray zips/tmp are swept, and every step is capped so the disk can
+    never run away again. Hourly gate; force=True at startup."""
     now = time.time()
     if not force and now - _JANITOR_TS[0] < 3600:
         return
     _JANITOR_TS[0] = now
-    try:
+    freed = [0]
+
+    def _bump(sz):
+        freed[0] += sz
+
+    def _file_entries(root):
         entries = []
-        for root, _dirs, files in os.walk(MEDIA_DIR):
+        for r, _d, files in os.walk(root):
             for fn in files:
-                fp = os.path.join(root, fn)
+                fp = os.path.join(r, fn)
                 try:
                     st = os.stat(fp)
                     entries.append((st.st_mtime, st.st_size, fp))
                 except Exception:
                     pass
-        entries.sort()
+        return entries
+
+    def _cap_files(root, max_bytes, max_age_days):
+        """files inside a tree: oldest out first past age OR past total size cap"""
+        if not os.path.isdir(root):
+            return
+        entries = sorted(_file_entries(root))
         total = sum(e[1] for e in entries)
         for mt, sz, fp in entries:
-            if now - mt > 21 * 86400 or total > 1100 * 1024 * 1024:
+            if now - mt > max_age_days * 86400 or total > max_bytes:
                 try:
                     os.remove(fp)
                     total -= sz
+                    _bump(sz)
                 except Exception:
                     pass
-        for folder, days in ((os.path.join(DATA_DIR, "generated"), 7),
-                             (os.path.join(DATA_DIR, "uploads"), 30),
-                             (os.path.join(DATA_DIR, "builds"), 45)):
-            if not os.path.isdir(folder):
-                continue
-            for fn in os.listdir(folder):
-                fp = os.path.join(folder, fn)
+
+    def _cap_dirs(folder, max_bytes, max_age_days):
+        """whole sub-directories (builds/sites): oldest out first past age OR size cap"""
+        if not os.path.isdir(folder):
+            return
+        subs = []
+        for name in os.listdir(folder):
+            fp = os.path.join(folder, name)
+            try:
+                if os.path.isfile(fp):
+                    st = os.stat(fp)
+                    subs.append((st.st_mtime, st.st_size, fp, True))
+                    continue
+                if not os.path.isdir(fp):
+                    continue
+                sz, mt = 0, 0.0
+                for r, _d, files in os.walk(fp):
+                    for fn in files:
+                        try:
+                            st = os.stat(os.path.join(r, fn))
+                            sz += st.st_size
+                            mt = max(mt, st.st_mtime)
+                        except Exception:
+                            pass
+                subs.append((mt or os.path.getmtime(fp), sz, fp, False))
+            except Exception:
+                pass
+        subs.sort()
+        total = sum(e[1] for e in subs)
+        for mt, sz, fp, is_file in subs:
+            if now - mt > max_age_days * 86400 or total > max_bytes:
                 try:
-                    if os.path.isfile(fp) and now - os.path.getmtime(fp) > days * 86400:
+                    if is_file:
                         os.remove(fp)
+                    else:
+                        shutil.rmtree(fp, ignore_errors=True)
+                    total -= sz
+                    _bump(sz)
                 except Exception:
                     pass
+
+    try:
+        # generated media: age + total size
+        _cap_files(MEDIA_DIR, 1100 * 1024 * 1024, 21)
+        _cap_files(os.path.join(DATA_DIR, "generated"), 200 * 1024 * 1024, 7)
+        _cap_files(os.path.join(DATA_DIR, "uploads"), 200 * 1024 * 1024, 30)
+        # THE FIX: builds and sites are directory trees — prune them as units
+        _cap_dirs(os.path.join(DATA_DIR, "builds"), 900 * 1024 * 1024, 30)
+        _cap_dirs(os.path.join(DATA_DIR, "sites"), 400 * 1024 * 1024, 60)
+        # evidence artifacts age out (case/audit .json indexes are kept)
+        ev = os.path.join(DATA_DIR, "evidence")
+        if os.path.isdir(ev):
+            for r, _d, files in os.walk(ev):
+                for fn in files:
+                    if fn.endswith(".json"):
+                        continue
+                    fp = os.path.join(r, fn)
+                    try:
+                        if now - os.path.getmtime(fp) > 60 * 86400:
+                            os.remove(fp)
+                            _bump(os.path.getsize(fp))
+                    except Exception:
+                        pass
+        # stray zips/tmp/parts anywhere in data
+        for r, _d, files in os.walk(DATA_DIR):
+            for fn in files:
+                if fn.endswith((".zip", ".tmp", ".part", ".bak")):
+                    fp = os.path.join(r, fn)
+                    try:
+                        if now - os.path.getmtime(fp) > 86400:
+                            sz = os.path.getsize(fp)
+                            os.remove(fp)
+                            _bump(sz)
+                    except Exception:
+                        pass
+        # FINAL SAFETY NET: if data/ still exceeds 2.5GB, oldest prunable files go
+        total_all = 0
+        big = []
+        for r, _d, files in os.walk(DATA_DIR):
+            for fn in files:
+                fp = os.path.join(r, fn)
+                try:
+                    st = os.stat(fp)
+                    total_all += st.st_size
+                    if not fn.endswith((".json", ".db")):
+                        big.append((st.st_mtime, st.st_size, fp))
+                except Exception:
+                    pass
+        if total_all > 2500 * 1024 * 1024:
+            big.sort()
+            over = total_all - 2500 * 1024 * 1024
+            for mt, sz, fp in big:
+                if over <= 0:
+                    break
+                try:
+                    os.remove(fp)
+                    over -= sz
+                    _bump(sz)
+                except Exception:
+                    pass
+        if freed[0] > 0:
+            print("[janitor] freed", round(freed[0] / 1048576.0, 1), "MB", flush=True)
     except Exception:
         pass
 
@@ -21437,6 +21542,10 @@ def voice_transcribe(body, email):
 
 def main():
     _load_keys()
+    try:  # patch133: free the disk IMMEDIATELY on boot (the 5GB overflow self-heals at deploy)
+        _disk_janitor(force=True)
+    except Exception:
+        pass
     try:  # patch41: remote key vault (fills keys missing from env/keys.json; refreshed every 5 min)
         _vault_refresh(force=True)
         threading.Thread(target=_vault_loop, daemon=True).start()

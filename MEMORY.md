@@ -652,3 +652,11 @@
 - 'On call no respond' ROOT CAUSE: `callTurn`'s SSE parser read `j.delta`/`j.text`/`j.content` but /api/chat streams `j.choices[0].delta.content` → acc always empty → fallback 'I'm here — say that again?' forever. FIXED: parser checks choices[0].delta.content first (then legacy shapes). Also `callRec.lang` was hardcoded en-US → now `settings.voiceLanguage||'en-NG'` (accents understood on calls); compact CALL system prompt (identity + standards + call brevity ~1KB instead of the full ~10KB prompt) = much faster first word.
 - Voice latency: (1) server voice_mode hint (UNDERSTAND SPOKEN HUMANS PERFECTLY) now applies ALWAYS (was Groq-only) and voice rides fastest brain: Groq → **Gemini flash** (`GEMINI_API_KEY` vault, OpenAI-compat base `generativelanguage.googleapis.com/v1beta/openai`) → normal chain; (2) client: acknowledgement 1300→750ms, TTS rate 1.08→1.12 (call 1.03→1.1).
 - Suite 963.
+
+
+## patch133 — Render 5GB overflow fixed: disk hygiene v2 + redeploy (SHIPPED)
+
+- ROOT CAUSE: patch118's `_disk_janitor` pruned `data/builds` FILES — but builds are DIRECTORIES (`data/builds/<slug>/`), so every generated site lived forever; `data/sites` was never touched at all. Media capped at 1.1GB but builds+sites grew unbounded → 5GB blown.
+- `_disk_janitor` REWRITTEN: `_cap_files` (media 1.1GB/21d, generated 200MB/7d, uploads 200MB/30d) + `_cap_dirs` (builds 900MB/30d idle, sites 400MB/60d — whole slug trees, oldest first) + evidence artifacts >60d (case .json kept) + stray .zip/.tmp/.part/.bak >1d + FINAL safety net: if data/ >2.5GB, oldest non-json/db files go. `main()` runs `_disk_janitor(force=True)` at BOOT → the overflow self-heals on the first deploy of this patch. Hourly gate unchanged.
+- Repo is NOT the problem (pack 4.3MB despite 7.7MB wa-bridge.bundle.mjs history blobs). If the Render INSTANCE disk (build cache) is also full: dashboard → Manual Deploy → **Clear build cache & deploy** (no API key for that from here).
+- Gotcha: `shutil` is already imported in server.py (build zip code). Suite 964.

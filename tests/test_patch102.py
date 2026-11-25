@@ -779,3 +779,32 @@ def test_patch132_call_response_and_voice_latency():
     assert 'GEMINI_API_KEY' in seg and 'GROQ_API_KEY' in seg
     vr = (base / "voice-reminders.js").read_text()
     assert "buffer.position===0)enqueue(\"I am on it.\");},750);" in vr and "u.rate=1.12" in vr
+
+
+def test_patch133_disk_hygiene_prunes_build_dirs(tmp_path, monkeypatch):
+    import os, time
+    monkeypatch.setattr(server, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "MEDIA_DIR", str(tmp_path / "media"))
+    old_ts = time.time() - 40 * 86400
+    b = tmp_path / "builds" / "oldsite"
+    b.mkdir(parents=True)
+    f = b / "index.html"
+    f.write_text("<html>" + "x" * 200 + "</html>")
+    os.utime(f, (old_ts, old_ts))
+    keep = tmp_path / "builds" / "freshsite"
+    keep.mkdir(parents=True)
+    kf = keep / "index.html"
+    kf.write_text("<html>hi</html>")
+    (tmp_path / "media").mkdir()
+    g = tmp_path / "media" / "old.png"
+    g.write_bytes(b"1234")
+    os.utime(g, (old_ts, old_ts))
+    z = tmp_path / "stray.zip"
+    z.write_bytes(b"zz")
+    os.utime(z, (old_ts, old_ts))
+    server._JANITOR_TS[0] = 0.0
+    server._disk_janitor(force=True)
+    assert not b.exists(), "stale build DIRECTORY must be pruned (the patch118 gap)"
+    assert keep.exists(), "fresh builds must survive"
+    assert not g.exists(), "stale media must be pruned"
+    assert not z.exists(), "stray zips must be swept"
