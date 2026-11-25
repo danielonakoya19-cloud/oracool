@@ -660,3 +660,12 @@
 - `_disk_janitor` REWRITTEN: `_cap_files` (media 1.1GB/21d, generated 200MB/7d, uploads 200MB/30d) + `_cap_dirs` (builds 900MB/30d idle, sites 400MB/60d — whole slug trees, oldest first) + evidence artifacts >60d (case .json kept) + stray .zip/.tmp/.part/.bak >1d + FINAL safety net: if data/ >2.5GB, oldest non-json/db files go. `main()` runs `_disk_janitor(force=True)` at BOOT → the overflow self-heals on the first deploy of this patch. Hourly gate unchanged.
 - Repo is NOT the problem (pack 4.3MB despite 7.7MB wa-bridge.bundle.mjs history blobs). If the Render INSTANCE disk (build cache) is also full: dashboard → Manual Deploy → **Clear build cache & deploy** (no API key for that from here).
 - Gotcha: `shutil` is already imported in server.py (build zip code). Suite 964.
+
+
+## patch134 — bandwidth crisis: Render workspace SUSPENDED (5GB free BANDWIDTH used up) (SHIPPED)
+
+- REAL CAUSE of the outage (user's screenshot): Render **Hobby workspace suspended — "You've used the 5 GB of free bandwidth"** (data transfer, NOT disk). My earlier disk diagnosis was wrong; the 5GB was egress. All requests 503 + redeploys blocked until the user clicks **Remove usage limits** (card, $0.15/GB) or **Upgrade workspace** (Pro 25GB) in the dashboard. No Render API key exists in the vault — only the user can do this.
+- Bandwidth savers shipped (deploy automatically when workspace is restored): **gzip** on all text/json/js/css/svg responses >1.4KB via `_wants_gzip`/`_emit` (index.html ~730KB → ~150KB); **ETag + If-None-Match → 304** in `_send_file` (patch25 no-cache kept, but revalidation is now ~20 bytes); `_send_json` gzips big payloads; phone-projection egress killed: phone `sendFrame` skips UNCHANGED frames, tab polls `/api/remote/snapmeta` (60 bytes) and downloads the image ONLY when `snap_t` changed. `import gzip` added line17.
+- patch133 disk janitor (build-dir pruning + startup run) also queued in the same commit chain. Repo pack 4.3MB (wa-bridge.bundle.mjs 7.7MB history blobs deduped — harmless).
+- Next-level saving when the user wants: Cloudflare free proxy in front of oracoolai.com (caches static assets at the edge = most bandwidth never reaches Render) — needs nameserver change at the domain registrar.
+- Suite 965.

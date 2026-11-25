@@ -14,6 +14,7 @@ A JARVIS-style personal assistant backend. Pure Python standard library.
   - Supabase: status check + upgrade persistence
 """
 import base64
+import gzip
 import hashlib
 import html
 import hmac as hmac_mod
@@ -16617,8 +16618,18 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             return
         data = json.dumps(obj).encode("utf-8")
+        if self._wants_gzip("application/json") and len(data) > 1400:
+            try:
+                gz = gzip.compress(data, 5)
+                if len(gz) < len(data) * 0.92:
+                    data = gz
+            except Exception:
+                pass
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        if data[:2] == b"\x1f\x8b":
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Cache-Control", "no-store")
@@ -16628,33 +16639,66 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
+    def _wants_gzip(self, ctype):
+        """patch134: compress text-ish responses — Render's free bandwidth is tiny
+        and index.html alone is ~730KB raw (~150KB gzipped)."""
+        if "gzip" not in (self.headers.get("Accept-Encoding") or "").lower():
+            return False
+        if not ctype:
+            return False
+        return any(t in ctype for t in ("text/", "json", "javascript", "css", "svg", "xml"))
+
+    def _emit(self, data, ctype, status=200, extra=None, etag=None):
+        """single response writer: gzip when allowed, Content-Length exact"""
+        if etag and (self.headers.get("If-None-Match") or "").strip() == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.end_headers()
+            return
+        if self._wants_gzip(ctype) and len(data) > 1400:
+            try:
+                gz = gzip.compress(data, 5)
+                if len(gz) < len(data) * 0.92:
+                    data = gz
+                    self.send_response(status)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Content-Encoding", "gzip")
+                    self.send_header("Vary", "Accept-Encoding")
+            except Exception:
+                self.send_response(status)
+                self.send_header("Content-Type", ctype)
+        else:
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        if etag:
+            self.send_header("ETag", etag)
+        if extra:
+            for k, v in extra:
+                self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(data)
+
     def _send_file(self, path, ctype):
         try:
             with open(path, "rb") as f:
                 data = f.read()
+            stt = os.stat(path)
         except OSError:
             self.send_error(404)
             return
-        self.send_response(200)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        # patch25: text app assets must never be stale-cached (phone browsers
-        # otherwise keep serving the previous build for days after a deploy)
-        if "html" in ctype or "css" in ctype or "javascript" in ctype or "json" in ctype:
-            self.send_header("Cache-Control", "no-cache, must-revalidate")
-        self.end_headers()
-        self.wfile.write(data)
+        etag = '"' + hex(int(stt.st_mtime))[2:] + "-" + hex(len(data))[2:] + '"'
+        # patch25 note kept: app assets revalidate every time — but with ETag the
+        # revalidation is a ~20-byte 304 instead of a full re-download (patch134).
+        cache = "no-cache, must-revalidate" if any(t in (ctype or "") for t in ("html", "css", "javascript", "json")) \
+            else "public, max-age=86400"
+        self._emit(data, ctype, extra=[("Cache-Control", cache)], etag=etag)
 
     def _send_html(self, text):
         data = text.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Cache-Control", "no-cache, must-revalidate")
-        self.end_headers()
-        self.wfile.write(data)
+        self._emit(data, "text/html; charset=utf-8",
+                   extra=[("Cache-Control", "no-cache, must-revalidate")])
 
     def _read_json(self):
         try:
@@ -16753,6 +16797,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_html(_rh)
             except Exception:
                 self.send_error(404, "remote page missing")
+            return
+        if path.startswith("/api/remote/snapmeta"):
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            st = REMOTE_SESSIONS.get((qs.get("sid") or [""])[0])
+            self._send_json({"ok": bool(st), "t": (st or {}).get("snap_t", 0)})
             return
         if path.startswith("/api/geo/track"):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)

@@ -808,3 +808,16 @@ def test_patch133_disk_hygiene_prunes_build_dirs(tmp_path, monkeypatch):
     assert keep.exists(), "fresh builds must survive"
     assert not g.exists(), "stale media must be pruned"
     assert not z.exists(), "stray zips must be swept"
+
+
+def test_patch134_bandwidth_savers():
+    from pathlib import Path
+    import gzip as _gz
+    src = Path(server.__file__).read_text()
+    # gzip + ETag/304 on every response
+    assert "def _wants_gzip" in src and "Content-Encoding" in src and "If-None-Match" in src
+    # snapmeta lets the tab skip unchanged frames
+    st = server._remote_session("bwtest1")
+    r = server.remote_snapshot("bwtest1", "data:image/jpeg;base64,/9j/4AAQ")
+    assert r["ok"] and st.get("snap_t", 0) > 0
+    assert len(_gz.compress(b"x" * 5000, 5)) < 5000

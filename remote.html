@@ -132,6 +132,8 @@ function frame(){
 var frameCfg={ms:550,w:520,q:0.6}, sendAvg=250;
 function sendFrame(){
   var d=frame(); if(!d) return;
+  if(d===window.__lastFrame) return;          // patch134: unchanged screen = no upload
+  window.__lastFrame=d;
   var t0=Date.now();
   post('/api/remote/snapshot',{image:d}).then(function(){
     sendAvg=sendAvg*0.7+(Date.now()-t0)*0.3;

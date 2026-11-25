@@ -5137,6 +5137,14 @@ function renderPhone(){
         // compatible mode: no peer stream → show the phone's frame stream
         if(!webrtcUp&&r&&r.peer&&Date.now()/1000-r.peer<25&&Date.now()-lastSnap>1000){
           lastSnap=Date.now();
+          // patch134: ask snapmeta (tiny) first — download the image ONLY when it changed
+          let _fresh=true;
+          try{
+            const mt=await fetch('/api/remote/snapmeta?sid='+encodeURIComponent(sid)).then(r2=>r2.json()).catch(()=>null);
+            _fresh=!!(mt&&mt.t&&mt.t!==(window._phSnapT||0));
+            if(mt&&mt.t) window._phSnapT=mt.t;
+          }catch(e){}
+          if(_fresh){
           const q=await fetch('/api/remote/snapshot?sid='+encodeURIComponent(sid)).then(r2=>r2.json()).catch(()=>null);
           if(q&&q.image){
             const im=document.getElementById('phoneFrame'), v=document.getElementById('phoneVideo');
@@ -5144,6 +5152,7 @@ function renderPhone(){
             window._phFrames=(window._phFrames||0)+1;
             hideWait();
             if(!window._phFrameT){ window._phFrameT=1; st('● stream received — projecting (compatible mode)','#67e8f9'); }
+          }
           }
           if(!webrtcUp&&window._phFrames){
             const now=Date.now();
